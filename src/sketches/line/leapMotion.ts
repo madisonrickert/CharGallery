@@ -19,7 +19,8 @@ const boneLineMaterial = lazy(() => new THREE.LineBasicMaterial({
 }));
 
 export function initLeap(sketch: LineSketch) {
-    const controller = Leap.loop((frame: Leap.Frame) => {
+    //
+	const controller = Leap.loop((frame: Leap.Frame) => {
         if (frame.hands.length > 0) {
             sketch.instructionsEl!.setLastRenderedFrame(sketch.globalFrame);
         }

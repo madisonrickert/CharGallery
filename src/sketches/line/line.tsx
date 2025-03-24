@@ -188,8 +188,8 @@ export class LineSketch extends ISketch {
         const backgroundVolume = 1.00;
         this.audioGroup.setBackgroundVolume(backgroundVolume);
 
-        this.gravityShaderPass.uniforms.iGlobalTime.value = this.audioContext.currentTime / 1;
-        this.gravityShaderPass.uniforms.G.value = triangleWaveApprox(this.audioContext.currentTime / 5) * (groupedUpness + 0.50) * 15000;
+        this.gravityShaderPass.uniforms.iGlobalTime.value = performance.now() / 1000;
+        this.gravityShaderPass.uniforms.G.value = triangleWaveApprox(performance.now() / 5000) * (groupedUpness + 0.50) * 15000;
         this.gravityShaderPass.uniforms.iMouseFactor.value = (1 / 15) / (groupedUpness + 1);
         // filter.uniforms['iMouse'].value = new THREE.Vector2(averageX, canvas.height - averageY);
 
