@@ -1,7 +1,8 @@
 import { AudioClip } from "../../audio";
 import { SketchAudioContext } from "../../sketch";
+import { AudioGroup } from "./types";
 
-export function createAudioGroup(ctx: SketchAudioContext) {
+export function createAudioGroup(ctx: SketchAudioContext): AudioGroup {
     const backgroundAudio = new AudioClip({
         context: ctx,
         srcs: [

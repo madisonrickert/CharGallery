@@ -1,8 +1,7 @@
-import classnames from "classnames";
 import { Controller } from "leapjs";
-import React from "react";
 import * as THREE from "three";
 import { ShaderPass, RenderPass, EffectComposer } from "three-stdlib";
+import { AudioGroup } from "./types";
 
 import queryString from "query-string";
 import devlog from "../../common/devlog";
@@ -82,7 +81,7 @@ export class LineSketch extends ISketch {
     // TODO move into core sketch
     public globalFrame = 0;
 
-    public audioGroup: any;
+    public audioGroup: AudioGroup | null = null;
     public particles: IParticle[] = [];
     public returnToStartPower = 0.0;
 
@@ -141,7 +140,10 @@ export class LineSketch extends ISketch {
         devlog(this.controller);
     }
 
-    public animate(millisElapsed: number) {
+    public animate(_millisElapsed: number) {
+        if (this.audioGroup === null) {
+            return;
+        }
         this.attractors.forEach((attractor) => {
             attractor.mesh.position.z = -100;
             attractor.mesh.children.forEach((child, idx) => {
@@ -169,7 +171,7 @@ export class LineSketch extends ISketch {
         const nonzeroAttractors = this.attractors.filter((attractor) => attractor.power !== 0);
 
         this.ps.stepParticles(nonzeroAttractors);
-        const { averageX, averageY, groupedUpness, normalizedAverageVel, normalizedVarianceLength, flatRatio, normalizedEntropy } =
+        const { /* averageX, averageY, */ groupedUpness, /* normalizedAverageVel, */ normalizedVarianceLength, flatRatio, normalizedEntropy } =
             computeStats(this.ps);
 
         this.audioGroup.sourceLfo.frequency.setTargetAtTime(flatRatio, 0, 0.016);
@@ -185,8 +187,8 @@ export class LineSketch extends ISketch {
 
         this.audioGroup.setVolume(Math.max(groupedUpness - 0.05, 0) * 5.);
 
-        const mouseDistanceToCenter = Math.sqrt(Math.pow(this.mouseX - averageX, 2) + Math.pow(this.mouseY - averageY, 2));
-        const normalizedMouseDistanceToCenter = mouseDistanceToCenter / Math.sqrt(this.canvas.width * this.canvas.height);
+        // const mouseDistanceToCenter = Math.sqrt(Math.pow(this.mouseX - averageX, 2) + Math.pow(this.mouseY - averageY, 2));
+        // const normalizedMouseDistanceToCenter = mouseDistanceToCenter / Math.sqrt(this.canvas.width * this.canvas.height);
         // const backgroundVolume = 0.33 / (1 + normalizedMouseDistanceToCenter * normalizedMouseDistanceToCenter);
         const backgroundVolume = 1.00;
         this.audioGroup.setBackgroundVolume(backgroundVolume);

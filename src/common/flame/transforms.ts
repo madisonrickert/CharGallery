@@ -33,7 +33,7 @@ export const AFFINES = {
 };
 
 export const VARIATIONS = {
-    Linear: (point: THREE.Vector3) => {
+    Linear: (_point: THREE.Vector3) => {
         // no op
     },
     Sin: (point: THREE.Vector3) => {
