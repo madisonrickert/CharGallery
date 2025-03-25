@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import "./monkeypatch";
 
 import App from "./app";
+import "normalize.css";
 import "./index.scss";
 
 const rootElement = document.getElementById("root");
