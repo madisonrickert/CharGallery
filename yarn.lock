@@ -1195,11 +1195,6 @@ color-name@~1.1.4:
   resolved "https://registry.yarnpkg.com/color-name/-/color-name-1.1.4.tgz#c2a09a87acbde69543de6f63fa3995c826c536a2"
   integrity sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==
 
-commander@~0.6.1:
-  version "0.6.1"
-  resolved "https://registry.yarnpkg.com/commander/-/commander-0.6.1.tgz#fa68a14f6a945d54dbbe50d8cdb3320e9e3b1a06"
-  integrity sha512-0fLycpl1UMTGX257hRsu/arL/cUbcvQM4zMKwvLvzXtfdezIV4yotPS2dYtknF+NmEfWSoCEF6+hj9XLm/6hEw==
-
 concat-map@0.0.1:
   version "0.0.1"
   resolved "https://registry.yarnpkg.com/concat-map/-/concat-map-0.0.1.tgz#d8a96bd77fd68df7793a73036a3ba0d5405d477b"
@@ -1704,10 +1699,10 @@ get-proto@^1.0.0, get-proto@^1.0.1:
     dunder-proto "^1.0.1"
     es-object-atoms "^1.0.0"
 
-gl-matrix@2.2.1:
-  version "2.2.1"
-  resolved "https://registry.yarnpkg.com/gl-matrix/-/gl-matrix-2.2.1.tgz#015bdcd55b6c632860980b13b31296628ae10cce"
-  integrity sha512-Zlfp7U6fbQptPxlHfGvpa/J/dvSIqn5/9hNCrZbMJLfhkSf+h5h6H5ryyVlhAG6y/nai5j3Ls6uR+0jYm88NjA==
+gl-matrix@^3.3.0:
+  version "3.4.3"
+  resolved "https://registry.yarnpkg.com/gl-matrix/-/gl-matrix-3.4.3.tgz#fc1191e8320009fd4d20e9339595c6041ddc22c9"
+  integrity sha512-wcCp8vu8FT22BnvKVPjXa/ICBWRq/zjFfdofZy1WSpQZpphblv12/bOQLBC1rMM7SGOFS9ltVmKOHil5+Ml7gA==
 
 glob-parent@^5.1.2:
   version "5.1.2"
@@ -1992,14 +1987,13 @@ keyv@^4.5.4:
   dependencies:
     json-buffer "3.0.1"
 
-leapjs@^0.6.4:
-  version "0.6.4"
-  resolved "https://registry.yarnpkg.com/leapjs/-/leapjs-0.6.4.tgz#90588b0f29c1d39244b97a14d76daa4027c78ada"
-  integrity sha512-Jhyz8zpPG9aP2UbURDoW62fwnpElIaKOnfDPAEdnGPJJABz3PcQsVXtcDCBYRfyuHACCG48+Bqw9qsTi8wu0iw==
+leapjs@^1.1.1:
+  version "1.1.1"
+  resolved "https://registry.yarnpkg.com/leapjs/-/leapjs-1.1.1.tgz#1077abe6d85992f4c054004aa61f7ac26b5c5dbb"
+  integrity sha512-AXyzH3HuIlqaJWAfziVJa0K0k45wiavQUH7utDbDrYzlqSkqqCR3ePt8kpaDEzujx8rA3iDX+E6x2CnNR1XRXQ==
   dependencies:
-    gl-matrix "2.2.1"
-    underscore "1.4.4"
-    ws "0.4.25"
+    gl-matrix "^3.3.0"
+    ws "^7.4.6"
 
 levn@^0.4.1:
   version "0.4.1"
@@ -2203,11 +2197,6 @@ optionator@^0.9.3:
     prelude-ls "^1.2.1"
     type-check "^0.4.0"
     word-wrap "^1.2.5"
-
-options@latest:
-  version "0.0.6"
-  resolved "https://registry.yarnpkg.com/options/-/options-0.0.6.tgz#ec22d312806bb53e731773e7cdaefcf1c643128f"
-  integrity sha512-bOj3L1ypm++N+n7CEbbe473A414AB7z+amKYshRb//iuL3MpdDCLhPnw6aVTdKB9g5ZRVHIEp8eUln6L2NUStg==
 
 os-browserify@^0.3.0:
   version "0.3.0"
@@ -2755,11 +2744,6 @@ timers-browserify@^2.0.4:
   dependencies:
     setimmediate "^1.0.4"
 
-tinycolor@0.x:
-  version "0.0.1"
-  resolved "https://registry.yarnpkg.com/tinycolor/-/tinycolor-0.0.1.tgz#320b5a52d83abb5978d81a3e887d4aefb15a6164"
-  integrity sha512-+CorETse1kl98xg0WAzii8DTT4ABF4R3nquhrkIbVGcw1T8JYs5Gfx9xEfGINPUZGDj9C4BmOtuKeaTtuuRolg==
-
 to-regex-range@^5.0.1:
   version "5.0.1"
   resolved "https://registry.yarnpkg.com/to-regex-range/-/to-regex-range-5.0.1.tgz#1648c44aae7c8d988a326018ed72f5b4dd0392e4"
@@ -2802,11 +2786,6 @@ typescript@^5.8.2:
   version "5.8.2"
   resolved "https://registry.yarnpkg.com/typescript/-/typescript-5.8.2.tgz#8170b3702f74b79db2e5a96207c15e65807999e4"
   integrity sha512-aJn6wq13/afZp/jT9QZmwEjDqqvSGp1VT5GVg+f/t6/oVyrgXM6BY1h9BRh/O5p3PlUPAe+WuiEZOmb/49RqoQ==
-
-underscore@1.4.4:
-  version "1.4.4"
-  resolved "https://registry.yarnpkg.com/underscore/-/underscore-1.4.4.tgz#61a6a32010622afa07963bf325203cf12239d604"
-  integrity sha512-ZqGrAgaqqZM7LGRzNjLnw5elevWb5M8LEoDMadxIW3OWbcv72wMMgKdwOKpd5Fqxe8choLD8HN3iSj3TUh/giQ==
 
 undici-types@~6.20.0:
   version "6.20.0"
@@ -2917,14 +2896,10 @@ word-wrap@^1.2.5:
   resolved "https://registry.yarnpkg.com/word-wrap/-/word-wrap-1.2.5.tgz#d2c45c6dd4fbce621a66f136cbe328afd0410b34"
   integrity sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==
 
-ws@0.4.25:
-  version "0.4.25"
-  resolved "https://registry.yarnpkg.com/ws/-/ws-0.4.25.tgz#3dca06feddc25944af780d7b01da2cf63da7acc8"
-  integrity sha512-ASP1k38vOs5Wfqm7s3344g1l87J74byfyrFQIf0nsUcofnMJ2sQCD4DokP/n7oHVBh5xQ71rRJi18PQhi0fYPQ==
-  dependencies:
-    commander "~0.6.1"
-    options latest
-    tinycolor "0.x"
+ws@^7.4.6:
+  version "7.5.10"
+  resolved "https://registry.yarnpkg.com/ws/-/ws-7.5.10.tgz#58b5c20dc281633f6c19113f39b349bd8bd558d9"
+  integrity sha512-+dbF1tHwZpXcbOJdVOkzLDxZP1ailvSxM6ZweXTegylPny803bFhA+vqBYw4s31NSAk4S2Qz+AKXK9a4wkdjcQ==
 
 xtend@^4.0.2:
   version "4.0.2"
