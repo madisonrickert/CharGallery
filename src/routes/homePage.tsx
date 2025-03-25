@@ -1,21 +1,8 @@
 import React from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { FaPlay } from "react-icons/fa";
 
 export function HomePage() {
-    const loc = useLocation();
-
-    React.useEffect(() => {
-        const hash = loc.hash;
-        if (!hash) {
-            return;
-        }
-        const element = document.getElementById(hash);
-        if (element != null) {
-            element.scrollIntoView();
-        }
-    }, [loc]);
-
     return (
         <div className="homepage">
             <main className="content">
@@ -29,12 +16,12 @@ export function HomePage() {
 function WorkSection() {
     return (
         <section className="content-section work" id="work">
-            {renderHighlight("Mito", "/assets/images/mito_cover.png", 'https://hellochar.github.io/mito/#/')}
-            {renderHighlight("Flame", "/assets/images/flame.jpg")}
+            {renderHighlight("Cymatics", "/assets/images/cymatics5_cropped.jpg")}
             {renderHighlight("Line", "/assets/images/gravity4_cropped.jpg")}
+            {renderHighlight("Flame", "/assets/images/flame.jpg")}
             {renderHighlight("Dots", "/assets/images/dots2.jpg")}
             {renderHighlight("Waves", "/assets/images/waves2.jpg")}
-            {renderHighlight("Cymatics", "/assets/images/cymatics5_cropped.jpg")}
+            {renderHighlight("Mito", "/assets/images/mito_cover.png", 'https://hellochar.github.io/mito/#/')}
         </section>
     );
 }

@@ -1,15 +1,6 @@
-import LineSketch from "./line";
-import FlameSketch from "./flame";
-import Dots from "./dots";
-import Cymatics from "./cymatics";
-import Mito from "./mito";
-import Waves from "./waves";
-
-export default [
-    LineSketch,
-    FlameSketch,
-    Dots,
-    Cymatics,
-    Mito,
-    Waves
-];
+export { default as LineSketch } from "./line";
+export { default as FlameSketch } from "./flame";
+export { default as Dots } from "./dots";
+export { default as Cymatics } from "./cymatics";
+export { default as Mito } from "./mito";
+export { default as Waves } from "./waves";
