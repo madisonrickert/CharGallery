@@ -3,7 +3,7 @@ import * as THREE from "three";
 
 import lazy from "../../common/lazy";
 import { Attractor, HandMesh } from "../../common/particleSystem";
-import { map } from "../../math/index";
+import { map } from "../../common/math";
 import { LineSketch } from "./line";
 
 const boneGeometry = lazy(() => new THREE.SphereGeometry(10, 3, 3));

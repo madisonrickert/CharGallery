@@ -7,7 +7,7 @@ import queryString from "query-string";
 import { GravityShader } from "../../common/gravityShader";
 import lazy from "../../common/lazy";
 import { computeStats, createParticle, createParticlePoints, IParticle, makeAttractor, ParticleSystem } from "../../common/particleSystem";
-import { triangleWaveApprox } from "../../math/index";
+import { triangleWaveApprox } from "../../common/math";
 import { ISketch } from "../../sketch";
 import { createAudioGroup } from "./audio";
 import { ScreenSaver } from "../../common/screenSaver/screenSaver";

@@ -5,7 +5,7 @@ import { OrbitControls } from "three-stdlib";
 
 import { createWhiteNoise } from "../../audio/noise";
 import { AFFINES, BoxCountVisitor, Branch, createInterpolatedVariation, createRouterVariation, LengthVarianceTrackerVisitor, SuperPoint, VARIATIONS, VelocityTrackerVisitor } from "../../common/flame";
-import { map } from "../../math";
+import { map } from "../../common/math";
 import { ISketch, SketchAudioContext } from "../../sketch";
 import { FlamePointsMaterial } from "./flamePointsMaterial";
 import { Chord } from "./types";

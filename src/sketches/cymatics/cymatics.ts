@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { EffectComposer, ShaderPass } from "three-stdlib";
 
 import GPUComputationRenderer, { GPUComputationRendererVariable } from "../../common/gpuComputationRenderer";
-import { mirroredRepeat } from "../../math";
+import { mirroredRepeat } from "../../common/math";
 import { ISketch } from "../../sketch";
 import { CymaticsAudio } from "./audio";
 import { RenderCymaticsShader } from "./renderCymaticsShader";

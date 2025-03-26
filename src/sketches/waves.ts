@@ -1,7 +1,7 @@
 import $ from "jquery";
 import * as THREE from "three";
 
-import { lerp, map } from "../math";
+import { lerp, map } from "../common/math";
 import { ISketch, SketchAudioContext } from "../sketch";
 
 const LINE_SEGMENT_LENGTH = (window.screen.width > 1024) ? 11 : 22;
