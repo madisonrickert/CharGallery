@@ -22,7 +22,7 @@ export function initLeap(sketch: LineSketch) {
     //
 	const controller = Leap.loop((frame: Leap.Frame) => {
         if (frame.hands.length > 0) {
-            sketch.screenSaverEl!.setLastRenderedFrame(sketch.globalFrame);
+            sketch.lastRenderedFrame = sketch.globalFrame;
         }
         sketch.attractors.forEach((attractor) => {
             if (attractor.handMesh != null) {

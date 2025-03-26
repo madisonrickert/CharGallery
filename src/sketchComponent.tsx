@@ -1,6 +1,7 @@
 import $ from "jquery";
 import React from "react";
 import * as THREE from "three";
+import "./sketchComponent.scss";
 
 import { FaVolumeUp, FaVolumeOff } from "react-icons/fa";
 
