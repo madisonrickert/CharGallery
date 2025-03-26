@@ -1,14 +1,14 @@
 import classnames from "classnames";
 import React from "react";
-import "./instructions.css";
+import "./screenSaver.css";
 
-export interface InstructionsState {
+export interface ScreenSaverState {
     leapMotionControllerValid: boolean;
     lastRenderedFrame: number;
     globalFrame: number;
 }
 
-export class Instructions extends React.Component<object, InstructionsState> {
+export class ScreenSaver extends React.Component<object, ScreenSaverState> {
     state = {
         leapMotionControllerValid: false,
         globalFrame: 0,
@@ -16,14 +16,14 @@ export class Instructions extends React.Component<object, InstructionsState> {
     };
 
     public render() {
-        const numSecondsToShowInstructions = 10;
+        const numSecondsToShowScreenSaver = 10;
         const shouldShow =
-            !(this.state.globalFrame - this.state.lastRenderedFrame < 60 * numSecondsToShowInstructions) &&
+            !(this.state.globalFrame - this.state.lastRenderedFrame < 60 * numSecondsToShowScreenSaver) &&
             this.state.leapMotionControllerValid;
 
         return (
-            <div className={classnames("line-instructions", { visible: shouldShow })}>
-                <video autoPlay muted loop className="line-instructions-video">
+            <div className={classnames("screen-saver", { visible: shouldShow })}>
+                <video autoPlay muted loop className="screen-saver-video">
                     <source src="/assets/images/capture.mp4" type="video/mp4" />
                     Your browser does not support the video tag.
                 </video>

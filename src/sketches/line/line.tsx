@@ -10,7 +10,7 @@ import { computeStats, createParticle, createParticlePoints, IParticle, makeAttr
 import { triangleWaveApprox } from "../../math/index";
 import { ISketch } from "../../sketch";
 import { createAudioGroup } from "./audio";
-import { Instructions } from "./instructions";
+import { ScreenSaver } from "./screenSaver";
 import { initLeap } from "./leapMotion";
 
 export class LineSketch extends ISketch {
@@ -67,8 +67,8 @@ export class LineSketch extends ISketch {
             }
         },
     };
-    public elements = [<Instructions ref={(instructions) => { this.instructionsEl = instructions; }} />];
-    public instructionsEl: Instructions | null = null;
+    public elements = [<ScreenSaver ref={(screenSaver) => { this.screenSaverEl = screenSaver; }} />];
+    public screenSaverEl: ScreenSaver | null = null;
     public attractors = [
         makeAttractor(),
         makeAttractor(),
@@ -199,10 +199,10 @@ export class LineSketch extends ISketch {
         (this.points.geometry as THREE.BufferGeometry).attributes.position.needsUpdate = true;
         this.composer.render();
         this.globalFrame++;
-        if (this.instructionsEl != null) {
-            this.instructionsEl.setGlobalFrame(this.globalFrame);
+        if (this.screenSaverEl != null) {
+            this.screenSaverEl.setGlobalFrame(this.globalFrame);
             const isLeapMotionControllerValid = this.controller.lastFrame.valid;
-            this.instructionsEl.setLeapMotionControllerValid(isLeapMotionControllerValid);
+            this.screenSaverEl.setLeapMotionControllerValid(isLeapMotionControllerValid);
         }
     }
 

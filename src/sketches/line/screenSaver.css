@@ -1,4 +1,4 @@
-.line-instructions {
+.screen-saver {
     pointer-events: none;
     opacity: 0;
     transition: opacity 500ms ease-in;
@@ -8,11 +8,11 @@
     align-items: center;
 }
 
-.line-instructions.visible {
+.screen-saver.visible {
     opacity: 1;
 }
 
-.line-instructions-video {
+.screen-saver-video {
     position: absolute;
     top: 0;
     left: 0;
@@ -21,9 +21,4 @@
     object-fit: cover;
     margin: 0;
     padding: 0;
-}
-
-.instructions-image {
-    width: 100%;
-    opacity: 0.75;
 }
