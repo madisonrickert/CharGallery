@@ -9,7 +9,7 @@ In a command prompt, navigate to the project root folder (the same folder that c
 
 Install global dependencies. `npm i -g yarn`.
 
-Install local dependencies. `yarn install`.
+Install local dependencies. `yarn install --ignore-engines`.
 
 
 Run `yarn start` to start Vite dev server.
