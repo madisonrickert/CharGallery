@@ -1,6 +1,6 @@
 import * as Leap from "leapjs";
 import { mapLeapToThreePosition } from "../../common/leap/util";
-import { updateHandMesh, createHandMesh } from "../../common/leap/handMesh";
+import { HandMesh } from "../../common/leap/handMesh";
 import { LineSketch } from "./line";
 
 export function initLeap(sketch: LineSketch) {
@@ -37,10 +37,10 @@ export function initLeap(sketch: LineSketch) {
             }
 
             if (attractor.handMesh == null) {
-                attractor.handMesh = createHandMesh();
+                attractor.handMesh = new HandMesh();
                 sketch.scene.add(attractor.handMesh);
             }
-            updateHandMesh(attractor.handMesh, sketch.canvas, hand);
+            attractor.handMesh.update(sketch.canvas, hand);
             attractor.handMesh!.visible = true;
         });
     });

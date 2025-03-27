@@ -3,10 +3,6 @@ import * as THREE from 'three';
 import { mapLeapToThreePosition } from './util';
 import lazy from "../lazy";
 
-export type HandMesh = THREE.Object3D & {
-    [childId: string]: THREE.Line | THREE.Mesh;
-};
-
 const boneGeometry = lazy(() => new THREE.SphereGeometry(10, 3, 3));
 const boneMeshMaterial = lazy(() => new THREE.MeshBasicMaterial({
     color: 0xadd6b6,
@@ -19,33 +15,60 @@ const boneLineMaterial = lazy(() => new THREE.LineBasicMaterial({
     linewidth: 5,
 }));
 
-export function createHandMesh(): HandMesh {
-    return new THREE.Object3D() as HandMesh;
-}
+export class HandMesh extends THREE.Object3D {
+    private bones: { [id: string]: THREE.Mesh } = {};
+    private fingers: { [id: string]: THREE.Line } = {};
 
-export function updateHandMesh(handMesh: HandMesh, canvas: HTMLCanvasElement, hand: Leap.Hand) {
-    hand.fingers.forEach((finger) => {
-        if (handMesh["finger" + finger.type] == null) {
+    constructor() {
+        super();
+    }
+
+    private addFinger(fingerType: number): THREE.Line {
+        if (!this.fingers["finger" + fingerType]) {
             const fingerLine = new THREE.Line(new THREE.BufferGeometry(), boneLineMaterial());
-            handMesh["finger" + finger.type] = fingerLine;
-            handMesh.add(fingerLine);
+            this.fingers["finger" + fingerType] = fingerLine;
+            this.add(fingerLine);
         }
-        const fingerGeometry = handMesh["finger" + finger.type].geometry as THREE.BufferGeometry;
-        finger.bones.forEach((bone) => {
-            // create sphere for every bone
-            const id = finger.type + ',' + bone.type;
-            if (handMesh[id] == null) {
-                const boneMesh = new THREE.Mesh(boneGeometry(), boneMeshMaterial());
-                handMesh[id] = boneMesh;
-                handMesh.add(boneMesh);
-            }
-            const position = mapLeapToThreePosition(canvas, bone.center());
-            handMesh[id].position.copy(position);
+        return this.fingers["finger" + fingerType];
+    }
 
-            // create a line for every finger
-            const positions = fingerGeometry.getAttribute('position') as THREE.Float32BufferAttribute || new THREE.Float32BufferAttribute(new Float32Array(bone.type * 3), 3);
-            positions.setXYZ(bone.type, position.x, position.y, position.z);
+    private addBone(fingerType: number, boneType: number): THREE.Mesh {
+        const id = `${fingerType},${boneType}`;
+        if (!this.bones[id]) {
+            const boneMesh = new THREE.Mesh(boneGeometry(), boneMeshMaterial());
+            this.bones[id] = boneMesh;
+            this.add(boneMesh);
+        }
+        return this.bones[id];
+    }
+
+    private updateBonePosition(fingerType: number, boneType: number, position: THREE.Vector3) {
+        const id = `${fingerType},${boneType}`;
+        if (this.bones[id]) {
+            this.bones[id].position.copy(position);
+        }
+    }
+
+    private updateFingerGeometry(fingerType: number, boneType: number, position: THREE.Vector3) {
+        const fingerLine = this.fingers["finger" + fingerType];
+        if (fingerLine) {
+            const fingerGeometry = fingerLine.geometry as THREE.BufferGeometry;
+            const positions = fingerGeometry.getAttribute('position') as THREE.Float32BufferAttribute || 
+                new THREE.Float32BufferAttribute(new Float32Array((boneType + 1) * 3), 3);
+            positions.setXYZ(boneType, position.x, position.y, position.z);
             fingerGeometry.setAttribute('position', positions);
+        }
+    }
+
+    public update(canvas: HTMLCanvasElement, hand: Leap.Hand) {
+        hand.fingers.forEach((finger) => {
+            const fingerLine = this.addFinger(finger.type);
+            finger.bones.forEach((bone) => {
+                const boneMesh = this.addBone(finger.type, bone.type);
+                const position = mapLeapToThreePosition(canvas, bone.center());
+                this.updateBonePosition(finger.type, bone.type, position);
+                this.updateFingerGeometry(finger.type, bone.type, position);
+            });
         });
-    });
+    }
 }
