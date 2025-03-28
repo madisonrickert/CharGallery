@@ -1,5 +1,7 @@
+import { Controller } from "leapjs";
+import { initLeap } from "./cymaticsLeapController";
 import * as THREE from "three";
-import { EffectComposer, ShaderPass } from "three-stdlib";
+import { EffectComposer, ShaderPass/*, RenderPass */} from "three-stdlib";
 
 import GPUComputationRenderer, { GPUComputationRendererVariable } from "../../common/gpuComputationRenderer";
 import { mirroredRepeat } from "../../common/math";
@@ -98,6 +100,11 @@ export class Cymatics extends ISketch {
     public composer!: EffectComposer;
     public audio!: CymaticsAudio;
 
+    public leapController!: Controller;
+
+    // public handScene = new THREE.Scene();
+    // public handCamera = new THREE.OrthographicCamera();
+
     public init() {
         this.renderer.setClearColor(0xfcfcfc);
         this.renderer.clear();
@@ -137,6 +144,27 @@ export class Cymatics extends ISketch {
         this.renderCymaticsPass.uniforms.cellStateResolution.value.set(this.computation.sizeX, this.computation.sizeY);
         this.composer.addPass(this.renderCymaticsPass);
         this.audio = new CymaticsAudio(this.audioContext);
+
+        // Leap Motion setup
+        this.leapController = initLeap(this, () => this.onLeapLoop(true), () => this.onLeapLoop(false));
+        // this.handScene.name = "Hand Scene";
+        // this.handCamera.position.z = 500;
+        // const handRenderPass = new RenderPass(this.handScene, this.handCamera);
+        // handRenderPass.renderToScreen = true;
+        // handRenderPass.clear = false;
+        // handRenderPass.clearDepth = true;
+        // this.composer.addPass(handRenderPass);
+    }
+
+    onLeapLoop(pinched: boolean): void {
+        console.log("pinched:", pinched);
+        if (pinched) {
+            mousePressed = true;
+            this.slowDownAmount += 1;
+            this.audio.triggerJitter();
+        } else {
+            mousePressed = false;
+        }
     }
 
     public simulationTime = 0;
