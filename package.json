@@ -5,6 +5,7 @@
   "scripts": {
     "lint": "eslint --ext .js,.jsx,.ts,.tsx .",
     "lint:fix": "eslint --ext .js,.jsx,.ts,.tsx . --fix",
+    "leap-websocket:macos": "bin/Ultraleap-Tracking-WS-macos-applesilicon",
     "start": "vite",
     "build": "vite build",
     "preview": "vite preview"
