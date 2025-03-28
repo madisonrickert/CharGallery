@@ -3,7 +3,7 @@ import { mapLeapToThreePosition } from "../../common/leap/util";
 import { HandMesh } from "../../common/leap/handMesh";
 import { LineSketch } from "./line";
 
-export function initLeap(sketch: LineSketch) {
+export function initLeap(sketch: LineSketch): Leap.Controller {
 	const controller = Leap.loop((frame: Leap.Frame) => {
         if (frame.hands.length > 0) {
             sketch.lastRenderedFrame = sketch.globalFrame;
