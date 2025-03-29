@@ -17,8 +17,8 @@ Start-Process "chrome.exe" -ArgumentList "--app=http://localhost:4173/cymatics",
 Start-Sleep -Seconds 2
 
 # Send F11 to toggle fullscreen in the window manager
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait("{F11}")
+# Add-Type -AssemblyName System.Windows.Forms
+# [System.Windows.Forms.SendKeys]::SendWait("{F11}")
 
 # Wait for the user to close the terminal
 Write-Output "Script running. Close the terminal to stop 'yarn preview'."
