@@ -171,11 +171,11 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
             try {
                 // create dependencies, setup sketch, and move to success state
                 // we are responsible for live-updating the global user volume.
-                const AudioContextConstructor: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
-                const audioContext = this.audioContext = new AudioContextConstructor() as SketchAudioContext;
+                const audioContext = this.audioContext = new AudioContext() as SketchAudioContext;
                 THREE.AudioContext.setContext(audioContext);
                 this.userVolume = audioContext.createGain();
-                this.userVolume.gain.setValueAtTime(0.8, 0);
+                // Set initial volume based on persisted state.
+                this.userVolume.gain.value = this.state.volumeEnabled ? 1 : 0;
                 this.userVolume.connect(audioContext.destination);
                 const audioContextGain = audioContext.gain = audioContext.createGain();
                 audioContextGain.connect(this.userVolume);
@@ -201,16 +201,7 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
     }
 
     public render() {
-        if (this.userVolume != null && this.audioContext != null) {
-            // this.userVolume.gain.value = this.state.volumeEnabled ? 1 : 0;
-            if (this.state.volumeEnabled && this.audioContext.state === "suspended") {
-                this.audioContext.resume();
-            } else if (!this.state.volumeEnabled && this.audioContext.state === "running") {
-                this.audioContext.suspend();
-            }
-        }
-
-        const { sketchClass, ...containerProps } = this.props;
+        const { sketchClass: _sketchClass, ...containerProps } = this.props;
         const className = classnames("sketch-component", this.state.status.type);
         return (
             <div {...containerProps} id={this.props.sketchClass.id} className={className} ref={this.handleContainerRef}>
@@ -221,6 +212,18 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
                 />
             </div>
         );
+    }
+
+    componentDidUpdate(prevProps: Readonly<ISketchComponentProps>, prevState: Readonly<ISketchComponentState>) {
+        if (prevState.volumeEnabled !== this.state.volumeEnabled && this.audioContext && this.userVolume) {
+            const volume = this.state.volumeEnabled ? 1 : 0;
+            this.userVolume.gain.value = volume;
+            if (this.state.volumeEnabled && this.audioContext.state === "suspended") {
+                this.audioContext.resume();
+            } else if (!this.state.volumeEnabled && this.audioContext.state === "running") {
+                this.audioContext.suspend();
+            }
+        }
     }
 
     private renderSketchOrStatus() {
