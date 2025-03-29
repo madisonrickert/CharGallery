@@ -7,7 +7,7 @@ import classnames from "classnames";
 import { Link } from "react-router-dom";
 import { ISketch, SketchAudioContext, SketchConstructor, UI_EVENTS, UIEventReciever } from "./sketch";
 import Cymatics from "./sketches/cymatics";
-import { VolumeButton } from "./volumeButton";
+import { VolumeButton } from "./components/volumeButton";
 import { HandData, HandOverlay } from "./components/HandOverlay";
 
 const $window = $(window);
