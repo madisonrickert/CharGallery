@@ -1,13 +1,15 @@
 import { Controller } from "leapjs";
-import { initLeap } from "./cymaticsLeapController";
+import Leap from "leapjs";
+import { mapLeapToThreePosition } from "../../common/leap/util";
 import * as THREE from "three";
 import { EffectComposer, ShaderPass/*, RenderPass */} from "three-stdlib";
 
 import GPUComputationRenderer, { GPUComputationRendererVariable } from "../../common/gpuComputationRenderer";
 import { mirroredRepeat } from "../../common/math";
-import { ISketch } from "../../sketch";
+import { ISketch, SketchAudioContext } from "../../sketch";
 import { CymaticsAudio } from "./audio";
 import { RenderCymaticsShader } from "./renderCymaticsShader";
+import { HandData } from "../../components/HandOverlay";
 
 import COMPUTE_CELL_STATE from "./computeCellState.frag";
 
@@ -39,7 +41,15 @@ const DEFAULT_NUM_CYCLES = 1.002;
 const GROW_AMOUNT_MIN = 0.0;
 
 export class Cymatics extends ISketch {
+    private updateHandDataCallback?: (handData: HandData[]) => void;
+
+    constructor(renderer: THREE.WebGLRenderer, audioContext: SketchAudioContext, updateHandDataCallback?: (handData: HandData[]) => void) {
+        super(renderer, audioContext);
+        this.updateHandDataCallback = updateHandDataCallback;
+    }
+
     public slowDownAmount = 0;
+    public handData: HandData[] = [];
     public events = {
         touchstart: (event: JQuery.Event) => {
             // prevent emulated mouse events from occuring
@@ -146,27 +156,34 @@ export class Cymatics extends ISketch {
         this.audio = new CymaticsAudio(this.audioContext);
 
         // Leap Motion setup
-        this.leapController = initLeap(this, () => this.onLeapLoop(true), () => this.onLeapLoop(false));
-        // this.handScene.name = "Hand Scene";
-        // this.handCamera.position.z = 500;
-        // const handRenderPass = new RenderPass(this.handScene, this.handCamera);
-        // handRenderPass.renderToScreen = true;
-        // handRenderPass.clear = false;
-        // handRenderPass.clearDepth = true;
-        // this.composer.addPass(handRenderPass);
-    }
-
-    onLeapLoop(pinched: boolean): void {
-        console.log("pinched:", pinched);
-        if (pinched) {
-            if (mousePressed === false) {
-                mousePressed = true;
-                this.slowDownAmount += 1;
-                this.audio.triggerJitter();
+        this.leapController = Leap.loop((frame: Leap.Frame) => {
+            const hands = frame.hands.filter((hand) => hand.valid);
+            const newHands = hands.map((hand, idx): HandData => {
+                const position = hand.indexFinger.bones[3].center();
+                const { x, y } = mapLeapToThreePosition(this.canvas, position);
+                return { index: idx, position: { x, y }, pinched: !hand.indexFinger.extended };
+            });
+            this.handData = newHands;
+            if (this.updateHandDataCallback) {
+                this.updateHandDataCallback(this.handData);
             }
-        } else {
-            mousePressed = false;
-        }
+            if (newHands.length === 0) {
+                mousePressed = false;
+                return;
+            }
+            const primaryHand = newHands[0];
+            const pinched = primaryHand && primaryHand.pinched;
+            this.setMouse(primaryHand.position.x, primaryHand.position.y);
+            if (pinched) {
+                if (!mousePressed) {
+                    mousePressed = true;
+                    this.slowDownAmount += 1;
+                    this.audio.triggerJitter();
+                }
+            } else {
+                mousePressed = false;
+            }
+        });
     }
 
     public simulationTime = 0;

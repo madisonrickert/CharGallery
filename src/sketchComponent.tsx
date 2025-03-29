@@ -6,7 +6,9 @@ import "./sketchComponent.scss";
 import classnames from "classnames";
 import { Link } from "react-router-dom";
 import { ISketch, SketchAudioContext, SketchConstructor, UI_EVENTS, UIEventReciever } from "./sketch";
+import Cymatics from "./sketches/cymatics";
 import { VolumeButton } from "./volumeButton";
+import { HandData, HandOverlay } from "./components/HandOverlay";
 
 const $window = $(window);
 
@@ -156,10 +158,11 @@ export interface ISketchComponentState {
     volumeEnabled: boolean;
 }
 
-export class SketchComponent extends React.Component<ISketchComponentProps, ISketchComponentState> {
-    public state: ISketchComponentState = {
-        status: { type: "loading" },
+export class SketchComponent extends React.Component<ISketchComponentProps, ISketchComponentState & { handData: HandData[] }> {
+    public state = {
+        status: { type: "loading" } as SketchStatus,
         volumeEnabled: JSON.parse(window.localStorage.getItem("sketch-volumeEnabled") || "true"),
+        handData: [] as HandData[],
     };
 
     private renderer?: THREE.WebGLRenderer;
@@ -186,8 +189,10 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
                     ref.appendChild(this.renderer.domElement);
                 }
 
-                const sketch = new (this.props.sketchClass)(this.renderer, this.audioContext);
-                this.setState({status: { type: "success", sketch: sketch }});
+                const sketchClassInstance = this.props.sketchClass === Cymatics
+                    ? new Cymatics(this.renderer, this.audioContext, this.handleHandDataUpdate)
+                    : new this.props.sketchClass(this.renderer, this.audioContext);
+                this.setState({ status: { type: "success", sketch: sketchClassInstance } });
             } catch (e) {
                 this.setState({ status: { type: "error", error: e instanceof Error ? e : new Error(String(e)) }});
                 console.error(e);
@@ -198,23 +203,14 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
                 this.audioContext.close();
             }
         }
-    }
+    };
 
-    public render() {
-        const { sketchClass: _sketchClass, ...containerProps } = this.props;
-        const className = classnames("sketch-component", this.state.status.type);
-        return (
-            <div {...containerProps} id={this.props.sketchClass.id} className={className} ref={this.handleContainerRef}>
-                {this.renderSketchOrStatus()}
-                <VolumeButton
-                    volumeEnabled={this.state.volumeEnabled}
-                    onClick={this.handleVolumeButtonClick}
-                />
-            </div>
-        );
-    }
+    private handleHandDataUpdate = (handData: HandData[]) => {
+        console.log('hand data updated');
+        this.setState({ handData: [...handData] });
+    };
 
-    componentDidUpdate(prevProps: Readonly<ISketchComponentProps>, prevState: Readonly<ISketchComponentState>) {
+    componentDidUpdate(prevProps: Readonly<ISketchComponentProps>, prevState: Readonly<ISketchComponentState & { handData: HandData[] }>) {
         if (prevState.volumeEnabled !== this.state.volumeEnabled && this.audioContext && this.userVolume) {
             const volume = this.state.volumeEnabled ? 1 : 0;
             this.userVolume.gain.value = volume;
@@ -226,11 +222,31 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
         }
     }
 
+    public render() {
+        const { sketchClass: _sketchClass, ...containerProps } = this.props;
+        const className = classnames("sketch-component", this.state.status.type);
+        return (
+            <div {...containerProps} id={this.props.sketchClass.id} className={className} ref={this.handleContainerRef}>
+                <div style={{ position: "relative" }}>
+                    {this.renderSketchOrStatus()}
+                </div>
+                <VolumeButton
+                    volumeEnabled={this.state.volumeEnabled}
+                    onClick={this.handleVolumeButtonClick}
+                />
+            </div>
+        );
+    }
+
     private renderSketchOrStatus() {
         const { status } = this.state;
         if (status.type === "success") {
-            // key on id to not destroy and re-create the component somehow
-            return <SketchSuccessComponent key={this.props.sketchClass.id} sketch={status.sketch} />;
+            return (
+                <>
+                    <SketchSuccessComponent key={this.props.sketchClass.id} sketch={status.sketch} />
+                    <HandOverlay hands={this.state.handData} />
+                </>
+            );
         } else if (status.type === "error") {
             const errorElement = this.props.errorElement || this.renderDefaultErrorElement(status.error.message);
             return errorElement;
