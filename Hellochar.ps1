@@ -1,5 +1,6 @@
-# Navigate to the target directory
-Set-Location -Path "C:\Users\Richd\OneDrive\Documents\Hellochar\hellochar2024"
+# Dynamically determine the script's directory
+$scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Definition
+Set-Location -Path $scriptDirectory
 
 # Run 'yarn start' in a separate process (without waiting for it to return)
 Write-Output "Running application server..."
