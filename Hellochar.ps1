@@ -4,7 +4,8 @@ Set-Location -Path $scriptDirectory
 
 # Run 'yarn start' in a separate process (without waiting for it to return)
 Write-Output "Running application server..."
-$yarnProcess = Start-Process "yarn" -ArgumentList "preview" -NoNewWindow -PassThru
+$yarnPath = Join-Path $env:APPDATA "\npm\node_modules\yarn\bin\yarn.js"
+$yarnProcess = Start-Process "node" -ArgumentList $yarnPath, "preview" -NoNewWindow -PassThru
 
 Write-Output "Waiting for 5 seconds before opening the browser..."
 Start-Sleep -Seconds 5
