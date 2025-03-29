@@ -206,8 +206,7 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
     };
 
     private handleHandDataUpdate = (handData: HandData[]) => {
-        console.log('hand data updated');
-        this.setState({ handData: [...handData] });
+        this.setState({ handData });
     };
 
     componentDidUpdate(prevProps: Readonly<ISketchComponentProps>, prevState: Readonly<ISketchComponentState & { handData: HandData[] }>) {

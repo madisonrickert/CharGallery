@@ -12,7 +12,6 @@ interface HandOverlayProps {
 }
 
 export const HandOverlay: React.FC<HandOverlayProps> = ({ hands }) => {
-  console.log(hands);
   return (
     <div 
       className="hand-overlay" 
