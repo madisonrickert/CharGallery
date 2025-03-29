@@ -9,8 +9,9 @@ In a command prompt, navigate to the project root folder (the same folder that c
 
 Install global dependencies. `npm i -g yarn`.
 
-Install local dependencies. `yarn install --ignore-engines`.
+Install local dependencies. `yarn install`.
 
+If using LeapMotion 5.x+, run the websocket server (see below).
 
 Run `yarn start` to start Vite dev server.
 
@@ -18,7 +19,10 @@ Deploying
 =========
 
 `yarn build` creates a deployable production build.
+`yarn preview` serves the production build.
 
 Leap Motion Requirements
 ========================
 Leap Motion Software is required for development or deployment. This application is compatible out of the box with the leap motion software 4.x, or Leapmotion 5.x-6.x (such as [LeapMotion Gemini](https://leap2.ultraleap.com/downloads/leap-motion-controller/))) using [this compatibility layer](https://github.com/ultraleap/UltraleapTrackingWebSocket).
+
+A pre-built binary for macOS Apple Silicon is included. Run it using `yarn leap-websocket:macos`.
