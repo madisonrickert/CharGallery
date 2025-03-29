@@ -9,6 +9,6 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills';
 export default defineConfig({
   plugins: [react(), glsl(), nodePolyfills(), eslint({})],
   build: {
-    outDir: 'public',
+    outDir: 'dist',
   },
 });
