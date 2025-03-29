@@ -34,7 +34,7 @@ export const HandOverlay: React.FC<HandOverlayProps> = ({ hands }) => {
             top: `${hand.position.y}px`,
             transform: "translate(-50%, -50%)",
             fontSize: "32px",
-            color: "#ffffff",
+            color: "rgba(255, 255, 255, 0.5)",
           }}
         >
           {hand.pinched ? <FaHandRock /> : <FaHandPaper />}
