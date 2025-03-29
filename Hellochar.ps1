@@ -11,7 +11,7 @@ Write-Output "Waiting for 5 seconds before opening the browser..."
 Start-Sleep -Seconds 5
 
 Write-Output "Opening browser to http://localhost:4173/cymatics in full screen..."
-Start-Process "chrome.exe" -ArgumentList "--app=http://localhost:4173/cymatics", "--start-fullscreen"
+Start-Process "chrome.exe" -ArgumentList "--app=http://localhost:4173/cymatics", "--start-fullscreen", "--autoplay-policy=no-user-gesture-required"
 
 # Wait for Chrome to launch
 Start-Sleep -Seconds 2
