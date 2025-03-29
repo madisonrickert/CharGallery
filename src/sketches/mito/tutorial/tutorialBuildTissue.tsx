@@ -1,6 +1,5 @@
 import React from "react";
 
-import { Entity } from "..";
 import { Action } from "../action";
 import { World } from "../game";
 import { Air, Leaf, Root, Soil, Tile, Tissue } from "../game/tile";

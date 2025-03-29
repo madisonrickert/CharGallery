@@ -4,7 +4,7 @@ import * as THREE from "three";
 import lazy from "../../../common/lazy";
 import { SceneObject } from "./sceneObject";
 
-export const TILE_HIGHLIGHT = lazy(() => {
+const TILE_HIGHLIGHT = lazy(() => {
     const geometry = new THREE.PlaneGeometry(1, 1);
     const edgesGeometry = new THREE.EdgesGeometry(geometry, 1); // or WireframeGeometry( geometry )
     const material = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 });
