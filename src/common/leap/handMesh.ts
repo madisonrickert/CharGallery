@@ -1,7 +1,7 @@
 import * as Leap from "leapjs";
 import * as THREE from 'three';
 import { mapLeapToThreePosition } from './util';
-import lazy from "../lazy";
+import lazy from "@/common/lazy";
 
 const boneGeometry = lazy(() => new THREE.SphereGeometry(10, 3, 3));
 const boneMeshMaterial = lazy(() => new THREE.MeshBasicMaterial({

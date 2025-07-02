@@ -1,8 +1,8 @@
 import { Vector2 } from "three";
 import { height, width } from "..";
-import lazy from "../../../common/lazy";
-import { Noise } from "../../../common/perlin";
-import { map } from "../../../common/math";
+import lazy from "@/common/lazy";
+import { Noise } from "@/common/perlin";
+import { map } from "@/common/math";
 import { params } from "../params";
 import { Fountain, Rock, Soil, Tile } from "./tile";
 import { World } from "./world";

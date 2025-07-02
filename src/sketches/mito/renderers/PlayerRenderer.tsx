@@ -1,6 +1,6 @@
 import { Color, DoubleSide, Mesh, MeshBasicMaterial, PlaneGeometry, Scene } from "three";
 
-import devlog from "../../../common/devlog";
+import devlog from "@/common/devlog";
 import { ActionMove } from "../action";
 import { Player } from "../game";
 import { lerp2, Mito } from "../index";

@@ -1,7 +1,7 @@
 import { Color, DoubleSide, PointsMaterial, Scene, Vector2, Vector3 } from "three";
 
-import lazy from "../../../common/lazy";
-import { map } from "../../../common/math";
+import lazy from "@/common/lazy";
+import { map } from "@/common/math";
 import { Mito } from "../index";
 import { Inventory } from "../inventory";
 import { textureFromSpritesheet } from "../spritesheet";

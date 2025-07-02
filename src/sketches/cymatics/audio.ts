@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
-import { AudioClip, createWhiteNoise } from "../../audio";
-import { SketchAudioContext } from "../../sketch";
+import { AudioClip, createWhiteNoise } from "@/audio";
+import { SketchAudioContext } from "@/sketch";
 
 interface OscillatorWithGain extends OscillatorNode {
     gain: GainNode;

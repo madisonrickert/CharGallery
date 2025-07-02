@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-import { map } from "../math";
+import { map } from "@/common/math";
 
 export function mapLeapToThreePosition(canvas: HTMLCanvasElement, position: number[]) {
     const range = [0.2, 0.8];

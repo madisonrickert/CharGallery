@@ -1,7 +1,7 @@
 import { Vector2 } from "three";
 
-import { Noise } from "../../../common/perlin";
-import { map } from "../../../common/math";
+import { Noise } from "@/common/perlin";
+import { map } from "@/common/math";
 import { Constructor } from "../constructor";
 import { DIRECTIONS } from "../directions";
 import { height, width } from "../index";

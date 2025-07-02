@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import devlog from "../../common/devlog";
-import lazy from "../../common/lazy";
+import devlog from "@/common/devlog";
+import lazy from "@/common/lazy";
 
 const spriteSize = 16; // 16x16 sprites
 let spritesheetLoaded = false;

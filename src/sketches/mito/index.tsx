@@ -1,9 +1,9 @@
 import React from "react";
 import * as THREE from "three";
 import { Object3D, OrthographicCamera, Scene, Vector3 } from "three";
-import devlog from "../../common/devlog";
-import { map } from "../../common/math";
-import { ISketch } from "../../sketch";
+import devlog from "@/common/devlog";
+import { map } from "@/common/math";
+import { ISketch } from "@/sketch";
 import { Action, ActionBuild, ActionBuildTransport } from "./action";
 import { drums, hookUpAudio, strings } from "./audio";
 import { Constructor } from "./constructor";

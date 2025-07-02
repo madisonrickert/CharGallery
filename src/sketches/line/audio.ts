@@ -1,5 +1,5 @@
-import { AudioClip } from "../../audio";
-import { SketchAudioContext } from "../../sketch";
+import { AudioClip } from "@/audio";
+import { SketchAudioContext } from "@/sketch";
 import { AudioGroup } from "./types";
 
 export function createAudioGroup(ctx: SketchAudioContext): AudioGroup {

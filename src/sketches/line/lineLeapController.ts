@@ -1,6 +1,6 @@
 import * as Leap from "leapjs";
-import { mapLeapToThreePosition } from "../../common/leap/util";
-import { HandMesh } from "../../common/leap/handMesh";
+import { mapLeapToThreePosition } from "@/common/leap/util";
+import { HandMesh } from "@/common/leap/handMesh";
 import { LineSketch } from "./line";
 
 export function initLeap(sketch: LineSketch): Leap.Controller {

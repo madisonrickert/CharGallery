@@ -1,15 +1,15 @@
 import { Controller } from "leapjs";
 import Leap from "leapjs";
-import { mapLeapToThreePosition } from "../../common/leap/util";
+import { mapLeapToThreePosition } from "@/common/leap/util";
 import * as THREE from "three";
 import { EffectComposer, ShaderPass/*, RenderPass */} from "three-stdlib";
 
-import GPUComputationRenderer, { GPUComputationRendererVariable } from "../../common/gpuComputationRenderer";
-import { mirroredRepeat } from "../../common/math";
-import { ISketch, SketchAudioContext } from "../../sketch";
+import GPUComputationRenderer, { GPUComputationRendererVariable } from "@/common/gpuComputationRenderer";
+import { mirroredRepeat } from "@/common/math";
+import { ISketch, SketchAudioContext } from "@/sketch";
 import { CymaticsAudio } from "./audio";
 import { RenderCymaticsShader } from "./renderCymaticsShader";
-import { HandData } from "../../components/HandOverlay";
+import { HandData } from "@/components/HandOverlay";
 
 import COMPUTE_CELL_STATE from "./computeCellState.frag";
 

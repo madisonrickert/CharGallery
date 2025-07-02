@@ -4,13 +4,12 @@ import { ShaderPass, RenderPass, EffectComposer } from "three-stdlib";
 import { AudioGroup } from "./types";
 
 import queryString from "query-string";
-import { GravityShader } from "../../common/gravityShader";
-import lazy from "../../common/lazy";
-import { computeStats, createParticle, createParticlePoints, IParticle, makeAttractor, ParticleSystem } from "../../common/particleSystem";
-import { triangleWaveApprox } from "../../common/math";
-import { ISketch } from "../../sketch";
+import { GravityShader } from "@/common/gravityShader";
+import { computeStats, createParticle, createParticlePoints, IParticle, makeAttractor, ParticleSystem } from "@/common/particleSystem";
+import { triangleWaveApprox } from "@/common/math";
+import { ISketch } from "@/sketch";
 import { createAudioGroup } from "./audio";
-import { ScreenSaver } from "../../common/screenSaver/screenSaver";
+import { ScreenSaver } from "@/common/screenSaver/screenSaver";
 import { initLeap } from "./lineLeapController";
 
 export class LineSketch extends ISketch {

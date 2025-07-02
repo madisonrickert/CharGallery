@@ -1,5 +1,5 @@
-import { createWhiteNoise } from "../../audio/noise";
-import { SketchAudioContext } from "../../sketch";
+import { createWhiteNoise } from "@/audio/noise";
+import { SketchAudioContext } from "@/sketch";
 
 export function createAudioGroup(audioContext: SketchAudioContext) {
     // white noise

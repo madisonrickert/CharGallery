@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import lazy from "../../common/lazy";
-import { HandMesh } from "../../common/leap/handMesh";
+import lazy from "@/common/lazy";
+import { HandMesh } from "@/common/leap/handMesh";
 
 const attractorGeometry = lazy(() => new THREE.RingGeometry(15, 18, 32));
 const attractorMaterialSolid = lazy(() => new THREE.MeshBasicMaterial({

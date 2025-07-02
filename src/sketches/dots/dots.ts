@@ -3,10 +3,10 @@ import queryString from "query-string";
 import * as THREE from "three";
 import { ShaderPass, EffectComposer, RenderPass } from "three-stdlib";
 
-import { ExplodeShader } from "../../common/explodeShader";
-import lazy from "../../common/lazy";
-import { computeStats, createParticle, createParticlePoints, IParticle, makeAttractor, ParticleSystem, ParticleSystemParameters } from "../../common/particleSystem";
-import { ISketch } from "../../sketch";
+import { ExplodeShader } from "@/common/explodeShader";
+import lazy from "@/common/lazy";
+import { computeStats, createParticle, createParticlePoints, IParticle, makeAttractor, ParticleSystem, ParticleSystemParameters } from "@/common/particleSystem";
+import { ISketch } from "@/sketch";
 import { createAudioGroup } from "./audio";
 
 const params: ParticleSystemParameters = {
