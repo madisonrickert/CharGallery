@@ -72,14 +72,12 @@ export class ParticleSystem {
         const dragConstant = hasAttractors ? BAKED_PULLING_DRAG_CONSTANT : BAKED_INERTIAL_DRAG_CONSTANT;
         const sizeScaledGravityConstant = GRAVITY_CONSTANT * Math.min(Math.pow(2, canvas.width / 836 - 1), 1);
         for (const particle of particles) {
-
-            for (let j = 0; j < nonzeroAttractors.length; j++) {
-                const attractor = nonzeroAttractors[j];
+            for (const attractor of nonzeroAttractors) {
                 const dx = attractor.x - particle.x;
                 const dy = attractor.y - particle.y;
-                const length2 = Math.sqrt(dx * dx + dy * dy);
-                const forceX = attractor.power * sizeScaledGravityConstant * dx / length2;
-                const forceY = attractor.power * sizeScaledGravityConstant * dy / length2;
+                const distance = Math.sqrt(dx * dx + dy * dy) + 1e-6;
+                const forceX = attractor.power * sizeScaledGravityConstant * dx / distance;
+                const forceY = attractor.power * sizeScaledGravityConstant * dy / distance;
 
                 particle.dx += forceX * timeStep;
                 particle.dy += forceY * timeStep;
