@@ -1,9 +1,9 @@
 import $ from "jquery";
 import queryString from "query-string";
 import * as THREE from "three";
-import { ShaderPass, EffectComposer, RenderPass } from "three-stdlib";
+import { EffectComposer, RenderPass } from "three-stdlib";
 
-import { ExplodeShader } from "@/common/explodeShader";
+import { ExplodeShaderPass } from "@/common/shaders/explode";
 import { computeStats, createParticle, createParticlePoints, IParticle, makeAttractor, ParticleSystem, ParticleSystemParameters } from "@/common/particleSystem";
 import { ISketch } from "@/sketch";
 import { createAudioGroup } from "./audio";
@@ -98,7 +98,7 @@ class Dots extends ISketch {
         touchend,
     };
 
-    public shader = new ShaderPass(ExplodeShader);
+    public shader = new ExplodeShaderPass();
     public audioGroup: any;
     public camera!: THREE.OrthographicCamera;
     public composer!: EffectComposer;
