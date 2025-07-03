@@ -86,7 +86,7 @@ export class LineSketch extends ISketch {
     public globalFrame = 0;
     public lastRenderedFrame = -Infinity;
 
-    public audioGroup: AudioGroup | null = null;
+    public audioGroup!: AudioGroup;
     public particles: IParticle[] = [];
     public returnToStartPower = 0.0;
 
@@ -145,9 +145,6 @@ export class LineSketch extends ISketch {
     }
 
     public animate(_millisElapsed: number) {
-        if (this.audioGroup === null) {
-            return;
-        }
         this.attractors.forEach((attractor) => {
             attractor.mesh.position.z = -100;
             attractor.mesh.children.forEach((child, idx) => {
