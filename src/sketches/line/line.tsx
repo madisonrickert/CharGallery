@@ -1,8 +1,6 @@
 import { Controller } from "leapjs";
 import * as THREE from "three";
 import { RenderPass, EffectComposer } from "three-stdlib";
-import { AudioGroup } from "./types";
-
 import queryString from "query-string";
 import { GravityShaderPass } from "@/common/shaders/gravity";
 import { computeStats, createParticle, createParticlePoints, IParticle, makeAttractor, ParticleSystem } from "@/common/particleSystem";
@@ -12,17 +10,26 @@ import { createAudioGroup } from "./audio";
 import { starMaterial } from "@/common/materials/starMaterial";
 import { ScreenSaver } from "@/common/screenSaver/screenSaver";
 import { initLeap } from "./lineLeapController";
+import { AudioGroup } from "./types";
+
+const PARTICLE_SYSTEM_PARAMS = {
+    GRAVITY_CONSTANT: 280,
+    INERTIAL_DRAG_CONSTANT: 0.53913643334,
+    PULLING_DRAG_CONSTANT: 0.93075095702,
+    timeStep: 0.016 * 2,
+    STATIONARY_CONSTANT: 0.0,
+    constrainToBox: true,
+};
 
 export class LineSketch extends ISketch {
-
     public events = {
         touchstart: (event: JQuery.Event) => {
-            // prevent emulated mouse events from occuring
+            // Prevent emulated mouse events from occuring
             event.preventDefault();
             const touch = ((event as JQuery.TouchStartEvent).originalEvent as TouchEvent).touches[0];
             const touchX = touch.pageX;
             let touchY = touch.pageY;
-            // offset the touchY by its radius so the attractor is above the thumb
+            // Offset the touchY by its radius so the attractor is above the thumb
             touchY -= 100;
 
             this.mouseX = touchX;
@@ -74,13 +81,6 @@ export class LineSketch extends ISketch {
         />
     ];
     public screenSaver: ScreenSaver | null = null;
-    public attractors = [
-        makeAttractor(),
-        makeAttractor(),
-        makeAttractor(),
-        makeAttractor(),
-        makeAttractor(),
-    ];
 
     // TODO move into core sketch
     public globalFrame = 0;
@@ -88,41 +88,54 @@ export class LineSketch extends ISketch {
 
     public audioGroup!: AudioGroup;
     public particles: IParticle[] = [];
-    // public returnToStartPower = 0.0;
 
     // TODO move into core isketch
     public mouseX = 0;
     public mouseY = 0;
 
+    // Three.js & Rendering
+    public attractors = [
+        makeAttractor(),
+        makeAttractor(), // @todo Do we actually need multiple attractors?
+        makeAttractor(),
+        makeAttractor(),
+        makeAttractor(),
+    ];
     public camera = new THREE.OrthographicCamera(0, 0, 0, 0, 1, 1000);
     public gravityShaderPass = new GravityShaderPass();
     public scene = new THREE.Scene();
-
     public points!: THREE.Points;
     public leapController!: Controller;
     public composer!: EffectComposer;
-
     public ps!: ParticleSystem;
 
     public init() {
+        // Set up audio
         this.audioGroup = createAudioGroup(this.audioContext);
+
+        // Set up camera and scene
         this.resize(this.canvas.width, this.canvas.height);
         this.camera.position.z = 500;
 
-        this.attractors.forEach((attractor) => {
+        // Add attractor meshes to scene
+        for (const attractor of this.attractors) {
             this.scene.add(attractor.mesh);
-        });
+        }
 
+        // Determine number of particles (query param or device type)
         const NUM_PARTICLES = Number(queryString.parse(location.search).p) ||
             // cheap mobile detection
             (screen.width > 1024 ? 20000 : 5000);
+        
+        // Evenly space particles across the middle of the screen in a line
         for (let i = 0; i < NUM_PARTICLES; i++) {
             this.particles.push(createParticle(
                 i / NUM_PARTICLES * this.canvas.width,
-                this.canvas.height / 2 + ((i % 5) - 2) * 2,
+                this.canvas.height / 2 + ((i % 5) - 2) * 2, // Very subtle sawtooth wave
             ));
         }
 
+        // Set up particle system and points
         this.ps = new ParticleSystem(
             this.canvas,
             this.particles,
@@ -131,6 +144,7 @@ export class LineSketch extends ISketch {
         this.points = createParticlePoints(this.particles, starMaterial);
         this.scene.add(this.points);
 
+        // Set up postprocessing composer and passes
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
         this.gravityShaderPass.uniforms.iResolution.value = new THREE.Vector2(this.canvas.width, this.canvas.height);
@@ -141,12 +155,15 @@ export class LineSketch extends ISketch {
         this.gravityShaderPass.renderToScreen = true;
         this.composer.addPass(this.gravityShaderPass);
 
+        // Set up Leap Motion controller
         this.leapController = initLeap(this);
     }
 
     public animate(_millisElapsed: number) {
-        this.attractors.forEach((attractor) => {
-            attractor.mesh.position.z = -100;
+        // Animate attractors
+        // @todo does this even do anything?
+        for (const attractor of this.attractors) {
+            attractor.mesh.position.z = -100; // @todo: this doesn't need to be set every frame
             attractor.mesh.children.forEach((child, idx) => {
                 child.rotation.y += (10 - idx) / 20 * attractor.power;
             });
@@ -154,25 +171,22 @@ export class LineSketch extends ISketch {
             const scale = Math.sqrt(attractor.power) / 5;
             attractor.mesh.scale.set(scale, scale, scale);
             if (attractor.power > 0) {
-                // tend towards power 2
+                // Smoothly tend towards power 2
                 attractor.power = attractor.power * 0.5 + 2 * 0.5;
             }
-            // if (attractor.power > 0 && attractor.power < 1400) {
-            //     // attractor.power += (100 - attractor.power) * 0.001;
-            //     attractor.power *= 1.005;
-            // }
-        });
+        }
 
-        this.gravityShaderPass.uniforms.iMouse.value.set(this.attractors[0].x, this.renderer.domElement.height - this.attractors[0].y);
+        // Update shader with attractor position
+        this.gravityShaderPass.uniforms.iMouse.value.set(
+            this.attractors[0].x,
+            this.renderer.domElement.height - this.attractors[0].y
+        );
 
-        // if (this.returnToStartPower > 0 && this.returnToStartPower < 1) {
-        //     this.returnToStartPower *= 1.01;
-        // }
-
+        // Step particles with active attractors
         const nonzeroAttractors = this.attractors.filter((attractor) => attractor.power !== 0);
         this.ps.stepParticles(nonzeroAttractors);
 
-        // Update particle positions
+        // Update particle positions in geometry
         const positionAttr = this.points.geometry.getAttribute('position');
         for (let i = 0; i < this.particles.length; i++) {
             const particle = this.particles[i];
@@ -180,35 +194,34 @@ export class LineSketch extends ISketch {
         }
         positionAttr.needsUpdate = true;
 
-        const { /* averageX, averageY, */ groupedUpness, /* normalizedAverageVel, */ normalizedVarianceLength, flatRatio, normalizedEntropy } =
-            computeStats(this.ps);
+        // --- Audio Feedback ---
+        const {
+            groupedUpness,
+            normalizedVarianceLength,
+            flatRatio,
+            normalizedEntropy
+        } = computeStats(this.ps);
 
         this.audioGroup.sourceLfo.frequency.setTargetAtTime(flatRatio, 0, 0.016);
         if (normalizedEntropy !== 0) {
-            this.
-                audioGroup.setFrequency(222 / normalizedEntropy);
-                // audioGroup.setFrequency(220 + 600 * normalizedAverageVel);
+            this.audioGroup.setFrequency(222 / normalizedEntropy);
         }
-
-        // const noiseFreq = 2000 * (Math.pow(8, normalizedVarianceLength) / 8);
         const noiseFreq = 2000 * normalizedVarianceLength;
         this.audioGroup.setNoiseFrequency(noiseFreq);
-
         this.audioGroup.setVolume(Math.max(groupedUpness - 0.05, 0) * 5.);
-
-        // const mouseDistanceToCenter = Math.sqrt(Math.pow(this.mouseX - averageX, 2) + Math.pow(this.mouseY - averageY, 2));
-        // const normalizedMouseDistanceToCenter = mouseDistanceToCenter / Math.sqrt(this.canvas.width * this.canvas.height);
-        // const backgroundVolume = 0.33 / (1 + normalizedMouseDistanceToCenter * normalizedMouseDistanceToCenter);
         const backgroundVolume = 1.00;
         this.audioGroup.setBackgroundVolume(backgroundVolume);
 
+        // --- Shader Uniforms ---
         this.gravityShaderPass.uniforms.iGlobalTime.value = performance.now() / 1000;
         this.gravityShaderPass.uniforms.G.value = triangleWaveApprox(performance.now() / 5000) * (groupedUpness + 0.50) * 15000;
         this.gravityShaderPass.uniforms.iMouseFactor.value = (1 / 15) / (groupedUpness + 1);
-        // filter.uniforms['iMouse'].value = new THREE.Vector2(averageX, canvas.height - averageY);
-        
+
+        // --- Render ---
         this.composer.render();
         this.globalFrame++;
+
+        // --- Screen Saver Logic ---
         if (this.screenSaver != null) {
             const isLeapMotionControllerValid = this.leapController.lastFrame.valid;
             const numSecondsToShowScreenSaver = 10;
@@ -216,9 +229,7 @@ export class LineSketch extends ISketch {
                 !(this.globalFrame - this.lastRenderedFrame < 60 * numSecondsToShowScreenSaver) &&
                 isLeapMotionControllerValid;
 
-            if (this.screenSaver) {
-                this.screenSaver.setState({ shouldShow }); // Dynamically update shouldShow
-            }
+            this.screenSaver.setState({ shouldShow }); // Dynamically update shouldShow
         }
     }
 
@@ -226,7 +237,6 @@ export class LineSketch extends ISketch {
         this.camera.right = width;
         this.camera.bottom = height;
         this.camera.updateProjectionMatrix();
-
         this.gravityShaderPass.uniforms.iResolution.value = new THREE.Vector2(width, height);
     }
 
@@ -235,12 +245,12 @@ export class LineSketch extends ISketch {
         this.mouseY = my;
     }
 
+    // --- Attractor Controls ---
     public enableFirstAttractor(x: number, y: number) {
         const attractor = this.attractors[0];
         attractor.x = x;
         attractor.y = y;
         attractor.power = 20;
-        // this.returnToStartPower = 0;
     }
 
     public moveFirstAttractor(x: number, y: number) {
@@ -255,12 +265,3 @@ export class LineSketch extends ISketch {
         attractor.power = 0;
     }
 }
-
-const PARTICLE_SYSTEM_PARAMS = {
-    GRAVITY_CONSTANT: 280,
-    INERTIAL_DRAG_CONSTANT: 0.53913643334,
-    PULLING_DRAG_CONSTANT: 0.93075095702,
-    timeStep: 0.016 * 2,
-    STATIONARY_CONSTANT: 0.0,
-    constrainToBox: true,
-};

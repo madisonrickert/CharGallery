@@ -50,9 +50,16 @@ export abstract class ISketch {
         return this.renderer.domElement;
     }
 
+    /**
+     * Called in componentDidMount of the Sketch component.
+     */
     abstract init(): void;
 
-    abstract animate(millisElapsed: number): void;
+    /**
+     * Called once per frame to animate the sketch.
+     * @param _millisElapsed Time elapsed since the last frame in milliseconds.
+     */
+    abstract animate(_millisElapsed: number): void;
 
     render?(): React.ReactNode;
 
