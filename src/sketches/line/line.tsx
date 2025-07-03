@@ -88,7 +88,7 @@ export class LineSketch extends ISketch {
 
     public audioGroup!: AudioGroup;
     public particles: IParticle[] = [];
-    public returnToStartPower = 0.0;
+    // public returnToStartPower = 0.0;
 
     // TODO move into core isketch
     public mouseX = 0;
@@ -165,9 +165,9 @@ export class LineSketch extends ISketch {
 
         this.gravityShaderPass.uniforms.iMouse.value.set(this.attractors[0].x, this.renderer.domElement.height - this.attractors[0].y);
 
-        if (this.returnToStartPower > 0 && this.returnToStartPower < 1) {
-            this.returnToStartPower *= 1.01;
-        }
+        // if (this.returnToStartPower > 0 && this.returnToStartPower < 1) {
+        //     this.returnToStartPower *= 1.01;
+        // }
 
         const nonzeroAttractors = this.attractors.filter((attractor) => attractor.power !== 0);
         this.ps.stepParticles(nonzeroAttractors);
@@ -240,8 +240,7 @@ export class LineSketch extends ISketch {
         attractor.x = x;
         attractor.y = y;
         attractor.power = 20;
-        this.gravityShaderPass.uniforms.iMouse.value.set(x, this.renderer.domElement.height - y);
-        this.returnToStartPower = 0;
+        // this.returnToStartPower = 0;
     }
 
     public moveFirstAttractor(x: number, y: number) {
