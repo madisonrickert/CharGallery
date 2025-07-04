@@ -29,11 +29,11 @@ export function initLeap(sketch: LineSketch): Leap.Controller {
 
             attractor.mesh.visible = true;
             if (hand.indexFinger.extended) {
+                attractor.power = attractor.power * 0.5;
+            } else {
                 // position[2] goes from -300 to 300
                 const wantedPower = Math.pow(7, (-position[2] + 350) / 200);
                 attractor.power = attractor.power * 0.5 + wantedPower * 0.5;
-            } else {
-                attractor.power = attractor.power * 0.5;
             }
 
             if (attractor.handMesh == null) {
