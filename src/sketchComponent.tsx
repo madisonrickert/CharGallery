@@ -4,7 +4,7 @@ import * as THREE from "three";
 import "./sketchComponent.scss";
 
 import classnames from "classnames";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { ISketch, SketchAudioContext, SketchConstructor, UI_EVENTS, UIEventReciever } from "./sketch";
 import Cymatics from "./sketches/cymatics";
 import { VolumeButton } from "./components/volumeButton";

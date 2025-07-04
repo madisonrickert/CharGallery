@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router";
 import { HomePage } from "./routes/homePage";
 import { SketchComponent } from "./sketchComponent";
 import { useHotkeys } from 'react-hotkeys-hook';
