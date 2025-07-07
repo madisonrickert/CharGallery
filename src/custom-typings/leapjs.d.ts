@@ -1,323 +1,76 @@
-// most of this is taken from https://github.com/logotype/LeapMotionTS/blob/master/build/leapmotionts-2.2.4.d.ts
+// much of this is taken from https://github.com/logotype/LeapMotionTS/blob/master/build/leapmotionts-2.2.4.d.ts
 declare module 'leapjs' {
     import EventEmitter from "events";
 
+    /**
+     * The Leap.loop() function passes a frame of Leap data to your
+     * callback function and then calls window.requestAnimationFrame() after
+     * executing your callback function.
+     *
+     * Leap.loop() sets up the Leap controller and WebSocket connection for you.
+     * You do not need to create your own controller when using this method.
+     *
+     * Your callback function is called on an interval determined by the client
+     * browser. Typically, this is on an interval of 60 frames/second. The most
+     * recent frame of Leap data is passed to your callback function. If the Leap
+     * is producing frames at a slower rate than the browser frame rate, the same
+     * frame of Leap data can be passed to your function in successive animation
+     * updates.
+     *
+     * As an alternative, you can create your own Controller object and use a
+     * {@link Controller#onFrame onFrame} callback to process the data at
+     * the frame rate of the Leap device. See {@link Controller} for an
+     * example.
+     *
+     * @method Leap.loop
+     * @param {function} callback A function called when the browser is ready to
+     * draw to the screen. The most recent {@link Frame} object is passed to
+     * your callback function.
+     *
+     * ```javascript
+     *    Leap.loop( function( frame ) {
+     *        // ... your code here
+     *    })
+     * ```
+     */
     export function loop(cb: (frame: Frame) => void): Controller;
+
     /**
-     * The EventDispatcher class provides strongly typed events.
-     */
-    export class EventDispatcher {
-        private listeners;
-        constructor();
-        hasEventListener(type: string, listener: (event: LeapEvent) => void): boolean;
-        addEventListener(typeStr: string, listenerFunction: (event: LeapEvent) => void): void;
-        removeEventListener(typeStr: string, listenerFunction: (event: LeapEvent) => void): void;
-        dispatchEvent(event: LeapEvent): void;
-    }
-    /**
-     * The Listener interface defines a set of callback functions that you can
-     * implement to respond to events dispatched by the Leap.
+     * Constructs a Controller object.
+     * 
+     * When creating a Controller object, you may optionally pass in options
+     * to set the host , set the port, or select the frame event type.
      *
-     * <p>To handle Leap events, implement the Listener interface and assign
-     * it to the Controller instance. The Controller calls the relevant Listener
-     * callback when an event occurs, passing in a reference to itself.
-     * You have to implement callbacks for every method specified in the interface.</p>
+     * ```javascript
+     * var controller = new Leap.Controller({
+     *   host: '127.0.0.1',
+     *   port: 6437,
+     *   frameEventName: 'animationFrame'
+     * });
+     * ```
      *
-     * <p>Note: you have to create an instance of the LeapMotion class and set the Listener to your class:</p>
-     *
-     * <listing>
-     * leap = new LeapMotion();
-     * leap.controller.setListener( this );</listing>
-     *
-     * @author logotype
-     *
-     */
-    export interface Listener {
-        /**
-         * Called when the Controller object connects to the Leap software,
-         * or when this Listener object is added to a Controller that is already connected.
-         *
-         * @param controller The Controller object invoking this callback function.
-         *
-         */
-        onConnect(controller: Controller): void;
-        /**
-         * Called when the Controller object disconnects from the Leap software.
-         *
-         * <p>The controller can disconnect when the Leap device is unplugged,
-         * the user shuts the Leap software down, or the Leap software encounters
-         * an unrecoverable error.</p>
-         *
-         * <listing>
-         * public onDisconnect( controller:Controller ):void {
-         *     trace( "Disconnected" );
-         * }</listing>
-         *
-         * <p>Note: When you launch a Leap-enabled application in a debugger,
-         * the Leap library does not disconnect from the application.
-         * This is to allow you to step through code without losing the connection
-         * because of time outs.</p>
-         *
-         * @param controller The Controller object invoking this callback function.
-         *
-         */
-        onDisconnect(controller: Controller): void;
-        /**
-         * Called when this Listener object is removed from the Controller or
-         * the Controller instance is destroyed.
-         *
-         * <listing>
-         * public onExit( controller:Controller ):void {
-         *     trace( "Exited" );
-         * }</listing>
-         *
-         * @param controller The Controller object invoking this callback function.
-         *
-         */
-        onExit(controller: Controller): void;
-        /**
-         * Called when a new frame of hand and finger tracking data is available.
-         *
-         * <p>Access the new frame data using the <code>controller.frame()</code> function.</p>
-         *
-         * <listing>
-         * public onFrame( controller:Controller, frame:Frame ):void {
-         *     trace( "New frame" );
-         * }</listing>
-         *
-         * <p>Note, the Controller skips any pending onFrame events while your
-         * onFrame handler executes. If your implementation takes too long to
-         * return, one or more frames can be skipped. The Controller still inserts
-         * the skipped frames into the frame history. You can access recent frames
-         * by setting the history parameter when calling the <code>controller.frame()</code>
-         * function. You can determine if any pending onFrame events were skipped
-         * by comparing the ID of the most recent frame with the ID of the last
-         * received frame.</p>
-         *
-         * @param controller The Controller object invoking this callback function.
-         * @param frame The most recent frame object.
-         *
-         */
-        onFrame(controller: Controller, frame: Frame): void;
-        /**
-         * Called once, when this Listener object is newly added to a Controller.
-         *
-         * <listing>
-         * public onInit( controller:Controller ):void {
-         *     trace( "Init" );
-         * }</listing>
-         *
-         * @param controller The Controller object invoking this callback function.
-         *
-         */
-        onInit(controller: Controller): void;
-    }
-    export class DefaultListener extends EventDispatcher implements Listener {
-        constructor();
-        onConnect(controller: Controller): void;
-        onDisconnect(controller: Controller): void;
-        onExit(controller: Controller): void;
-        onFrame(controller: Controller, frame: Frame): void;
-        onInit(controller: Controller): void;
-    }
-    export class LeapEvent {
-        static LEAPMOTION_INIT: string;
-        static LEAPMOTION_CONNECTED: string;
-        static LEAPMOTION_DISCONNECTED: string;
-        static LEAPMOTION_EXIT: string;
-        static LEAPMOTION_FRAME: string;
-        private _type;
-        private _target;
-        frame: Frame;
-        constructor(type: string, targetListener: Listener, frame?: Frame);
-        getTarget(): any;
-        getType(): string;
-    }
-    /**
-     * LeapUtil is a collection of static utility functions.
-     *
-     */
-    export class LeapUtil {
-        /** The constant pi as a single precision floating point number. */
-        static PI: number;
-        /**
-         * The constant ratio to convert an angle measure from degrees to radians.
-         * Multiply a value in degrees by this constant to convert to radians.
-         */
-        static DEG_TO_RAD: number;
-        /**
-         * The constant ratio to convert an angle measure from radians to degrees.
-         * Multiply a value in radians by this constant to convert to degrees.
-         */
-        static RAD_TO_DEG: number;
-        /**
-         * Pi &#42; 2.
-         */
-        static TWO_PI: number;
-        /**
-         * Pi &#42; 0.5.
-         */
-        static HALF_PI: number;
-        /**
-         * Represents the smallest positive single value greater than zero.
-         */
-        static EPSILON: number;
-        constructor();
-        /**
-         * Convert an angle measure from radians to degrees.
-         *
-         * @param radians
-         * @return The value, in degrees.
-         *
-         */
-        static toDegrees(radians: number): number;
-        /**
-         * Determines if a value is equal to or less than 0.00001.
-         *
-         * @return True, if equal to or less than 0.00001; false otherwise.
-         */
-        static isNearZero(value: number): boolean;
-        /**
-         * Determines if all Vector3 components is equal to or less than 0.00001.
-         *
-         * @return True, if equal to or less than 0.00001; false otherwise.
-         */
-        static vectorIsNearZero(inVector: Vector3): boolean;
-        /**
-         * Create a new matrix with just the rotation block from the argument matrix
-         */
-        static extractRotation(mtxTransform: Matrix): Matrix;
-        /**
-         * Returns a matrix representing the inverse rotation by simple transposition of the rotation block.
-         */
-        static rotationInverse(mtxRot: Matrix): Matrix;
-        /**
-         * Returns a matrix that is the orthonormal inverse of the argument matrix.
-         * This is only valid if the input matrix is orthonormal
-         * (the basis vectors are mutually perpendicular and of length 1)
-         */
-        static rigidInverse(mtxTransform: Matrix): Matrix;
-        static componentWiseMin(vLHS: Vector3, vRHS: Vector3): Vector3;
-        static componentWiseMax(vLHS: Vector3, vRHS: Vector3): Vector3;
-        static componentWiseScale(vLHS: Vector3, vRHS: Vector3): Vector3;
-        static componentWiseReciprocal(inVector: Vector3): Vector3;
-        static minComponent(inVector: Vector3): number;
-        static maxComponent(inVector: Vector3): number;
-        /**
-         * Compute the polar/spherical heading of a vector direction in z/x plane
-         */
-        static heading(inVector: Vector3): number;
-        /**
-         * Compute the spherical elevation of a vector direction in y above the z/x plane
-         */
-        static elevation(inVector: Vector3): number;
-        /**
-         * Set magnitude to 1 and bring heading to [-Pi,Pi], elevation into [-Pi/2, Pi/2]
-         *
-         * @param vSpherical The Vector3 to convert.
-         * @return The normalized spherical Vector3.
-         *
-         */
-        static normalizeSpherical(vSpherical: Vector3): Vector3;
-        /**
-         * Convert from Cartesian (rectangular) coordinates to spherical coordinates
-         * (magnitude, heading, elevation).
-         *
-         * @param vCartesian The Vector3 to convert.
-         * @return The cartesian Vector3 converted to spherical.
-         *
-         */
-        static cartesianToSpherical(vCartesian: Vector3): Vector3;
-        /**
-         * Convert from spherical coordinates (magnitude, heading, elevation) to
-         * Cartesian (rectangular) coordinates.
-         *
-         * @param vSpherical The Vector3 to convert.
-         * @return The spherical Vector3 converted to cartesian.
-         *
-         */
-        static sphericalToCartesian(vSpherical: Vector3): Vector3;
-        /**
-         * Clamps a value between a minimum Number and maximum Number value.
-         *
-         * @param inVal The number to clamp.
-         * @param minVal The minimum value.
-         * @param maxVal The maximum value.
-         * @return The value clamped between minVal and maxVal.
-         *
-         */
-        static clamp(inVal: number, minVal: number, maxVal: number): number;
-        /**
-         * Linearly interpolates between two Numbers.
-         *
-         * @param a A number.
-         * @param b A number.
-     * @param coefficient The interpolation coefficient [0-1].
-         * @return The interpolated number.
-         *
-         */
-        static lerp(a: number, b: number, coefficient: number): number;
-        /**
-         * Linearly interpolates between two Vector3 objects.
-         *
-         * @param vec1 A Vector3 object.
-         * @param vec2 A Vector3 object.
-         * @param coefficient The interpolation coefficient [0-1].
-         * @return A new interpolated Vector3 object.
-         *
-         */
-        static lerpVector(vec1: Vector3, vec2: Vector3, coefficient: number): Vector3;
-    }
-    /**
+     * @class Controller
+     * @memberof Leap
+     * @classdesc
      * The Controller class is your main interface to the Leap Motion Controller.
      *
-     * <p>Create an instance of this Controller class to access frames of tracking
-     * data and configuration information. Frame data can be polled at any time using
-     * the <code>Controller::frame()</code> . Call <code>frame()</code> or <code>frame(0)</code>
-     * to get the most recent frame. Set the history parameter to a positive integer
-     * to access previous frames. A controller stores up to 60 frames in its frame history.</p>
+     * Create an instance of this Controller class to access frames of tracking data
+     * and configuration information. Frame data can be polled at any time using the
+     * [Controller.frame]{@link Leap.Controller#frame}() function. Call frame() or frame(0) to get the most recent
+     * frame. Set the history parameter to a positive integer to access previous frames.
+     * A controller stores up to 60 frames in its frame history.
      *
-     * <p>Polling is an appropriate strategy for applications which already have an
-     * intrinsic update loop, such as a game. You can also implement the Leap::Listener
-     * interface to handle events as they occur. The Leap dispatches events to the listener
-     * upon initialization and exiting, on connection changes, and when a new frame
-     * of tracking data is available. When these events occur, the controller object
-     * invokes the appropriate callback defined in the Listener interface.</p>
+     * Polling is an appropriate strategy for applications which already have an
+     * intrinsic update loop, such as a game.
      *
-     * <p>To access frames of tracking data as they become available:</p>
+     * loopWhileDisconnected defaults to true, and maintains a 60FPS frame rate even when Leap Motion is not streaming
+     * data at that rate (such as no hands in frame).  This is important for VR/WebGL apps which rely on rendering for
+     * regular visual updates, including from other input devices.  Flipping this to false should be considered an
+     * optimization for very specific use-cases.
      *
-     * <ul>
-     * <li>Implement the Listener interface and override the <code>Listener::onFrame()</code> .</li>
-     * <li>In your <code>Listener::onFrame()</code> , call the <code>Controller::frame()</code> to access the newest frame of tracking data.</li>
-     * <li>To start receiving frames, create a Controller object and add event listeners to the <code>Controller::addEventListener()</code> .</li>
-     * </ul>
-     *
-     * <p>When an instance of a Controller object has been initialized,
-     * it calls the <code>Listener::onInit()</code> when the listener is ready for use.
-     * When a connection is established between the controller and the Leap,
-     * the controller calls the <code>Listener::onConnect()</code> . At this point,
-     * your application will start receiving frames of data. The controller calls
-     * the <code>Listener::onFrame()</code> each time a new frame is available.
-     * If the controller loses its connection with the Leap software or
-     * device for any reason, it calls the <code>Listener::onDisconnect()</code> .
-     * If the listener is removed from the controller or the controller is destroyed,
-     * it calls the <code>Listener::onExit()</code> . At that point, unless the listener
-     * is added to another controller again, it will no longer receive frames of tracking data.</p>
-     *
-     * @author logotype
      *
      */
     export class Controller extends EventEmitter {
-        /**
-         * @private
-         * The Listener subclass instance.
-         */
-        private listener;
-        /**
-         * @private
-         * History of frame of tracking data from the Leap.
-         */
-        frameHistory: Frame[];
         /**
          * Most recent received Frame.
          */
@@ -335,7 +88,18 @@ declare module 'leapjs' {
          * (currently only supported for socket connections).
          *
          */
-        constructor(host?: string);
+        constructor(opts?: {
+            host?: string;
+            port?: number;
+            frameEventName?: 'animationFrame' | 'deviceFrame';
+            suppressAnimationLoop?: boolean;
+            loopWhileDisconnected?: boolean;
+            useAllPlugins?: boolean;
+            checkVersion?: boolean;
+            connectionType?: any;
+            inNode?: boolean;
+        });
+
         /**
          * Finds a Hand object by ID.
          *
@@ -357,20 +121,19 @@ declare module 'leapjs' {
         /**
          * Returns a frame of tracking data from the Leap.
          *
-         * <p>Use the optional history parameter to specify which frame to retrieve.
-         * Call <code>frame()</code> or <code>frame(0)</code> to access the most recent frame;
-         * call <code>frame(1)</code> to access the previous frame, and so on. If you use a history value
-         * greater than the number of stored frames, then the controller returns
-         * an invalid frame.</p>
+         * Use the optional history parameter to specify which frame to retrieve.
+         * Call frame() or frame(0) to access the most recent frame; call frame(1) to
+         * access the previous frame, and so on. If you use a history value greater
+         * than the number of stored frames, then the controller returns an invalid frame.
          *
-         * @param history The age of the frame to return, counting backwards from
+         * @method frame
+         * @memberof Leap.Controller.prototype
+         * @param {number} history The age of the frame to return, counting backwards from
          * the most recent frame (0) into the past and up to the maximum age (59).
-         *
-         * @return The specified frame; or, if no history parameter is specified,
-         * the newest frame. If a frame is not available at the specified
-         * history position, an invalid Frame is returned.
-         *
-         */
+         * @returns {Frame} The specified frame; or, if no history
+         * parameter is specified, the newest frame. If a frame is not available at
+         * the specified history position, an invalid Frame is returned.
+         **/
         frame(history?: number): Frame;
         /**
          * Update the object that receives direct updates from the Leap Motion Controller.
@@ -422,9 +185,8 @@ declare module 'leapjs' {
          *
          */
         connected(): boolean;
-        connect(): void;
-        disconnect(allowReconnect?: boolean): void;
-        reconnect(): void;
+        connect(): this;
+        disconnect(allowReconnect?: boolean): this;
         streaming(): boolean;
         enableGestures(enabled: boolean): void;
         setBackground(state: boolean): this;
@@ -442,6 +204,7 @@ declare module 'leapjs' {
         static plugin(pluginName: string, factory: (options?: object) => object): void;
         static plugins(): string[];
     }
+
     /**
      * The InteractionBox class represents a box-shaped region completely within
      * the field of view of the Leap Motion controller.
@@ -2452,6 +2215,9 @@ declare module 'leapjs' {
         get(index: number): T;
         push(item: T): void;
     }
+    /**
+    * Convenience method for Leap.Controller.plugin
+    */
     export const plugin: (name: string, options: any) => void;
     export const loopController: undefined | Controller;
     export const version: {

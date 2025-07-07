@@ -1,4 +1,3 @@
-import { Controller } from "leapjs";
 import * as THREE from "three";
 import { RenderPass, EffectComposer } from "three-stdlib";
 import queryString from "query-string";
@@ -9,7 +8,7 @@ import { ISketch } from "@/sketch";
 import { createAudioGroup } from "./audio";
 import { starMaterial } from "@/common/materials/starMaterial";
 import { ScreenSaver } from "@/common/screenSaver/screenSaver";
-import { initLeap } from "./lineLeapController";
+import { LeapAttractorController } from "./LeapAttractorController";
 import { AudioGroup } from "./types";
 
 const PARTICLE_SYSTEM_PARAMS = {
@@ -105,7 +104,7 @@ export default class LineSketch extends ISketch {
     public gravityShaderPass = new GravityShaderPass();
     public scene = new THREE.Scene();
     public points!: THREE.Points;
-    public leapController!: Controller;
+    public leapAttractorController!: LeapAttractorController;
     public composer!: EffectComposer;
     public ps!: ParticleSystem;
 
@@ -156,7 +155,8 @@ export default class LineSketch extends ISketch {
         this.composer.addPass(this.gravityShaderPass);
 
         // Set up Leap Motion controller
-        this.leapController = initLeap(this);
+        this.leapAttractorController = new LeapAttractorController(this);
+        this.leapAttractorController.attachToLeap();
     }
 
     public animate(_millisElapsed: number) {
@@ -223,7 +223,7 @@ export default class LineSketch extends ISketch {
 
         // --- Screen Saver Logic ---
         if (this.screenSaver != null) {
-            const isLeapMotionControllerValid = this.leapController.lastFrame.valid;
+            const isLeapMotionControllerValid = this.leapAttractorController.lastFrameIsValid();
             const numSecondsToShowScreenSaver = 10;
             const shouldShow =
                 !(this.globalFrame - this.lastRenderedFrame < 60 * numSecondsToShowScreenSaver) &&
