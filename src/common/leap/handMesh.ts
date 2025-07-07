@@ -1,21 +1,19 @@
 import * as Leap from "leapjs";
 import * as THREE from 'three';
 import { mapLeapToThreePosition } from './util';
-import lazy from "@/common/lazy";
-
-const boneGeometry = lazy(() => new THREE.SphereGeometry(10, 3, 3));
-const boneMeshMaterial = lazy(() => new THREE.MeshBasicMaterial({
-    color: 0xadd6b6,
-    wireframeLinewidth: 5,
-    wireframe: true,
-}));
-
-const boneLineMaterial = lazy(() => new THREE.LineBasicMaterial({
-    color: 0xadd6b6,
-    linewidth: 5,
-}));
 
 export class HandMesh extends THREE.Object3D {
+    static boneGeometry = new THREE.SphereGeometry(10, 3, 3);
+    static boneMeshMaterial = new THREE.MeshBasicMaterial({
+        color: 0xadd6b6,
+        wireframeLinewidth: 5,
+        wireframe: true,
+    });
+    static boneLineMaterial = new THREE.LineBasicMaterial({
+        color: 0xadd6b6,
+        linewidth: 5,
+    });
+
     private bones: { [id: string]: THREE.Mesh } = {};
     private fingers: { [id: string]: THREE.Line } = {};
 
@@ -26,7 +24,7 @@ export class HandMesh extends THREE.Object3D {
 
     private addFinger(fingerType: number): THREE.Line {
         if (!this.fingers["finger" + fingerType]) {
-            const fingerLine = new THREE.Line(new THREE.BufferGeometry(), boneLineMaterial());
+            const fingerLine = new THREE.Line(new THREE.BufferGeometry(), HandMesh.boneLineMaterial);
             this.fingers["finger" + fingerType] = fingerLine;
             this.add(fingerLine);
         }
@@ -36,7 +34,7 @@ export class HandMesh extends THREE.Object3D {
     private addBone(fingerType: number, boneType: number): THREE.Mesh {
         const id = `${fingerType},${boneType}`;
         if (!this.bones[id]) {
-            const boneMesh = new THREE.Mesh(boneGeometry(), boneMeshMaterial());
+            const boneMesh = new THREE.Mesh(HandMesh.boneGeometry, HandMesh.boneMeshMaterial);
             this.bones[id] = boneMesh;
             this.add(boneMesh);
         }
