@@ -4,7 +4,8 @@ import * as THREE from "three";
 import { EffectComposer, RenderPass } from "three-stdlib";
 
 import { ExplodeShaderPass } from "@/common/shaders/explode";
-import { computeStats, createParticle, createParticlePoints, IParticle, makeAttractor, ParticleSystem, ParticleSystemParameters } from "@/common/particleSystem";
+import { computeStats, createParticle, createParticlePoints, IParticle, ParticleSystem, ParticleSystemParameters } from "@/common/particleSystem";
+import { Attractor } from "@/common/particleSystem";
 import { ISketch } from "@/sketch";
 import { createAudioGroup } from "./audio";
 import { starMaterial } from "@/common/materials/starMaterial";
@@ -18,7 +19,7 @@ const params: ParticleSystemParameters = {
     constrainToBox: false,
 };
 
-const attractor = makeAttractor();
+const attractor = new Attractor();
 let mouseX: number, mouseY: number;
 
 function touchstart(event: JQuery.Event) {

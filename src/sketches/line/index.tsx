@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { RenderPass, EffectComposer } from "three-stdlib";
 import queryString from "query-string";
 import { GravityShaderPass } from "@/common/shaders/gravity";
-import { computeStats, createParticle, createParticlePoints, IParticle, makeAttractor, ParticleSystem } from "@/common/particleSystem";
+import { computeStats, createParticle, createParticlePoints, IParticle, ParticleSystem } from "@/common/particleSystem";
+import { Attractor } from "@/common/particleSystem/attractor";
 import { triangleWaveApprox } from "@/common/math";
 import { ISketch } from "@/sketch";
 import { createAudioGroup } from "./audio";
@@ -93,13 +94,7 @@ export default class LineSketch extends ISketch {
     public mouseY = 0;
 
     // Three.js & Rendering
-    public attractors = [
-        makeAttractor(),
-        makeAttractor(), // @todo Do we actually need multiple attractors?
-        makeAttractor(),
-        makeAttractor(),
-        makeAttractor(),
-    ];
+    public attractors: Attractor[] = [];
     public camera = new THREE.OrthographicCamera(0, 0, 0, 0, 1, 1000);
     public gravityShaderPass = new GravityShaderPass();
     public scene = new THREE.Scene();
@@ -107,6 +102,21 @@ export default class LineSketch extends ISketch {
     public leapAttractorController!: LeapAttractorController;
     public composer!: EffectComposer;
     public ps!: ParticleSystem;
+
+    /**
+     * Returns the attractor at the given index, creating it if necessary.
+     * Adds its mesh to the scene if newly created.
+     */
+    public getAttractor(index: number): Attractor {
+        while (this.attractors.length <= index) {
+            const attractor = new Attractor();
+            this.attractors.push(attractor);
+            if (this.scene) {
+                this.scene.add(attractor.ringMeshesGroup);
+            }
+        }
+        return this.attractors[index];
+    }
 
     public init() {
         // Set up audio
@@ -116,10 +126,8 @@ export default class LineSketch extends ISketch {
         this.resize(this.canvas.width, this.canvas.height);
         this.camera.position.z = 500;
 
-        // Add attractor meshes to scene
-        for (const attractor of this.attractors) {
-            this.scene.add(attractor.mesh);
-        }
+        // Ensure at least one attractor exists for mouse/touch
+        this.getAttractor(0);
 
         // Determine number of particles (query param or device type)
         const NUM_PARTICLES = Number(queryString.parse(location.search).p) ||
@@ -160,29 +168,19 @@ export default class LineSketch extends ISketch {
     }
 
     public animate(_millisElapsed: number) {
-        // Animate attractors
-        // @todo does this even do anything?
+        // Animate all attractors in the pool
         for (const attractor of this.attractors) {
-            attractor.mesh.position.z = -100; // @todo: this doesn't need to be set every frame
-            attractor.mesh.children.forEach((child, idx) => {
-                child.rotation.y += (10 - idx) / 20 * attractor.power;
-            });
-            attractor.mesh.rotation.x = 0.8; // attractor.power + 0.1;
-            const scale = Math.sqrt(attractor.power) / 5;
-            attractor.mesh.scale.set(scale, scale, scale);
-            if (attractor.power > 0) {
-                // Smoothly tend towards power 2
-                attractor.power = attractor.power * 0.5 + 2 * 0.5;
-            }
+            attractor.animate(_millisElapsed);
         }
 
-        // Update shader with attractor position
+        // Update shader with first attractor position (mouse/touch)
+        const firstAttractor = this.getAttractor(0);
         this.gravityShaderPass.uniforms.iMouse.value.set(
-            this.attractors[0].x,
-            this.renderer.domElement.height - this.attractors[0].y
+            firstAttractor.x,
+            this.renderer.domElement.height - firstAttractor.y
         );
 
-        // Step particles with active attractors
+        // Step particles with all active attractors
         const nonzeroAttractors = this.attractors.filter((attractor) => attractor.power !== 0);
         this.ps.stepParticles(nonzeroAttractors);
 
@@ -247,21 +245,20 @@ export default class LineSketch extends ISketch {
 
     // --- Attractor Controls ---
     private enableFirstAttractor(x: number, y: number) {
-        const attractor = this.attractors[0];
+        const attractor = this.getAttractor(0);
         attractor.x = x;
         attractor.y = y;
         attractor.power = 20;
     }
 
     private moveFirstAttractor(x: number, y: number) {
-        const attractor = this.attractors[0];
+        const attractor = this.getAttractor(0);
         attractor.x = x;
         attractor.y = y;
-        attractor.mesh.position.set(x, y, 0);
     }
 
     private disableFirstAttractor() {
-        const attractor = this.attractors[0];
+        const attractor = this.getAttractor(0);
         attractor.power = 0;
     }
 }

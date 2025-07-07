@@ -1,40 +1,82 @@
 import * as THREE from "three";
-import lazy from "@/common/lazy";
 import { HandMesh } from "@/common/leap/handMesh";
 
-const attractorGeometry = lazy(() => new THREE.RingGeometry(15, 18, 32));
-const attractorMaterialSolid = lazy(() => new THREE.MeshBasicMaterial({
-    side: THREE.DoubleSide,
-    color: 0xadd6b6,
-    transparent: true,
-    opacity: 0.6,
-}));
+/**
+ * 3D representation of an attractor in the line sketch.
+ * It consists of a series of glowing, spinning rings.
+ */
+export class Attractor {
+    static geometry = new THREE.RingGeometry(15, 18, 32);
+    static materialSolid = new THREE.MeshBasicMaterial({
+        side: THREE.DoubleSide,
+        color: 0xadd6b6,
+        transparent: true,
+        opacity: 0.6,
+    });
+    static NUM_RINGS = 10;
 
-export interface Attractor {
-    x: number;
-    y: number;
+    // @todo Move the hand mesh to a separate class
     handMesh?: HandMesh;
-    mesh: THREE.Object3D;
-    power: number;
-}
+    ringMeshesGroup: THREE.Object3D = new THREE.Group();
 
-export function makeAttractor(x = 0, y = 0, power = 0): Attractor {
-    const mesh = new THREE.Object3D();
-    mesh.position.set(x, y, -100);
-    for (let i = 0; i < 10; i++) {
-        // var ring = THREE.SceneUtils.createMultiMaterialObject(attractorGeometry, [attractorMaterialSolid, attractorMaterialStroke]);
-        const ring = new THREE.Mesh(attractorGeometry(), attractorMaterialSolid());
-        const scale = 1 + Math.pow(i / 10, 2) * 2;
-        ring.scale.set(scale, scale, scale);
-        mesh.add(ring);
+    private _x: number = 0;
+    private _y: number = 0;
+
+    get x(): number {
+        return this._x;
     }
-    mesh.visible = false;
+    set x(value: number) {
+        this._x = value;
+        this.ringMeshesGroup.position.x = value;
+    }
 
-    return {
-        x,
-        y,
-        handMesh: undefined,
-        mesh,
-        power,
-    };
+    get y(): number {
+        return this._y;
+    }
+    set y(value: number) {
+        this._y = value;
+        this.ringMeshesGroup.position.y = value;
+    }
+
+    constructor(x = 0, y = 0, public power = 0) {
+        // Set initial position
+        this.x = x;
+        this.y = y;
+        this.ringMeshesGroup.position.z = -100;
+
+        this.ringMeshesGroup.rotation.x = 0.8; // Initial rotation
+        for (let i = 0; i < Attractor.NUM_RINGS; i++) {
+            const ring = new THREE.Mesh(Attractor.geometry, Attractor.materialSolid);
+            const scale = 1 + Math.pow(i / 10, 2) * 2;
+            ring.scale.set(scale, scale, scale);
+            this.ringMeshesGroup.add(ring);
+        }
+        this.ringMeshesGroup.visible = false;
+    }
+
+    animate(_milliseconds: number) {
+        if (this.power === 0) {
+            if (this.ringMeshesGroup.visible) {
+                this.ringMeshesGroup.visible = false;
+            }
+            return;
+        }
+
+        this.ringMeshesGroup.visible = true;
+
+        // Rotate the rings
+        const children = this.ringMeshesGroup.children;
+        for (let idx = 0; idx < children.length; idx++) {
+            const child = children[idx];
+            child.rotation.y += (10 - idx) / 20 * this.power;
+        }
+
+        // Scale the rings based on power
+        const scale = Math.sqrt(this.power) / 5;
+        this.ringMeshesGroup.scale.set(scale, scale, scale);
+
+        // @todo Move this logic to a model, let this class just be a view
+        // Smoothly tend towards power 2
+        this.power = this.power * 0.5 + 2 * 0.5;
+    }
 }

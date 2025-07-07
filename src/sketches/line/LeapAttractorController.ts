@@ -29,26 +29,23 @@ export class LeapAttractorController {
         if (frame.hands.length > 0) {
             this.sketch.lastRenderedFrame = this.sketch.globalFrame;
         }
-        for(const attractor of this.sketch.attractors) {
+        // Hide all hand meshes and zero all attractor powers
+        for (const attractor of this.sketch.attractors) {
             if (attractor.handMesh != null) {
                 attractor.handMesh.visible = false;
             }
-            attractor.mesh.visible = false;
             attractor.power = 0;
         }
         frame.hands.filter((hand) => hand.valid).forEach((hand, index) => {
             const position = hand.indexFinger.bones[3].center();
-
-            const {x, y} = mapLeapToThreePosition(this.sketch.canvas, position);
+            const { x, y } = mapLeapToThreePosition(this.sketch.canvas, position);
             this.sketch.setMousePosition(x, y);
 
-            const attractor = this.sketch.attractors[index];
+            // Use lazy attractor pool
+            const attractor = this.sketch.getAttractor(index);
             attractor.x = x;
             attractor.y = y;
-            attractor.mesh.position.x = x;
-            attractor.mesh.position.y = y;
 
-            attractor.mesh.visible = true;
             if (hand.indexFinger.extended) {
                 attractor.power = attractor.power * 0.5;
             } else {
