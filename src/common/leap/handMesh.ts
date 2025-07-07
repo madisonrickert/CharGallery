@@ -64,7 +64,9 @@ export class HandMesh extends THREE.Object3D {
             this.addFinger(finger.type);
             finger.bones.forEach((bone) => {
                 this.addBone(finger.type, bone.type);
-                const position = mapLeapToThreePosition(canvas, bone.center());
+                const {x, y} = mapLeapToThreePosition(canvas, bone.center());
+                // @todo Don't create a new Vector3 every frame? Is this called every frame?
+                const position = new THREE.Vector3(x, y, 300); // z is set to 300 to keep it close to the camera
                 this.updateBonePosition(finger.type, bone.type, position);
                 this.updateFingerGeometry(finger.type, bone.type, position);
             });
