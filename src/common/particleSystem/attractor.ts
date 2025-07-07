@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { HandMesh } from "@/common/leap/handMesh";
 
 /**
  * 3D representation of an attractor in the line sketch.
@@ -15,8 +14,6 @@ export class Attractor {
     });
     static NUM_RINGS = 10;
 
-    // @todo Move the hand mesh to a separate class
-    handMesh?: HandMesh;
     ringMeshesGroup: THREE.Object3D = new THREE.Group();
 
     private _x: number = 0;
