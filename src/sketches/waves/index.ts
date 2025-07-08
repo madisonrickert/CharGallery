@@ -2,7 +2,8 @@ import $ from "jquery";
 import * as THREE from "three";
 
 import { lerp, map } from "@/common/math";
-import { ISketch, SketchAudioContext } from "@/sketch";
+import { ISketch } from "@/sketch";
+import { createAudioGroup, WavesSketchAudioGroup } from "./audio";
 
 const LINE_SEGMENT_LENGTH = (window.screen.width > 1024) ? 11 : 22;
 
@@ -155,88 +156,13 @@ class LineStrip {
     }
 }
 
-function createAudioGroup(audioContext: SketchAudioContext) {
-    const backgroundAudio = $("<audio autoplay loop>")
-        .append(`<source src="${new URL('./audio/waves_background.mp3', import.meta.url).toString()}" type="audio/mp3">`)
-        .append(`<source src="${new URL('./audio/waves_background.ogg', import.meta.url).toString()}" type="audio/ogg">`) as JQuery<HTMLMediaElement>;
-
-    const sourceNode = audioContext.createMediaElementSource(backgroundAudio[0]);
-    $("body").append(backgroundAudio);
-
-    const backgroundAudioGain = audioContext.createGain();
-    backgroundAudioGain.gain.setValueAtTime(0.0, 0);
-    sourceNode.connect(backgroundAudioGain);
-    backgroundAudioGain.connect(audioContext.gain);
-
-    const noise = (() => {
-        const node = audioContext.createBufferSource()
-        , buffer = audioContext.createBuffer(1, audioContext.sampleRate * 5, audioContext.sampleRate)
-        , data = buffer.getChannelData(0);
-        for (let i = 0; i < buffer.length; i++) {
-            data[i] = Math.random() * 2 - 1;
-        }
-        node.buffer = buffer;
-        node.loop = true;
-        node.start(0);
-        return node;
-    })();
-
-    const biquadFilter = (() => {
-        const node = audioContext.createScriptProcessor(undefined, 1, 1);
-        let a0 = 1;
-        let b1 = 0;
-
-        function setBiquadParameters(frame: number) {
-            a0 = getDarkness(frame + 10) * 0.8;
-            b1 = map(Math.pow(HeightMap.getWaviness(frame), 2), 0, 1, -0.92, -0.27);
-            backgroundAudioGain.gain.setTargetAtTime(map(getDarkness(frame + 10), 0, 1, 1, 0.8), audioContext.currentTime, 0.016);
-        }
-
-        node.onaudioprocess = (e) => {
-            const input = e.inputBuffer.getChannelData(0);
-            const output = e.outputBuffer.getChannelData(0);
-            const framesPerSecond = isTimeFast ? 60 * 4 : 60;
-            for (let n = 0; n < e.inputBuffer.length; n++) {
-                if (n % 512 === 0) {
-                    const frameOffset = n / audioContext.sampleRate * framesPerSecond;
-                    setBiquadParameters(HeightMap.frame + frameOffset);
-                }
-                const x = input[n];
-                const y1 = output[n - 1] || 0;
-
-                output[n] = a0 * x - b1 * y1;
-            }
-        };
-        return node;
-    })();
-    noise.connect(biquadFilter);
-
-    const biquadFilterGain = audioContext.createGain();
-    biquadFilterGain.gain.setValueAtTime(0.01, 0);
-    biquadFilter.connect(biquadFilterGain);
-
-    biquadFilterGain.connect(audioContext.gain);
-    return {
-        biquadFilter,
-    };
-}
-
 const lineStrips: LineStrip[] = [];
 let isTimeFast = false;
 
 // threejs stuff
 const lineMaterial = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.03 });
 
-// return a number from [0..1] indicating in general how dark the image is; 1.0 means very dark, while 0.0 means very light
-function getDarkness(frame: number) {
-    if (frame % 1000 < 500) {
-        return map(frame % 500, 0, 500, 0, 1);
-    } else {
-        return map(frame % 500, 0, 500, 1, 0);
-    }
-}
-
-class Waves extends ISketch {
+export default class Waves extends ISketch {
     public events = {
         mousemove: (event: JQuery.Event) => {
             this.setVelocityFromMouseEvent(event);
@@ -273,12 +199,15 @@ class Waves extends ISketch {
         },
     };
 
-    public audioGroup: any;
+    public audioGroup!: WavesSketchAudioGroup;
     public camera = new THREE.OrthographicCamera(0, 1, 0, 1, 1, 1000);
     public scene = new THREE.Scene();
 
     public init() {
-        this.audioGroup = createAudioGroup(this.audioContext);
+        this.audioGroup = createAudioGroup(this.audioContext, {
+            HeightMap,
+            isTimeFast: () => isTimeFast,
+        });
         this.renderer.autoClearColor = false;
 
         this.camera.position.z = 500;
@@ -372,5 +301,3 @@ class Waves extends ISketch {
         });
     }
 }
-
-export default Waves;
