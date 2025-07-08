@@ -310,9 +310,15 @@ export default class Cymatics extends ISketch {
     }
 
     destroy(): void {
+        // Clean up audio resources
+        this.audio.dispose();
+
+        // Clean up Leap Motion controller
         this.leapController
             .removeListener('frame', this.handleLeapFrame)
             .disconnect();
+
+        // Clean up Three.js resources
         this.composer.dispose();
         this.computation.dispose();
     }

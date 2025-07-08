@@ -148,6 +148,58 @@ export class CymaticsAudio {
         this.whiteNoiseGain.gain.setTargetAtTime(THREE.MathUtils.clamp((freqScalar - 1.002) * 20, 0, 1), this.audio.currentTime + 0.016, 0.016 / 3);
         this.whiteNoiseFilter.frequency.setTargetAtTime(1500 * (1 + freqScalar * freqScalar), this.audio.currentTime + 0.016, 0.016 / 3);
     }
+
+    dispose() {
+        // Stop and disconnect all oscillators
+        const oscillators = [
+            this.oscBase,
+            this.oscUnison, 
+            this.oscFifth,
+            this.oscSub,
+            this.oscHigh4,
+            this.oscHigh4Second,
+            this.lfo
+        ];
+
+        oscillators.forEach(osc => {
+            try {
+                osc.stop();
+                osc.disconnect();
+                osc.gain.disconnect();
+            } catch (e) {
+                // Oscillator may already be stopped/disconnected
+            }
+        });
+
+        // Stop and disconnect white noise buffer source
+        try {
+            this.whiteNoise.stop();
+            this.whiteNoise.disconnect();
+        } catch (e) {
+            // May already be stopped
+        }
+
+        // Disconnect all audio nodes
+        const audioNodes = [
+            this.whiteNoiseGain,
+            this.whiteNoiseFilter,
+            this.oscGain,
+            this.lfoGain
+        ];
+
+        audioNodes.forEach(node => {
+            try {
+                node.disconnect();
+            } catch (e) {
+                // Node may already be disconnected
+            }
+        });
+
+        // Dispose of audio clips
+        this.kick.dispose();
+        this.risingBass.dispose();
+        this.blub.dispose();
+    }
 }
 
 const OSC_FREQ_BASE = 126;

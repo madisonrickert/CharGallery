@@ -17,6 +17,7 @@ export interface LineSketchAudioGroup {
     setNoiseFrequency: (freq: number) => void;
     setVolume: (volume: number) => void;
     setBackgroundVolume: (volume: number) => void;
+    dispose: () => void;
 }
 
 export function createAudioGroup(ctx: SketchAudioContext): LineSketchAudioGroup {
@@ -33,6 +34,9 @@ export function createAudioGroup(ctx: SketchAudioContext): LineSketchAudioGroup 
 
     backgroundAudio.getNode().connect(ctx.gain);
 
+    // Keep track of all oscillators for cleanup
+    const oscillators: OscillatorNode[] = [];
+    
     // white noise
     const noise = (() => {
         const node = ctx.createBufferSource()
@@ -79,6 +83,7 @@ export function createAudioGroup(ctx: SketchAudioContext): LineSketchAudioGroup 
         node.frequency.setValueAtTime(detuned(BASE_FREQUENCY / 2, 2), 0);
         node.type = "square";
         node.start(0);
+        oscillators.push(node);
 
         const gain = ctx.createGain();
         gain.gain.setValueAtTime(0.30, 0);
@@ -86,11 +91,13 @@ export function createAudioGroup(ctx: SketchAudioContext): LineSketchAudioGroup 
 
         return gain;
     })();
+    
     const source2 = (() => {
         const node = ctx.createOscillator();
         node.frequency.setValueAtTime(BASE_FREQUENCY, 0);
         node.type = "sawtooth";
         node.start(0);
+        oscillators.push(node);
 
         const gain = ctx.createGain();
         gain.gain.setValueAtTime(0.30, 0);
@@ -104,6 +111,7 @@ export function createAudioGroup(ctx: SketchAudioContext): LineSketchAudioGroup 
         node.frequency.setValueAtTime(BASE_FREQUENCY / 4, 0);
         node.type = "sawtooth";
         node.start(0);
+        oscillators.push(node);
 
         const gain = ctx.createGain();
         gain.gain.setValueAtTime(0.90, 0);
@@ -116,25 +124,30 @@ export function createAudioGroup(ctx: SketchAudioContext): LineSketchAudioGroup 
         const base = ctx.createOscillator();
         base.frequency.setValueAtTime(baseFrequency, 0);
         base.start(0);
+        oscillators.push(base);
 
         const octave = ctx.createOscillator();
         octave.frequency.setValueAtTime(semitone(baseFrequency, 12), 0);
         octave.type = "sawtooth";
         octave.start(0);
+        oscillators.push(octave);
 
         const fifth = ctx.createOscillator();
         fifth.frequency.setValueAtTime(semitone(baseFrequency, 12 + 7), 0);
         fifth.type = "sawtooth";
         fifth.start(0);
+        oscillators.push(fifth);
 
         const octave2 = ctx.createOscillator();
         octave2.frequency.setValueAtTime(semitone(baseFrequency, 24), 0);
         octave2.type = "sawtooth";
         octave2.start(0);
+        oscillators.push(octave2);
 
         const fourth = ctx.createOscillator();
         fourth.frequency.setValueAtTime(semitone(baseFrequency, 24 + 4), 0);
         fourth.start(0);
+        oscillators.push(fourth);
 
         const gain = ctx.createGain();
         gain.gain.setValueAtTime(0.0, 0);
@@ -155,6 +168,7 @@ export function createAudioGroup(ctx: SketchAudioContext): LineSketchAudioGroup 
     const sourceLfo = ctx.createOscillator();
     sourceLfo.frequency.setValueAtTime(8.66, 0);
     sourceLfo.start(0);
+    oscillators.push(sourceLfo);
 
     const lfoGain = ctx.createGain();
     lfoGain.gain.setValueAtTime(0, 0);
@@ -215,6 +229,14 @@ export function createAudioGroup(ctx: SketchAudioContext): LineSketchAudioGroup 
 
     highAttenuation2.connect(ctx.gain);
 
+    // Keep track of all audio nodes for cleanup
+    const audioNodes = [
+        noiseSourceGain, noiseFilter, noiseShelf, noiseGain,
+        source1, source2, sourceLow, chordSource, chordHigh,
+        sourceGain, lfoGain, filter, filter2, filterGain,
+        audioGain, analyser, compressor, highAttenuation, highAttenuation2
+    ];
+
     return {
         analyser,
         chordGain: chordSource,
@@ -241,5 +263,34 @@ export function createAudioGroup(ctx: SketchAudioContext): LineSketchAudioGroup 
         setBackgroundVolume(volume: number) {
             backgroundAudio.volume = volume;
         },
+        dispose() {
+            // Stop all oscillators
+            oscillators.forEach(osc => {
+                try {
+                    osc.stop();
+                } catch (e) {
+                    // Oscillator may already be stopped
+                }
+            });
+            
+            // Stop buffer source
+            try {
+                noise.stop();
+            } catch (e) {
+                // May already be stopped
+            }
+            
+            // Disconnect all audio nodes
+            audioNodes.forEach(node => {
+                try {
+                    node.disconnect();
+                } catch (e) {
+                    // Node may already be disconnected
+                }
+            });
+            
+            // Clean up background audio
+            backgroundAudio.dispose();
+        }
     };
 }

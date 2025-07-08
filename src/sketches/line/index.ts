@@ -237,6 +237,9 @@ export default class LineSketch extends ISketch {
     }
 
     public destroy(): void {
+        // Clean up audio resources
+        this.audioGroup.dispose();
+
         // Detach Leap Motion controller
         this.leapAttractorController.dispose();
 

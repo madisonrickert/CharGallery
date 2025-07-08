@@ -57,4 +57,16 @@ export class AudioClip {
         this.element.currentTime = 0;
         return this.element.play();
     }
+
+    dispose() {
+        // Stop playback and disconnect
+        this.element.pause();
+        this.element.currentTime = 0;
+        this.node.disconnect();
+        
+        // Remove from DOM if it was added
+        if (this.element.parentNode) {
+            this.element.parentNode.removeChild(this.element);
+        }
+    }
 }
