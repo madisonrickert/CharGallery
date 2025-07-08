@@ -127,7 +127,7 @@ export default class GPUComputationRenderer {
         texture: { value: null } as THREE.IUniform,
     };
 
-    public passThruShader: any;
+    public passThruShader: THREE.ShaderMaterial;
 
     public mesh: THREE.Mesh;
 
@@ -289,8 +289,7 @@ export default class GPUComputationRenderer {
 
     // The following functions can be used to compute things manually
 
-    public  createShaderMaterial( computeFragmentShader: string, uniforms?: any) {
-
+    public createShaderMaterial( computeFragmentShader: string, uniforms?: { [uniform: string]: THREE.IUniform }): THREE.ShaderMaterial {
         uniforms = uniforms || {};
 
         const material = new THREE.ShaderMaterial( {
