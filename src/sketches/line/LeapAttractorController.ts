@@ -13,6 +13,7 @@ const ATTRACTOR_POWER_DECAY_SPEED = 0.5;
  */
 export class LeapAttractorController {
     public controller = new Leap.Controller();
+    private _hasActiveInteraction = false;
 
     /**
      * Pool containing all hand meshes.
@@ -45,11 +46,10 @@ export class LeapAttractorController {
      * @param frame The Leap Motion frame to handle.
      */
     private handleFrame = (frame: Leap.Frame) => {
-        if (frame.hands.length > 0) {
-            this.sketch.lastRenderedFrame = this.sketch.globalFrame;
-        }
 
         const validHands = frame.hands.filter((hand) => hand.valid);
+
+        this._hasActiveInteraction = validHands.length > 0;
 
         // Update only the attractors and meshes for valid hands
         validHands.forEach((hand, index) => {
@@ -96,7 +96,7 @@ export class LeapAttractorController {
             .disconnect();
     }
 
-    lastFrameIsValid() {
-        return this.controller.lastFrame.valid;
+    hasActiveInteraction(): boolean {
+        return this._hasActiveInteraction;
     }
 }

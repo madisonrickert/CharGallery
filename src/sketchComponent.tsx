@@ -1,14 +1,15 @@
 import $ from "jquery";
 import React from "react";
-import * as THREE from "three";
-import "./sketchComponent.scss";
-
-import classnames from "classnames";
 import { Link } from "react-router";
+import * as THREE from "three";
+import classnames from "classnames";
+
 import { ISketch, SketchAudioContext, SketchConstructor, UI_EVENTS, UIEventReciever } from "./sketch";
-import Cymatics from "./sketches/cymatics";
 import { VolumeButton } from "./components/volumeButton";
 import { HandData, HandOverlay } from "./components/HandOverlay";
+import { ScreenSaver } from "./common/screenSaver/screenSaver";
+
+import "./sketchComponent.scss";
 
 const $window = $(window);
 
@@ -151,13 +152,16 @@ class SketchSuccessComponent extends React.Component<SketchSuccessComponentProps
 export interface ISketchComponentState {
     status: SketchStatus;
     volumeEnabled: boolean;
+    handData: HandData[];
+    shouldShowScreenSaver: boolean;
 }
 
-export class SketchComponent extends React.Component<ISketchComponentProps, ISketchComponentState & { handData: HandData[] }> {
+export class SketchComponent extends React.Component<ISketchComponentProps, ISketchComponentState> {
     public state = {
         status: { type: "loading" } as SketchStatus,
         volumeEnabled: JSON.parse(window.localStorage.getItem("sketch-volumeEnabled") || "true"),
         handData: [] as HandData[],
+        shouldShowScreenSaver: false,
     };
 
     private renderer?: THREE.WebGLRenderer;
@@ -184,9 +188,9 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
                     ref.appendChild(this.renderer.domElement);
                 }
 
-                const sketchClassInstance = this.props.sketchClass === Cymatics
-                    ? new Cymatics(this.renderer, this.audioContext, this.handleHandDataUpdate)
-                    : new this.props.sketchClass(this.renderer, this.audioContext);
+                const sketchClassInstance = new this.props.sketchClass(this.renderer, this.audioContext);
+                sketchClassInstance.updateScreenSaverCallback = this.updateScreenSaverCallback;
+                sketchClassInstance.updateHandDataCallback = this.handleHandDataUpdate;
                 this.setState({ status: { type: "success", sketch: sketchClassInstance } });
             } catch (e) {
                 this.setState({ status: { type: "error", error: e instanceof Error ? e : new Error(String(e)) }});
@@ -204,6 +208,11 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
         this.setState({ handData });
     };
 
+    private updateScreenSaverCallback = (shouldShow: boolean) => {
+        console.log("Updating screen saver state:", shouldShow);
+        this.setState({ shouldShowScreenSaver: shouldShow });
+    };
+
     componentDidUpdate(prevProps: Readonly<ISketchComponentProps>, prevState: Readonly<ISketchComponentState & { handData: HandData[] }>) {
         if (prevState.volumeEnabled !== this.state.volumeEnabled && this.audioContext && this.userVolume) {
             const volume = this.state.volumeEnabled ? 1 : 0;
@@ -217,6 +226,7 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
     }
 
     public render() {
+
         const { sketchClass: _sketchClass, ...containerProps } = this.props;
         const className = classnames("sketch-component", this.state.status.type);
         return (
@@ -224,6 +234,7 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
                 <div style={{ position: "relative" }}>
                     {this.renderSketchOrStatus()}
                 </div>
+                <ScreenSaver shouldShow={this.state.shouldShowScreenSaver} />
                 <VolumeButton
                     volumeEnabled={this.state.volumeEnabled}
                     onClick={this.handleVolumeButtonClick}

@@ -8,7 +8,6 @@ import { triangleWaveApprox } from "@/common/math";
 import { ISketch } from "@/sketch";
 import { createAudioGroup, LineSketchAudioGroup } from "./audio";
 import { starMaterial } from "@/common/materials/starMaterial";
-import { ScreenSaver } from "@/common/screenSaver/screenSaver";
 import { LeapAttractorController } from "./LeapAttractorController";
 
 const PARTICLE_SYSTEM_PARAMS = {
@@ -23,6 +22,8 @@ const PARTICLE_SYSTEM_PARAMS = {
 const MOUSE_ATTRACTOR_POWER_DECAY_SPEED = 0.9;
 const MOUSE_ATTRACTOR_POWER_DECAY_FLOOR = 2;
 
+const SCREEN_SAVER_TIMEOUT_SECONDS = 10;
+
 export default class LineSketch extends ISketch {
     public events = {
         touchstart: (event: JQuery.Event) => {
@@ -36,6 +37,7 @@ export default class LineSketch extends ISketch {
 
             this.setGravityFocalPoint(touchX, touchY);
             this.enableMouseAttractor(touchX, touchY);
+            this.lastInteractionFrame = this.globalFrame; // Reset screensaver timer
         },
 
         touchmove: (event: JQuery.Event) => {
@@ -46,6 +48,7 @@ export default class LineSketch extends ISketch {
 
             this.setGravityFocalPoint(touchX, touchY);
             this.moveMouseAttractor(touchX, touchY);
+            this.lastInteractionFrame = this.globalFrame; // Reset screensaver timer
         },
 
         touchend: (_event: JQuery.Event) => {
@@ -59,6 +62,7 @@ export default class LineSketch extends ISketch {
                 const y = event.offsetY == null ? mouseEvent.originalEvent.layerY : event.offsetY;
                 this.setGravityFocalPoint(x, y);
                 this.enableMouseAttractor(x, y);
+                this.lastInteractionFrame = this.globalFrame; // Reset screensaver timer
             }
         },
 
@@ -68,6 +72,7 @@ export default class LineSketch extends ISketch {
             const y = event.offsetY == null ? mouseEvent.originalEvent.layerY : event.offsetY;
             this.setGravityFocalPoint(x, y);
             this.moveMouseAttractor(x, y);
+            this.lastInteractionFrame = this.globalFrame; // Reset screensaver timer
         },
 
         mouseup: (event: JQuery.Event) => {
@@ -76,17 +81,10 @@ export default class LineSketch extends ISketch {
             }
         },
     };
-    public elements = [
-        <ScreenSaver
-            ref={(screenSaver: ScreenSaver) => { this.screenSaver = screenSaver; }}
-            shouldShow={false} // Placeholder, will be updated dynamically
-        />
-    ];
-    public screenSaver: ScreenSaver | null = null;
 
     // TODO move into core sketch
     public globalFrame = 0;
-    public lastRenderedFrame = -Infinity;
+    public lastInteractionFrame = -Infinity;
 
     public audioGroup!: LineSketchAudioGroup;
     public particles: IParticle[] = [];
@@ -174,6 +172,11 @@ export default class LineSketch extends ISketch {
             attractor.animate(_millisElapsed);
         }
 
+        // Check for Leap Motion interaction and reset screensaver timer
+        if (this.leapAttractorController.hasActiveInteraction()) {
+            this.lastInteractionFrame = this.globalFrame;
+        }
+
         // Step particles with all active attractors
         const activeAttractors = [
             ...(this.mouseAttractor.power !== 0 ? [this.mouseAttractor] : []),
@@ -213,14 +216,9 @@ export default class LineSketch extends ISketch {
         this.globalFrame++;
 
         // --- Screen Saver Logic ---
-        if (this.screenSaver != null) {
-            const isLeapMotionControllerValid = this.leapAttractorController.lastFrameIsValid();
-            const numSecondsToShowScreenSaver = 10;
-            const shouldShow =
-                !(this.globalFrame - this.lastRenderedFrame < 60 * numSecondsToShowScreenSaver) &&
-                isLeapMotionControllerValid;
-
-            this.screenSaver.setState({ shouldShow }); // Dynamically update shouldShow
+        if (this.updateScreenSaverCallback) {
+            const showScreenSaver = this.globalFrame - this.lastInteractionFrame >= SCREEN_SAVER_TIMEOUT_SECONDS * 60;
+            this.updateScreenSaverCallback(showScreenSaver);
         }
 
         // --- Update attractor power

@@ -1,5 +1,6 @@
 import React from "react";
 import * as THREE from "three";
+import { HandData } from "./components/HandOverlay";
 
 export const UI_EVENTS = {
     click: true,
@@ -66,6 +67,18 @@ export abstract class ISketch {
     resize?(width: number, height: number): void;
 
     destroy?(): void;
+
+    /**
+     * Callback to update the screen saver state.
+     * This is set by the parent component to control the visibility of the screen saver.
+     */
+    public updateScreenSaverCallback?: (shouldShow: boolean) => void;
+
+    /**
+     * Callback to handle hand data updates.
+     * This is set by the parent component to receive hand data updates.
+     */
+    public updateHandDataCallback?: (handData: HandData[]) => void;
 }
 
 export interface SketchConstructor {

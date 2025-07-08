@@ -6,7 +6,7 @@ import { EffectComposer, ShaderPass/*, RenderPass */} from "three-stdlib";
 
 import GPUComputationRenderer, { GPUComputationRendererVariable } from "@/common/gpuComputationRenderer";
 import { mirroredRepeat } from "@/common/math";
-import { ISketch, SketchAudioContext } from "@/sketch";
+import { ISketch } from "@/sketch";
 import { CymaticsAudio } from "./audio";
 import { RenderCymaticsShader } from "./renderCymaticsShader";
 import { HandData } from "@/components/HandOverlay";
@@ -39,17 +39,16 @@ const DEFAULT_NUM_CYCLES = 1.002;
 // const DEFAULT_NUM_CYCLES = 0.502;
 
 const GROW_AMOUNT_MIN = 0.0;
+const SCREEN_SAVER_TIMEOUT_SECONDS = 10;
 
 export default class Cymatics extends ISketch {
-    private updateHandDataCallback?: (handData: HandData[]) => void;
-
-    constructor(renderer: THREE.WebGLRenderer, audioContext: SketchAudioContext, updateHandDataCallback?: (handData: HandData[]) => void) {
-        super(renderer, audioContext);
-        this.updateHandDataCallback = updateHandDataCallback;
-    }
-
     public slowDownAmount = 0;
     public handData: HandData[] = [];
+    
+    // TODO move into core sketch
+    public globalFrame = 0;
+    public lastInteractionFrame = -Infinity;
+    
     public events = {
         touchstart: (event: JQuery.Event) => {
             // prevent emulated mouse events from occuring
@@ -58,6 +57,7 @@ export default class Cymatics extends ISketch {
             const touchX = touch.pageX;
             const touchY = touch.pageY;
             this.startInteraction(touchX, touchY);
+            this.lastInteractionFrame = this.globalFrame; // Reset screensaver timer
         },
 
         touchmove: (event: JQuery.Event) => {
@@ -65,6 +65,7 @@ export default class Cymatics extends ISketch {
             const touchX = touch.pageX;
             const touchY = touch.pageY;
             this.setMouse(touchX, touchY);
+            this.lastInteractionFrame = this.globalFrame; // Reset screensaver timer
         },
 
         touchend: (_event: JQuery.Event) => {
@@ -76,6 +77,7 @@ export default class Cymatics extends ISketch {
                 const mouseX = event.offsetX == null ? ((event as JQuery.MouseDownEvent).originalEvent as MouseEvent).layerX : event.offsetX;
                 const mouseY = event.offsetY == null ? ((event as JQuery.MouseDownEvent).originalEvent as MouseEvent).layerY : event.offsetY;
                 this.startInteraction(mouseX, mouseY);
+                this.lastInteractionFrame = this.globalFrame; // Reset screensaver timer
             }
         },
 
@@ -83,6 +85,7 @@ export default class Cymatics extends ISketch {
             const mouseX = event.offsetX == null ? ((event as JQuery.MouseMoveEvent).originalEvent as MouseEvent).layerX : event.offsetX;
             const mouseY = event.offsetY == null ? ((event as JQuery.MouseMoveEvent).originalEvent as MouseEvent).layerY : event.offsetY;
             this.setMouse(mouseX, mouseY);
+            this.lastInteractionFrame = this.globalFrame; // Reset screensaver timer
         },
 
         mouseup: (_event: JQuery.Event) => {
@@ -172,6 +175,11 @@ export default class Cymatics extends ISketch {
     }
 
     public animate(_dt: number) {
+        // Check for Leap Motion interaction and reset screensaver timer
+        if (this.handData.length > 0) {
+            this.lastInteractionFrame = this.globalFrame;
+        }
+
         if (mousePressed) {
             this.numCycles += .0003 + (this.numCycles - DEFAULT_NUM_CYCLES) * 0.0008;
             // numCycles *= 2;
@@ -251,6 +259,13 @@ export default class Cymatics extends ISketch {
         this.composer.render();
 
         this.slowDownAmount *= 0.95;
+        this.globalFrame++;
+
+        // --- Screen Saver Logic ---
+        if (this.updateScreenSaverCallback) {
+            const showScreenSaver = this.globalFrame - this.lastInteractionFrame >= SCREEN_SAVER_TIMEOUT_SECONDS * 60;
+            this.updateScreenSaverCallback(showScreenSaver);
+        }
     }
 
     private handleLeapFrame = (frame: Leap.Frame) => {
