@@ -23,6 +23,7 @@ export class LeapAttractorController {
         console.log("getHandMesh", index);
         while (this._handMeshesGroup.children.length <= index) {
             const handMesh = new HandMesh();
+            handMesh.name = `HandMesh ${index}`;
             handMesh.visible = false;
             this._handMeshesGroup.add(handMesh);
         }

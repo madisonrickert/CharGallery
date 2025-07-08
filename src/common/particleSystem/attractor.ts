@@ -39,6 +39,7 @@ export class Attractor {
         // Set initial position
         this.x = x;
         this.y = y;
+        this.ringMeshesGroup.name = "Attractor Rings";
         this.ringMeshesGroup.position.z = -100;
 
         this.ringMeshesGroup.rotation.x = 0.8; // Initial rotation
