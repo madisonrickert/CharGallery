@@ -1,7 +1,18 @@
 import { createWhiteNoise } from "@/audio/noise";
 import { SketchAudioContext } from "@/sketch";
 
-export function createAudioGroup(audioContext: SketchAudioContext) {
+export interface DotSketchAudioGroup {
+    sourceGain: GainNode;
+    lfo: OscillatorNode;
+    lfoGain: GainNode;
+    filter: BiquadFilterNode;
+    filter2: BiquadFilterNode;
+    filterGain: GainNode;
+    setFrequency(freq: number): void;
+    setVolume(volume: number): void;
+}
+
+export function createAudioGroup(audioContext: SketchAudioContext): DotSketchAudioGroup {
     // white noise
     const noise = createWhiteNoise(audioContext);
     const noiseGain = audioContext.createGain();
