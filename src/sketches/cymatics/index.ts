@@ -47,7 +47,7 @@ export default class Cymatics extends ISketch {
     
     // TODO move into core sketch
     public globalFrame = 0;
-    public lastInteractionFrame = -Infinity;
+    public lastInteractionFrame = 0;
     
     public events = {
         touchstart: (event: JQuery.Event) => {
