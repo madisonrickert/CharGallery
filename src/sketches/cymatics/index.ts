@@ -1,3 +1,304 @@
-import { Cymatics } from "./cymatics";
+import { Controller } from "leapjs";
+import Leap from "leapjs";
+import { mapLeapToThreePosition } from "@/common/leap/util";
+import * as THREE from "three";
+import { EffectComposer, ShaderPass/*, RenderPass */} from "three-stdlib";
 
-export default Cymatics;
+import GPUComputationRenderer, { GPUComputationRendererVariable } from "@/common/gpuComputationRenderer";
+import { mirroredRepeat } from "@/common/math";
+import { ISketch, SketchAudioContext } from "@/sketch";
+import { CymaticsAudio } from "./audio";
+import { RenderCymaticsShader } from "./renderCymaticsShader";
+import { HandData } from "@/components/HandOverlay";
+
+import COMPUTE_CELL_STATE from "./computeCellState.frag";
+
+let mousePressed = false;
+const mousePosition = new THREE.Vector2(0, 0);
+// const lastMousePosition = new THREE.Vector2(0, 0);
+
+enum Quality {
+    Low,
+    Medium,
+    High,
+}
+let QUALITY: Quality;
+switch (true) {
+    case screen.width > 960:
+        QUALITY = Quality.High;
+        break;
+    case screen.width > 480:
+        QUALITY = Quality.Medium;
+        break;
+    default:
+        QUALITY = Quality.Low;
+}
+
+// an integer makes perfect standing waves. the 0.002 means that the wave will oscillate very slightly per frame; 500 frames per oscillation period
+const DEFAULT_NUM_CYCLES = 1.002;
+// const DEFAULT_NUM_CYCLES = 0.502;
+
+const GROW_AMOUNT_MIN = 0.0;
+
+export default class Cymatics extends ISketch {
+    private updateHandDataCallback?: (handData: HandData[]) => void;
+
+    constructor(renderer: THREE.WebGLRenderer, audioContext: SketchAudioContext, updateHandDataCallback?: (handData: HandData[]) => void) {
+        super(renderer, audioContext);
+        this.updateHandDataCallback = updateHandDataCallback;
+    }
+
+    public slowDownAmount = 0;
+    public handData: HandData[] = [];
+    public events = {
+        touchstart: (event: JQuery.Event) => {
+            // prevent emulated mouse events from occuring
+            event.preventDefault();
+            const touch = ((event as JQuery.TouchStartEvent).originalEvent as TouchEvent).touches[0];
+            const touchX = touch.pageX;
+            const touchY = touch.pageY;
+            this.startInteraction(touchX, touchY);
+        },
+
+        touchmove: (event: JQuery.Event) => {
+            const touch = ((event as JQuery.TouchMoveEvent).originalEvent as TouchEvent).touches[0];
+            const touchX = touch.pageX;
+            const touchY = touch.pageY;
+            this.setMouse(touchX, touchY);
+        },
+
+        touchend: (_event: JQuery.Event) => {
+            mousePressed = false;
+        },
+
+        mousedown: (event: JQuery.Event) => {
+            if (event.which === 1) {
+                const mouseX = event.offsetX == null ? ((event as JQuery.MouseDownEvent).originalEvent as MouseEvent).layerX : event.offsetX;
+                const mouseY = event.offsetY == null ? ((event as JQuery.MouseDownEvent).originalEvent as MouseEvent).layerY : event.offsetY;
+                this.startInteraction(mouseX, mouseY);
+            }
+        },
+
+        mousemove: (event: JQuery.Event) => {
+            const mouseX = event.offsetX == null ? ((event as JQuery.MouseMoveEvent).originalEvent as MouseEvent).layerX : event.offsetX;
+            const mouseY = event.offsetY == null ? ((event as JQuery.MouseMoveEvent).originalEvent as MouseEvent).layerY : event.offsetY;
+            this.setMouse(mouseX, mouseY);
+        },
+
+        mouseup: (_event: JQuery.Event) => {
+            mousePressed = false;
+        },
+    };
+
+    startInteraction(pixelX: number, pixelY: number) {
+        this.setMouse(pixelX, pixelY);
+        mousePressed = true;
+        this.slowDownAmount += 1;
+        this.audio.triggerJitter();
+    }
+
+    setMouse(pixelX: number, pixelY: number) {
+        mousePosition.set(pixelX / this.canvas.width * 2 - 1, (1 - pixelY / this.canvas.height) * 2 - 1);
+    }
+
+    public id = "cymatics";
+
+    public computation!: GPUComputationRenderer;
+
+    public cellStateVariable!: GPUComputationRendererVariable;
+    public renderCymaticsPass!: ShaderPass;
+    public composer!: EffectComposer;
+    public audio!: CymaticsAudio;
+
+    public leapController!: Controller;
+
+    // public handScene = new THREE.Scene();
+    // public handCamera = new THREE.OrthographicCamera();
+
+    public init() {
+        this.renderer.setClearColor(0xfcfcfc);
+        this.renderer.clear();
+        switch(QUALITY) {
+            case Quality.High:
+                this.computation = new GPUComputationRenderer(1024, 1024, this.renderer);
+                break;
+            case Quality.Medium:
+                this.computation = new GPUComputationRenderer(512, 512, this.renderer);
+                break;
+            default:
+                this.computation = new GPUComputationRenderer(256, 256, this.renderer);
+                break;
+        }
+
+        const initialTexture = this.computation.createTexture();
+        this.cellStateVariable = this.computation.addVariable("cellStateVariable", COMPUTE_CELL_STATE, initialTexture);
+        // this.cellStateVariable.minFilter = THREE.NearestFilter;
+        // this.cellStateVariable.magFilter = THREE.NearestFilter;
+        this.cellStateVariable.wrapS = THREE.MirroredRepeatWrapping;
+        this.cellStateVariable.wrapT = THREE.MirroredRepeatWrapping;
+        this.computation.setVariableDependencies(this.cellStateVariable, [this.cellStateVariable]);
+        this.cellStateVariable.material.uniforms.iGlobalTime = { value: 0 };
+        // this.cellStateVariable.material.uniforms.iMouse = { value: mousePosition.clone() };
+        this.cellStateVariable.material.uniforms.center = { value: new THREE.Vector2(0.5, 0.5) };
+        this.cellStateVariable.material.uniforms.growAmount = { value: GROW_AMOUNT_MIN };
+        const computationInitError = this.computation.init();
+        if (computationInitError != null) {
+            console.error(computationInitError);
+            throw computationInitError;
+        }
+
+        this.composer = new EffectComposer(this.renderer);
+        this.renderCymaticsPass = new ShaderPass(RenderCymaticsShader);
+        this.renderCymaticsPass.renderToScreen = true;
+        this.renderCymaticsPass.uniforms.resolution.value.set(this.canvas.width, this.canvas.height);
+        this.renderCymaticsPass.uniforms.cellStateResolution.value.set(this.computation.sizeX, this.computation.sizeY);
+        this.composer.addPass(this.renderCymaticsPass);
+        this.audio = new CymaticsAudio(this.audioContext);
+
+        // Leap Motion setup
+        this.leapController = new Leap.Controller()
+            .connect()
+            .on('frame', this.handleLeapFrame);
+    }
+
+    public simulationTime = 0;
+    public numCycles = DEFAULT_NUM_CYCLES;
+    public get growAmount() {
+        return this.cellStateVariable.material.uniforms.growAmount.value;
+    }
+
+    public set growAmount(t: number) {
+        this.cellStateVariable.material.uniforms.growAmount.value = t;
+    }
+
+    public animate(_dt: number) {
+        if (mousePressed) {
+            this.numCycles += .0003 + (this.numCycles - DEFAULT_NUM_CYCLES) * 0.0008;
+            // numCycles *= 2;
+            if (this.growAmount < 0.5) {
+                this.growAmount = 0.5;
+            }
+            // target grow amount of 5, so if user holds the mouse we have some buffer time when it fills up the screen
+            this.growAmount = this.growAmount * 0.99 + 7.5 * 0.01;
+        } else {
+            this.growAmount = this.growAmount * 0.995 + GROW_AMOUNT_MIN * 0.005;
+            this.numCycles = this.numCycles * 0.95 + DEFAULT_NUM_CYCLES * 0.05;
+        }
+        const wantedCenter = new THREE.Vector2(0.5, 0.5);
+
+        // mimic code from renderCymatics.frag
+        const aspectRatioFrag = 1 / this.aspectRatio;
+        if (aspectRatioFrag > 1.0) {
+            // widescreen; split the window into left/right halves
+            const screenCoord = mousePosition.clone().multiplyScalar(0.5);
+            const normCoord = screenCoord.multiply(new THREE.Vector2(aspectRatioFrag, 1));
+            const uv = normCoord.add(new THREE.Vector2(1, 0.5));
+            wantedCenter.x = mirroredRepeat(uv.x);
+            wantedCenter.y = mirroredRepeat(uv.y);
+        } else {
+            // tallscreen; split the window into top/bottom
+            const screenCoord = mousePosition.clone().multiplyScalar(0.5);
+            const normCoord = screenCoord.multiply(new THREE.Vector2(1, 1 / aspectRatioFrag));
+            const uv = normCoord.add(new THREE.Vector2(0.5, 1.0));
+            wantedCenter.x = mirroredRepeat(uv.x);
+            wantedCenter.y = mirroredRepeat(uv.y);
+        }
+        const lerpAlpha = 0.01;
+
+        // how fast the center's moving; max is about 0.06
+        const centerSpeed = wantedCenter.distanceTo(this.cellStateVariable.material.uniforms.center.value) * lerpAlpha;
+        this.cellStateVariable.material.uniforms.center.value.lerp(wantedCenter, lerpAlpha);
+
+        const skewIntensity = Math.pow(Math.max(0, (this.numCycles - DEFAULT_NUM_CYCLES) / 2. - 0.5), 2);
+
+        // grows louder as there's more growAmount, and also when it moves faster
+        const blubVolume = THREE.MathUtils.clamp(Math.pow(THREE.MathUtils.mapLinear(this.growAmount, GROW_AMOUNT_MIN, 1.0, 0.05, 1), 2), 0, 1) * 0.5
+                    + Math.abs(this.numCycles - DEFAULT_NUM_CYCLES) * 0.25
+                    - skewIntensity
+                    + THREE.MathUtils.mapLinear(centerSpeed, 0, 0.005, 0, 1) * THREE.MathUtils.mapLinear(this.growAmount, GROW_AMOUNT_MIN, 1.0, 0.12, 1) * 0.4;
+        this.audio.setBlubVolume(blubVolume);
+        // play slowly when there's no movement, play faster when there's a lot of movement
+        const playbackRate = Math.pow(2, THREE.MathUtils.mapLinear(centerSpeed, 0, 0.005, -0.25, 1.5)) + THREE.MathUtils.mapLinear(this.numCycles, DEFAULT_NUM_CYCLES, 2, 0., 4.);
+        this.audio.setBlubPlaybackRate(playbackRate);
+        // console.log("playback:", playbackRate.toFixed(2), "volume:", volume.toFixed(2));
+
+        this.audio.setOscVolume(THREE.MathUtils.clamp(THREE.MathUtils.smoothstep(this.numCycles, DEFAULT_NUM_CYCLES, DEFAULT_NUM_CYCLES * 1.1) * 0.5, 0, 1));
+        const cycles = (this.numCycles) / (1 + this.slowDownAmount * 3);
+        const frequencyScalar = cycles / DEFAULT_NUM_CYCLES;
+        this.audio.setOscFrequencyScalar(frequencyScalar);
+
+        let numIterations;
+        switch(QUALITY) {
+            case Quality.High:
+                numIterations = 40;
+                break;
+            case Quality.Medium:
+                numIterations = 40;
+                break;
+            default:
+                numIterations = 20;
+                break;
+        }
+        const wantedSimulationDt = cycles * Math.PI * 2 / numIterations;
+        for (let i = 0; i < numIterations; i++) {
+            this.cellStateVariable.material.uniforms.iGlobalTime.value = this.simulationTime;
+            this.computation.compute();
+            this.simulationTime += wantedSimulationDt;
+        }
+
+        this.renderCymaticsPass.uniforms.skewIntensity.value = skewIntensity;
+        this.renderCymaticsPass.uniforms.cellStateVariable.value = this.computation.getCurrentRenderTarget(this.cellStateVariable).texture;
+        this.composer.render();
+
+        this.slowDownAmount *= 0.95;
+    }
+
+    private handleLeapFrame = (frame: Leap.Frame) => {
+        const hands = frame.hands.filter((hand) => hand.valid);
+        const newHands = hands.map((hand, idx): HandData => {
+            const position = hand!.indexFinger.bones[3].center();
+            const { x, y } = mapLeapToThreePosition(this.canvas, position);
+            return { index: idx, position: { x, y }, pinched: !hand!.indexFinger.extended };
+        });
+        this.handData = newHands;
+        if (this.updateHandDataCallback) {
+            this.updateHandDataCallback(this.handData);
+        }
+        if (newHands.length === 0) {
+            mousePressed = false;
+            return;
+        }
+
+        // For now, only one hand controls position
+        const primaryHand = newHands[0];
+        this.setMouse(primaryHand.position.x, primaryHand.position.y);
+
+        // Either hand can pinch or squeeze to trigger the effect
+        const isPinched = newHands.some((hand) => hand.pinched);
+        if (isPinched) {
+            if (!mousePressed) {
+                mousePressed = true;
+                this.slowDownAmount += 1;
+                this.audio.triggerJitter();
+            }
+        } else {
+            mousePressed = false;
+        }
+    }
+
+    resize(width: number, height: number) {
+        this.renderCymaticsPass.uniforms.resolution.value.set(width, height);
+    }
+
+    destroy(): void {
+        this.leapController
+            .removeListener('frame', this.handleLeapFrame)
+            .disconnect();
+        this.composer.dispose();
+        this.computation.dispose();
+        // this.renderCymaticsPass.dispose();
+
+        console.log(this.renderer.info);
+        console.log("Cymatics destroyed");
+    }
+}
