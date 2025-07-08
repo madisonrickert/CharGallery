@@ -51,21 +51,17 @@ export class LeapAttractorController {
         if (frame.hands.length > 0) {
             this.sketch.lastRenderedFrame = this.sketch.globalFrame;
         }
-        // Hide all hand meshes and zero all Leap attractor powers
-        for (const attractor of this.sketch.leapAttractors) {
-            attractor.power = 0;
-        }
-        for (const mesh of this._handMeshesGroup.children) {
-            mesh.visible = false;
-        }
-        frame.hands.filter((hand) => hand.valid).forEach((hand, index) => {
+
+        const validHands = frame.hands.filter((hand) => hand.valid);
+
+        // Update only the attractors and meshes for valid hands
+        validHands.forEach((hand, index) => {
             const position = hand.indexFinger!.bones[3].center();
             const { x, y } = mapLeapToThreePosition(this.sketch.canvas, position);
             if (index === 0) {
                 this.sketch.setGravityFocalPoint(x, y);
             }
 
-            // Only update Leap attractors, not mouse attractor
             const attractor = this.sketch.getLeapAttractor(index);
             attractor.x = x;
             attractor.y = y;
@@ -82,6 +78,14 @@ export class LeapAttractorController {
             handMesh.update(this.sketch.canvas, hand);
             handMesh.visible = true;
         });
+
+        // Zero/hide unused attractors and meshes
+        for (let i = validHands.length; i < this.sketch.leapAttractors.length; i++) {
+            this.sketch.leapAttractors[i].power = 0;
+        }
+        for (let i = validHands.length; i < this._handMeshesGroup.children.length; i++) {
+            this._handMeshesGroup.children[i].visible = false;
+        }
     }
 
     /**
