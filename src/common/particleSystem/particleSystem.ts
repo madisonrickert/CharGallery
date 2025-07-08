@@ -52,7 +52,7 @@ export class ParticleSystem {
         particle.dx = particle.dy = 0;
     }
 
-    stepParticles(nonzeroAttractors: Attractor[]) {
+    stepParticles(nonzeroAttractors: Attractor[], pointCloud: THREE.Points) {
         const {
             BAKED_PULLING_DRAG_CONSTANT,
             BAKED_INERTIAL_DRAG_CONSTANT,
@@ -68,10 +68,13 @@ export class ParticleSystem {
             constrainToBox,
         } = params;
 
+        const pointsPositionAttribute = pointCloud.geometry.getAttribute('position');
+
         const hasAttractors = nonzeroAttractors.length > 0;
         const dragConstant = hasAttractors ? BAKED_PULLING_DRAG_CONSTANT : BAKED_INERTIAL_DRAG_CONSTANT;
         const sizeScaledGravityConstant = GRAVITY_CONSTANT * Math.min(Math.pow(2, canvas.width / 836 - 1), 1);
-        for (const particle of particles) {
+        for (let i = 0; i < particles.length; i++) {
+            const particle = particles[i];
             for (const attractor of nonzeroAttractors) {
                 const dx = attractor.x - particle.x;
                 const dy = attractor.y - particle.y;
@@ -112,6 +115,11 @@ export class ParticleSystem {
 
             particle.vertex!.x = particle.x;
             particle.vertex!.y = particle.y;
+
+            // Update the position attribute for the points geometry
+            pointsPositionAttribute.setXY(i, particle.x, particle.y);
         }
+
+        pointsPositionAttribute.needsUpdate = true;
     }
 }

@@ -135,7 +135,7 @@ class Dots extends ISketch {
 
     public animate(millisElapsed: number) {
         const nonzeroAttractors = attractor.power > 0 ? [attractor] : [];
-        this.ps.stepParticles(nonzeroAttractors);
+        this.ps.stepParticles(nonzeroAttractors, this.pointCloud);
 
         const { flatRatio, normalizedVarianceLength, groupedUpness, averageVel } = computeStats(this.ps);
         this.audioGroup.lfo.frequency.setTargetAtTime(flatRatio, this.audioContext.currentTime, 0.016);
@@ -144,7 +144,6 @@ class Dots extends ISketch {
 
         this.shader.uniforms.iMouse.value = new THREE.Vector2(mouseX / this.canvas.width, (this.canvas.height - mouseY) / this.canvas.height);
 
-        (this.pointCloud.geometry as THREE.BufferGeometry).attributes.position.needsUpdate = true;
         this.composer.render();
     }
 

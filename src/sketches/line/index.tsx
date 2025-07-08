@@ -97,7 +97,7 @@ export default class LineSketch extends ISketch {
     public gravityFocalX = 0;
     public gravityFocalY = 0;
     public scene = new THREE.Scene();
-    public points!: THREE.Points;
+    public pointCloud!: THREE.Points;
     public leapAttractorController!: LeapAttractorController;
     public composer!: EffectComposer;
     public ps!: ParticleSystem;
@@ -147,8 +147,8 @@ export default class LineSketch extends ISketch {
             this.particles,
             PARTICLE_SYSTEM_PARAMS,
         );
-        this.points = createParticlePoints(this.particles, starMaterial);
-        this.scene.add(this.points);
+        this.pointCloud = createParticlePoints(this.particles, starMaterial);
+        this.scene.add(this.pointCloud);
 
         // Set up postprocessing composer and passes
         this.composer = new EffectComposer(this.renderer);
@@ -184,16 +184,7 @@ export default class LineSketch extends ISketch {
             ...(this.mouseAttractor.power !== 0 ? [this.mouseAttractor] : []),
             ...this.leapAttractors.filter((attractor) => attractor.power !== 0)
         ];
-        this.ps.stepParticles(activeAttractors);
-
-        // Update particle positions in geometry
-        // @todo Move to ParticleSystem
-        const positionAttr = this.points.geometry.getAttribute('position');
-        for (let i = 0; i < this.particles.length; i++) {
-            const particle = this.particles[i];
-            positionAttr.setXY(i, particle.x, particle.y);
-        }
-        positionAttr.needsUpdate = true;
+        this.ps.stepParticles(activeAttractors, this.pointCloud);
 
         // --- Audio Feedback ---
         const {
