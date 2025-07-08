@@ -209,7 +209,6 @@ export class SketchComponent extends React.Component<ISketchComponentProps, ISke
     };
 
     private updateScreenSaverCallback = (shouldShow: boolean) => {
-        console.log("Updating screen saver state:", shouldShow);
         this.setState({ shouldShowScreenSaver: shouldShow });
     };
 
