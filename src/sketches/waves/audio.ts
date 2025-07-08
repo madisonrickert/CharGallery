@@ -1,3 +1,5 @@
+import $ from "jquery";
+
 import { SketchAudioContext } from "@/sketch";
 import { map } from "@/common/math";
 
