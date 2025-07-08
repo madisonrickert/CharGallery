@@ -256,9 +256,9 @@ export default class Cymatics extends ISketch {
     private handleLeapFrame = (frame: Leap.Frame) => {
         const hands = frame.hands.filter((hand) => hand.valid);
         const newHands = hands.map((hand, idx): HandData => {
-            const position = hand!.indexFinger.bones[3].center();
+            const position = hand.indexFinger!.bones[3].center();
             const { x, y } = mapLeapToThreePosition(this.canvas, position);
-            return { index: idx, position: { x, y }, pinched: !hand!.indexFinger.extended };
+            return { index: idx, position: { x, y }, pinched: !hand.indexFinger!.extended };
         });
         this.handData = newHands;
         if (this.updateHandDataCallback) {
