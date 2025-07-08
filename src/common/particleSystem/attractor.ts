@@ -8,7 +8,7 @@ export class Attractor {
     static geometry = new THREE.RingGeometry(15, 18, 32);
     static materialSolid = new THREE.MeshBasicMaterial({
         side: THREE.DoubleSide,
-        color: 0xadd6b6,
+        color: 0xC5E2CC,
         transparent: true,
         opacity: 0.6,
     });
