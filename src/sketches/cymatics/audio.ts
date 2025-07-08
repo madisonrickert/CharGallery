@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import debounce from "debounce";
 
 import { AudioClip, createWhiteNoise } from "@/audio";
 import { SketchAudioContext } from "@/sketch";
@@ -32,11 +33,13 @@ export class CymaticsAudio {
     private lfo: OscillatorWithGain;
     private lfoGain: GainNode;
     private oscGain: GainNode;
+    private debouncedTriggerJitter: () => void;
+
     constructor(public audio: SketchAudioContext) {
         this.kick = new AudioClip({
             context: audio,
             srcs: makeAudioSrcs("kick"),
-            volume: 0.6,
+            volume: 0.3,
         });
         this.kick.getNode().connect(audio.gain);
 
@@ -94,6 +97,11 @@ export class CymaticsAudio {
         this.whiteNoiseFilter.connect(audio.gain);
 
         this.setOscFrequencyScalar(1);
+
+        this.debouncedTriggerJitter = debounce(() => {
+            this.kick.play();
+            this.risingBass.play();
+        }, 500);
     }
 
     private makeOsc(volume: number) {
@@ -112,8 +120,7 @@ export class CymaticsAudio {
     }
 
     triggerJitter() {
-        this.kick.play();
-        this.risingBass.play();
+        this.debouncedTriggerJitter();
     }
 
     setBlubVolume(v: number) {
