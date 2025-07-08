@@ -389,4 +389,35 @@ export default class GPUComputationRenderer {
         `;
     }
 
+    public dispose(): void {
+        // Dispose all variable render targets
+        for (const variable of this.variables) {
+            if (variable.renderTargets[0]) {
+                variable.renderTargets[0].dispose();
+            }
+            if (variable.renderTargets[1]) {
+                variable.renderTargets[1].dispose();
+            }
+            
+            // Dispose variable material
+            variable.material.dispose();
+            
+            // Dispose initial value texture if it was created by this renderer
+            if (variable.initialValueTexture) {
+                variable.initialValueTexture.dispose();
+            }
+        }
+        
+        // Dispose pass-through shader material
+        this.passThruShader.dispose();
+        
+        // Dispose mesh geometry
+        this.mesh.geometry.dispose();
+        
+        // Clear scene
+        this.scene.clear();
+        
+        // Clear variables array
+        this.variables.length = 0;
+    }
 }
