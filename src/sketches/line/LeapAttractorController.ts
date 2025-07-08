@@ -81,12 +81,12 @@ export class LeapAttractorController {
         }
     }
 
-    /**
-     * Detach the Leap Motion controller from the sketch.
-     * This will stop listening for Leap Motion frames.
-     */
-    detachFromLeap() {
-        this.controller.removeListener('frame', this.handleFrame);
+    dispose() {
+        // this.sketch.scene.remove(this._handMeshesGroup);
+        // this._handMeshesGroup.clear();
+        this.controller
+            .removeListener('frame', this.handleFrame)
+            .disconnect();
     }
 
     lastFrameIsValid() {

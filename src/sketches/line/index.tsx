@@ -239,6 +239,30 @@ export default class LineSketch extends ISketch {
         this.gravityShaderPass.uniforms.iResolution.value = new THREE.Vector2(width, height);
     }
 
+    public destroy(): void {
+        // Detach Leap Motion controller
+        this.leapAttractorController.dispose();
+
+        // Clear scene
+        this.scene.clear();
+        
+        // Dispose of Three.js resources
+        this.composer.dispose();
+        
+        // Dispose point cloud geometry and material
+        this.pointCloud.geometry.dispose();
+        
+        // // Dispose attractor geometries and materials
+        // this.mouseAttractor.dispose();
+        // for (const attractor of this.leapAttractors) {
+        //     attractor.dispose();
+        // }
+        
+        // Clear arrays
+        // this.particles.length = 0;
+        // this.leapAttractors.length = 0;
+    }
+
     public setGravityFocalPoint(x: number, y: number) {
         this.gravityFocalX = x;
         this.gravityFocalY = y;
