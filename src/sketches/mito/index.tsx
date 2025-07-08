@@ -22,6 +22,7 @@ import { NewPlayerTutorial } from "./tutorial";
 import { TutorialBuildRoot } from "./tutorial/tutorialBuildTissue";
 import { GameStack, Hover, HUD } from "./ui";
 
+import "./index.scss";
 
 export type Entity = Tile | Player;
 

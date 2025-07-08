@@ -1,3 +1,6 @@
+@use "@/styles/colors" as *;
+@use "@/styles/fonts" as *;
+
 .content {
     position: relative;
     // Remove max-width and margin for fullscreen grid

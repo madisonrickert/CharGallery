@@ -10,6 +10,8 @@ import { ISketch, SketchAudioContext } from "@/sketch";
 import { FlamePointsMaterial } from "./flamePointsMaterial";
 import { Chord } from "./types";
 
+import "./flame.scss";
+
 const quality = screen.width > 480 ? "high" : "low";
 let cDx = 0, cDy = 0;
 // let drag = 1.0;

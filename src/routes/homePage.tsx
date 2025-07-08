@@ -2,6 +2,8 @@ import React from "react";
 import { Link } from "react-router";
 import { FaPlay } from "react-icons/fa";
 
+import "./homePage.scss";
+
 export function HomePage() {
     function renderHighlight(name: string, imageUrl: string, linkUrl?: string) {
         const Wrapper: any = linkUrl ? "a" : Link;

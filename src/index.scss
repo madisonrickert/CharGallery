@@ -1,12 +1,5 @@
-$palatino-family: Palatino, Palatino Linotype, Palatino LT STD, Book Antiqua, serif; 
-$georgia-family: Georgia,Cambria,"Times New Roman",Times,serif;
-$arial-family: Arial, Helvetica Neue, Helvetica, sans-serif;
-
-@import "./colors";
-
-@import "./routes/index";
-@import "./sketches/flame/flame";
-@import "./sketches/mito/index";
+@use "./styles/colors" as *;
+@use "./styles/fonts" as *;
 
 * {
     box-sizing: border-box;
@@ -35,6 +28,9 @@ a {
 
 body {
     font-family: $palatino-family;
+    margin: 0;
+    color: #10161a;
+    background: #f5f8fa;
 }
 
 p {
@@ -60,65 +56,4 @@ p ~ p {
 #root {
     overflow: hidden;
     min-height: 100vh;
-}
-
-.slides {
-    position: absolute;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    right: 0;
-    width: 100vw;
-    height: 100vh;
-    margin: 0;
-    padding: 0;
-}
-
-.inventory-info {
-    span~span:before {
-        content: ", ";
-    }
-}
-
-.curtain {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: $light-gray5;
-
-    // 5s is time of outtro
-    transition: opacity 5s;
-
-    animation-name: opacify;
-    // this is time to intro
-    animation-duration: 5s;
-    animation-timing-function: ease;
-
-    user-select: none;
-
-    // sest this for the transition to work properly
-    opacity: 0;
-
-    &.closed {
-        opacity: 1;
-    }
-}
-
-@keyframes opacify {
-    from {
-        // start off closed
-        opacity: 1;
-    }
-
-    to {
-        opacity: 0;
-    }
-}
-
-body {
-    margin: 0;
-    color: #10161a;
-    background: #f5f8fa;
 }
