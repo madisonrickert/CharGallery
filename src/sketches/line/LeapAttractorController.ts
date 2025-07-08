@@ -4,6 +4,10 @@ import { HandMesh } from "@/common/leap/handMesh";
 import * as THREE from "three";
 import LineSketch from ".";
 
+
+const ATTRACTOR_POWER_ATTACK_SPEED = 0.005;
+const ATTRACTOR_POWER_DECAY_SPEED = 0.5;
+
 /**
  * Wrapper for the Leap Motion controller inside of the line sketch.
  */
@@ -59,12 +63,15 @@ export class LeapAttractorController {
             attractor.x = x;
             attractor.y = y;
 
-            if (hand.indexFinger!.extended) {
-                attractor.power = attractor.power * 0.5;
+            if (hand.grabStrength === 0) {
+                attractor.power *= ATTRACTOR_POWER_DECAY_SPEED;
             } else {
                 // position[2] goes from -300 to 300
-                const wantedPower = Math.pow(7, (-position[2] + 350) / 200);
-                attractor.power = attractor.power * 0.5 + wantedPower * 0.5;
+                // hand.grabStrength is between 0 and 1
+                const grabComponent = Math.pow(hand.grabStrength, 1.5);
+                const depthModulator = Math.pow(5, (-position[2] + 350) / 160);
+                const wantedPower = grabComponent * depthModulator;
+                attractor.power = attractor.power * (1 - ATTRACTOR_POWER_ATTACK_SPEED) + wantedPower * ATTRACTOR_POWER_ATTACK_SPEED;
             }
 
             const handMesh = this.getHandMesh(index);
