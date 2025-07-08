@@ -6,7 +6,7 @@ import "./homePage.scss";
 
 export function HomePage() {
     function renderHighlight(name: string, imageUrl: string, linkUrl?: string) {
-        const Wrapper: any = linkUrl ? "a" : Link;
+        const Wrapper: React.ElementType = linkUrl ? "a" : Link;
         const wrapperProps = linkUrl
             ? { className: "work-highlight-link", href: linkUrl, target: "_blank" }
             : { className: "work-highlight-link", to: `/${name.toLowerCase()}` };
