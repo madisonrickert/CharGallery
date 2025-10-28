@@ -2,6 +2,7 @@ import { Controller } from "leapjs";
 import Leap from "leapjs";
 import { mapLeapToThreePosition } from "@/common/leap/util";
 import * as THREE from "three";
+import { MathUtils } from "three";
 import { EffectComposer, ShaderPass/*, RenderPass */} from "three-stdlib";
 
 import GPUComputationRenderer, { GPUComputationRendererVariable } from "@/common/gpuComputationRenderer";
@@ -15,7 +16,6 @@ import COMPUTE_CELL_STATE from "./computeCellState.frag";
 
 let mousePressed = false;
 const mousePosition = new THREE.Vector2(0, 0);
-// const lastMousePosition = new THREE.Vector2(0, 0);
 
 enum Quality {
     Low,
@@ -38,8 +38,16 @@ switch (true) {
 const DEFAULT_NUM_CYCLES = 1.002;
 // const DEFAULT_NUM_CYCLES = 0.502;
 
-const GROW_AMOUNT_MIN = 0.0;
+const MINIMUM_ACTIVE_RADIUS = 0.1;
+const MINIMUM_ACTIVE_RADIUS_INTERACTING = 0.5;
+const TARGET_ACTIVE_RADIUS_INTERACTING = 7.5;
+const ACTIVE_RADIUS_INTERACTING_GROW_FACTOR = 0.01;
+const ACTIVE_RADIUS_IDLE_DECAY_FACTOR = 0.005;
+
 const SCREEN_SAVER_TIMEOUT_SECONDS = 30;
+const MINIMUM_SLEEP_TIMOUT_SECONDS = 10;
+
+const INTERACTION_CENTER_LERP_FACTOR = 0.01;
 
 export default class Cymatics extends ISketch {
     public slowDownAmount = 0;
@@ -48,6 +56,9 @@ export default class Cymatics extends ISketch {
     // TODO move into core sketch
     public globalFrame = 0;
     public lastInteractionFrame = 0;
+
+    /** Tracks whether the sim has been idle long enough to sleep */
+    private isIdle: boolean = false;
     
     public events = {
         touchstart: (event: JQuery.Event) => {
@@ -118,6 +129,17 @@ export default class Cymatics extends ISketch {
     // public handScene = new THREE.Scene();
     // public handCamera = new THREE.OrthographicCamera();
 
+    public simulationTime = 0;
+    public numCycles = DEFAULT_NUM_CYCLES;
+    
+    public get activeRadius() {
+        return this.cellStateVariable.material.uniforms.activeRadius.value;
+    }
+
+    public set activeRadius(t: number) {
+        this.cellStateVariable.material.uniforms.activeRadius.value = t;
+    }
+
     public init() {
         this.renderer.setClearColor(0xfcfcfc);
         this.renderer.clear();
@@ -143,7 +165,7 @@ export default class Cymatics extends ISketch {
         this.cellStateVariable.material.uniforms.iGlobalTime = { value: 0 };
         // this.cellStateVariable.material.uniforms.iMouse = { value: mousePosition.clone() };
         this.cellStateVariable.material.uniforms.center = { value: new THREE.Vector2(0.5, 0.5) };
-        this.cellStateVariable.material.uniforms.growAmount = { value: GROW_AMOUNT_MIN };
+        this.cellStateVariable.material.uniforms.activeRadius = { value: MINIMUM_ACTIVE_RADIUS };
         const computationInitError = this.computation.init();
         if (computationInitError != null) {
             console.error(computationInitError);
@@ -164,66 +186,66 @@ export default class Cymatics extends ISketch {
             .on('frame', this.handleLeapFrame);
     }
 
-    public simulationTime = 0;
-    public numCycles = DEFAULT_NUM_CYCLES;
-    public get growAmount() {
-        return this.cellStateVariable.material.uniforms.growAmount.value;
-    }
-
-    public set growAmount(t: number) {
-        this.cellStateVariable.material.uniforms.growAmount.value = t;
-    }
-
     public animate(_dt: number) {
         // Check for Leap Motion interaction and reset screensaver timer
         if (this.handData.length > 0) {
             this.lastInteractionFrame = this.globalFrame;
         }
 
+        if (!this.isIdle) {
+            this.animateSimulation();
+        }
+
+        this.globalFrame++;
+
+        // --- Sleep Logic ---
+        this.isIdle =
+            this.globalFrame - this.lastInteractionFrame >= MINIMUM_SLEEP_TIMOUT_SECONDS * 60 &&
+            this.activeRadius <= MINIMUM_ACTIVE_RADIUS + 1e-2;
+
+        // --- Screen Saver Logic ---
+        if (this.updateScreenSaverCallback) {
+            const showScreenSaver = this.globalFrame - this.lastInteractionFrame >= SCREEN_SAVER_TIMEOUT_SECONDS * 60;
+            this.updateScreenSaverCallback(showScreenSaver);
+        }
+    }
+
+    /**
+     * Runs each frame that the simulation is active
+     */
+    private animateSimulation(): void {
         if (mousePressed) {
             this.numCycles += .0003 + (this.numCycles - DEFAULT_NUM_CYCLES) * 0.0008;
             // numCycles *= 2;
-            if (this.growAmount < 0.5) {
-                this.growAmount = 0.5;
+            if (this.activeRadius < MINIMUM_ACTIVE_RADIUS_INTERACTING) {
+                this.activeRadius = MINIMUM_ACTIVE_RADIUS_INTERACTING;
             }
-            // target grow amount of 5, so if user holds the mouse we have some buffer time when it fills up the screen
-            this.growAmount = this.growAmount * 0.99 + 7.5 * 0.01;
+            this.activeRadius = MathUtils.lerp(
+                this.activeRadius,
+                TARGET_ACTIVE_RADIUS_INTERACTING,
+                ACTIVE_RADIUS_INTERACTING_GROW_FACTOR
+            );
         } else {
-            this.growAmount = this.growAmount * 0.995 + GROW_AMOUNT_MIN * 0.005;
+            this.activeRadius = MathUtils.lerp(
+                this.activeRadius,
+                MINIMUM_ACTIVE_RADIUS,
+                ACTIVE_RADIUS_IDLE_DECAY_FACTOR
+            );
             this.numCycles = this.numCycles * 0.95 + DEFAULT_NUM_CYCLES * 0.05;
         }
-        const wantedCenter = new THREE.Vector2(0.5, 0.5);
 
-        // mimic code from renderCymatics.frag
-        const aspectRatioFrag = 1 / this.aspectRatio;
-        if (aspectRatioFrag > 1.0) {
-            // widescreen; split the window into left/right halves
-            const screenCoord = mousePosition.clone().multiplyScalar(0.5);
-            const normCoord = screenCoord.multiply(new THREE.Vector2(aspectRatioFrag, 1));
-            const uv = normCoord.add(new THREE.Vector2(1, 0.5));
-            wantedCenter.x = mirroredRepeat(uv.x);
-            wantedCenter.y = mirroredRepeat(uv.y);
-        } else {
-            // tallscreen; split the window into top/bottom
-            const screenCoord = mousePosition.clone().multiplyScalar(0.5);
-            const normCoord = screenCoord.multiply(new THREE.Vector2(1, 1 / aspectRatioFrag));
-            const uv = normCoord.add(new THREE.Vector2(0.5, 1.0));
-            wantedCenter.x = mirroredRepeat(uv.x);
-            wantedCenter.y = mirroredRepeat(uv.y);
-        }
-        const lerpAlpha = 0.01;
-
+        const wantedCenter = this.computeWantedCenter();
         // how fast the center's moving; max is about 0.06
-        const centerSpeed = wantedCenter.distanceTo(this.cellStateVariable.material.uniforms.center.value) * lerpAlpha;
-        this.cellStateVariable.material.uniforms.center.value.lerp(wantedCenter, lerpAlpha);
+        const centerSpeed = wantedCenter.distanceTo(this.cellStateVariable.material.uniforms.center.value) * INTERACTION_CENTER_LERP_FACTOR;
+        this.cellStateVariable.material.uniforms.center.value.lerp(wantedCenter, INTERACTION_CENTER_LERP_FACTOR);
 
         const skewIntensity = Math.pow(Math.max(0, (this.numCycles - DEFAULT_NUM_CYCLES) / 2. - 0.5), 2);
 
-        // grows louder as there's more growAmount, and also when it moves faster
-        const blubVolume = THREE.MathUtils.clamp(Math.pow(THREE.MathUtils.mapLinear(this.growAmount, GROW_AMOUNT_MIN, 1.0, 0.05, 1), 2), 0, 1) * 0.5
+        // grows louder as there's more active radius, and also when it moves faster
+        const blubVolume = THREE.MathUtils.clamp(Math.pow(THREE.MathUtils.mapLinear(this.activeRadius, MINIMUM_ACTIVE_RADIUS, 1.0, 0.05, 1), 2), 0, 1) * 0.5
                     + Math.abs(this.numCycles - DEFAULT_NUM_CYCLES) * 0.25
                     - skewIntensity
-                    + THREE.MathUtils.mapLinear(centerSpeed, 0, 0.005, 0, 1) * THREE.MathUtils.mapLinear(this.growAmount, GROW_AMOUNT_MIN, 1.0, 0.12, 1) * 0.4;
+                    + THREE.MathUtils.mapLinear(centerSpeed, 0, 0.005, 0, 1) * THREE.MathUtils.mapLinear(this.activeRadius, MINIMUM_ACTIVE_RADIUS, 1.0, 0.12, 1) * 0.4;
         this.audio.setBlubVolume(blubVolume);
         // play slowly when there's no movement, play faster when there's a lot of movement
         const playbackRate = Math.pow(2, THREE.MathUtils.mapLinear(centerSpeed, 0, 0.005, -0.25, 1.5)) + THREE.MathUtils.mapLinear(this.numCycles, DEFAULT_NUM_CYCLES, 2, 0., 4.);
@@ -238,13 +260,13 @@ export default class Cymatics extends ISketch {
         let numIterations;
         switch(QUALITY) {
             case Quality.High:
-                numIterations = 40;
+                numIterations = 30;
                 break;
             case Quality.Medium:
-                numIterations = 40;
+                numIterations = 20;
                 break;
             default:
-                numIterations = 20;
+                numIterations = 15;
                 break;
         }
         const wantedSimulationDt = cycles * Math.PI * 2 / numIterations;
@@ -259,13 +281,6 @@ export default class Cymatics extends ISketch {
         this.composer.render();
 
         this.slowDownAmount *= 0.95;
-        this.globalFrame++;
-
-        // --- Screen Saver Logic ---
-        if (this.updateScreenSaverCallback) {
-            const showScreenSaver = this.globalFrame - this.lastInteractionFrame >= SCREEN_SAVER_TIMEOUT_SECONDS * 60;
-            this.updateScreenSaverCallback(showScreenSaver);
-        }
     }
 
     private handleLeapFrame = (frame: Leap.Frame) => {
@@ -305,6 +320,45 @@ export default class Cymatics extends ISketch {
         }
     }
 
+    private tmpScreenCoord = new THREE.Vector2();
+    private tmpNormCoord = new THREE.Vector2();
+    private tmpUv = new THREE.Vector2();
+    private tmpWantedCenter = new THREE.Vector2();
+
+    /**
+     * Computes the simulation’s focal point based on the current aspect ratio and mouse/hand position.
+     *
+     * The cymatics shader splits the viewport into mirrored regions so the visual pattern
+     * repeats across wide and tall screens. This helper replicates the fragment shader’s logic
+     * in TypeScript so we can smoothly lerp the `center` uniform on the CPU without reallocating
+     * vectors each frame.
+     *
+     * @returns A mutable reference to the cached `Vector2` containing the desired center (range [0, 1]).
+     */
+    private computeWantedCenter(): THREE.Vector2 {
+        // clone-without-alloc: screen-space position in [-1, 1]^2 scaled down to the quadrant size
+        const screenCoord = this.tmpScreenCoord.copy(mousePosition).multiplyScalar(0.5);
+
+        if (1 / this.aspectRatio > 1.0) {
+            // Widescreen layout: split into left/right halves.
+            // tmpNormCoord holds the stretch factor, tmpUv accumulates the offset.
+            const uv = this.tmpUv
+                .copy(screenCoord)
+                .multiply(this.tmpNormCoord.set(1 / this.aspectRatio, 1))
+                .add(this.tmpNormCoord.set(1, 0.5));
+            this.tmpWantedCenter.set(mirroredRepeat(uv.x), mirroredRepeat(uv.y));
+        } else {
+            // Tall layout: split into top/bottom halves using the reciprocal aspect.
+            const uv = this.tmpUv
+                .copy(screenCoord)
+                .multiply(this.tmpNormCoord.set(1, this.aspectRatio))
+                .add(this.tmpNormCoord.set(0.5, 1));
+            this.tmpWantedCenter.set(mirroredRepeat(uv.x), mirroredRepeat(uv.y));
+        }
+
+        return this.tmpWantedCenter;
+    }
+
     resize(width: number, height: number) {
         this.renderCymaticsPass.uniforms.resolution.value.set(width, height);
     }
@@ -319,9 +373,9 @@ export default class Cymatics extends ISketch {
             .disconnect();
 
         // Clean up Three.js resources
-        for(const pass of this.composer.passes) {
-            pass.dispose();
-            this.composer.removePass(pass);
+        while(this.composer.passes.length > 0) {
+            this.composer.passes[0].dispose();
+            this.composer.removePass(this.composer.passes[0]);
         }
         this.composer.dispose();
         this.computation.dispose();

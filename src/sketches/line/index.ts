@@ -247,9 +247,9 @@ export default class LineSketch extends ISketch {
         this.scene.clear();
         
         // Dispose of Three.js resources
-        for(const pass of this.composer.passes) {
-            pass.dispose();
-            this.composer.removePass(pass);
+        while(this.composer.passes.length > 0) {
+            this.composer.passes[0].dispose();
+            this.composer.removePass(this.composer.passes[0]);
         }
         this.composer.dispose();
         
