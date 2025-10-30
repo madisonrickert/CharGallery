@@ -46,13 +46,13 @@ interface SketchSuccessComponentProps {
  * - attaching ui event listeners
  * - keeping focus on the canvas
  */
-class SketchSuccessComponent extends React.Component<SketchSuccessComponentProps, {frameCount: number}> {
+class SketchSuccessComponent extends React.Component<SketchSuccessComponentProps, {tick: number}> {
     private frameId?: number;
     private lastTimestamp = 0;
     constructor(props: SketchSuccessComponentProps) {
         super(props);
         this.state = {
-            frameCount: props.sketch.frameCount,
+            tick: 0,
         }
     };
 
@@ -130,8 +130,6 @@ class SketchSuccessComponent extends React.Component<SketchSuccessComponentProps
     private loop = (timestamp: number) => {
         const millisElapsed = timestamp - this.lastTimestamp;
         this.lastTimestamp = timestamp;
-        this.props.sketch.frameCount++;
-        this.props.sketch.timeElapsed = timestamp;
         try {
             this.props.sketch.animate(millisElapsed);
         } catch (e) {
@@ -139,9 +137,9 @@ class SketchSuccessComponent extends React.Component<SketchSuccessComponentProps
         }
 
         // force new render()
-        this.setState({
-            frameCount: this.props.sketch.frameCount,
-        });
+        this.setState(({ tick }) => ({
+            tick: tick + 1,
+        }));
         this.frameId = requestAnimationFrame(this.loop);
     }
 

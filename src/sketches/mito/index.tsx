@@ -103,6 +103,7 @@ export class Mito extends ISketch {
     public audioListener = new THREE.AudioListener();
     private keyMap = new Set<string>();
     public uiState: UIState = { type: "main" };
+    private frameCount = 0;
 
     private enterUIStateExpanding(target: THREE.Vector2) {
         const originalZoom = this.uiState.type === "main" ? this.camera.zoom : this.uiState.originalZoom;
@@ -354,6 +355,7 @@ Textures in memory: ${this.renderer.info.memory.textures}
     }
 
     public animate() {
+        this.frameCount++;
         const { world } = this;
         // if (document.activeElement !== this.canvas && !document.querySelector(".dg.ac")!.contains(document.activeElement)) {
         //     this.canvas.focus();
