@@ -1,7 +1,7 @@
 Development
 ===========
 
-Install [nvm](https://github.com/nvm-sh/nvm?tab=readme-ov-file#installing-and-updating). Run `rvm use` to download and activate the correct node version.
+Install Node.js.
 
 Install Leap Motion Software (see below).
 
