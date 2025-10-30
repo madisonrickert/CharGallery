@@ -24,6 +24,7 @@ const MOUSE_ATTRACTOR_POWER_DECAY_SPEED = 0.9;
 const MOUSE_ATTRACTOR_POWER_DECAY_FLOOR = 2;
 
 const SCREEN_SAVER_TIMEOUT_SECONDS = 30;
+const MINIMUM_SLEEP_TIMEOUT_SECONDS = 30;
 
 interface LineSketchParams {
     p?: number;
@@ -91,6 +92,8 @@ export default class LineSketch extends ISketch {
     // TODO move into core sketch
     public globalFrame = 0;
     public lastInteractionFrame = 0;
+
+    private isIdle: boolean = false;
 
     public audioGroup!: LineSketchAudioGroup;
     public particles: IParticle[] = [];
@@ -180,11 +183,37 @@ export default class LineSketch extends ISketch {
             attractor.animate(_millisElapsed);
         }
 
-        // Check for Leap Motion interaction and reset screensaver timer
+        // Check for Leap Motion interaction and reset interaction timer
         if (this.leapAttractorController.hasActiveInteraction()) {
             this.lastInteractionFrame = this.globalFrame;
         }
 
+        if (!this.isIdle) {
+            this.animateSimulation();
+        }
+
+        // --- Update attractor power ---
+        if (this.mouseAttractor.power > 0) {
+            this.mouseAttractor.power =
+                MOUSE_ATTRACTOR_POWER_DECAY_FLOOR +
+                (this.mouseAttractor.power - MOUSE_ATTRACTOR_POWER_DECAY_FLOOR) * MOUSE_ATTRACTOR_POWER_DECAY_SPEED;
+        }
+
+        this.globalFrame++;
+
+        // --- Sleep logic ---
+        this.isIdle =
+            this.globalFrame - this.lastInteractionFrame >= MINIMUM_SLEEP_TIMEOUT_SECONDS * 60 &&
+            !this.hasActiveAttractors();
+
+        // --- Screen Saver Logic ---
+        if (this.updateScreenSaverCallback) {
+            const showScreenSaver = this.globalFrame - this.lastInteractionFrame >= SCREEN_SAVER_TIMEOUT_SECONDS * 60;
+            this.updateScreenSaverCallback(showScreenSaver);
+        }
+    }
+
+    private animateSimulation(): void {
         // Step particles with all active attractors
         this.activeAttractors.length = 0; // clear without reallocating
         if (this.mouseAttractor.power !== 0) {
@@ -228,20 +257,6 @@ export default class LineSketch extends ISketch {
 
         // --- Render ---
         this.composer.render();
-        this.globalFrame++;
-
-        // --- Screen Saver Logic ---
-        if (this.updateScreenSaverCallback) {
-            const showScreenSaver = this.globalFrame - this.lastInteractionFrame >= SCREEN_SAVER_TIMEOUT_SECONDS * 60;
-            this.updateScreenSaverCallback(showScreenSaver);
-        }
-
-        // --- Update attractor power
-        if (this.mouseAttractor.power > 0) {
-            this.mouseAttractor.power =
-                MOUSE_ATTRACTOR_POWER_DECAY_FLOOR +
-                (this.mouseAttractor.power - MOUSE_ATTRACTOR_POWER_DECAY_FLOOR) * MOUSE_ATTRACTOR_POWER_DECAY_SPEED;
-        }
     }
 
     public resize(width: number, height: number) {
@@ -276,6 +291,13 @@ export default class LineSketch extends ISketch {
     public setGravityFocalPoint(x: number, y: number) {
         this.gravityFocalX = x;
         this.gravityFocalY = y;
+    }
+
+    private hasActiveAttractors(): boolean {
+        if (this.mouseAttractor.power > MOUSE_ATTRACTOR_POWER_DECAY_FLOOR + 1e-2) {
+            return true;
+        }
+        return this.leapAttractors.some((attractor) => attractor.power > 1e-2);
     }
 
     // --- Attractor Controls ---
