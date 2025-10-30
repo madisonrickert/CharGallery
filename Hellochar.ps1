@@ -2,10 +2,10 @@
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location -Path $scriptDirectory
 
-# Run 'yarn start' in a separate process (without waiting for it to return)
+# Run 'npm run preview' in a separate process (without waiting for it to return)
 Write-Output "Running application server..."
-$yarnCmd = (Get-Command yarn.cmd -ErrorAction Stop).Source
-$yarnProcess = Start-Process $yarnCmd -ArgumentList "preview" -NoNewWindow -PassThru
+$npmCmd = (Get-Command npm.cmd -ErrorAction Stop).Source
+$previewProcess = Start-Process $npmCmd -ArgumentList "run", "preview" -NoNewWindow -PassThru
 
 Write-Output "Waiting for 2 seconds before opening the browser..."
 Start-Sleep -Seconds 2
@@ -21,17 +21,17 @@ Start-Sleep -Seconds 2
 # [System.Windows.Forms.SendKeys]::SendWait("{F11}")
 
 # Wait for the user to close the terminal
-Write-Output "Script running. Close the terminal to stop 'yarn preview'."
+Write-Output "Script running. Close the terminal to stop 'npm run preview'."
 try {
     # Wait indefinitely until the terminal is closed
     while ($true) {
         Start-Sleep -Seconds 1
     }
 } finally {
-    # Ensure the yarn process is terminated when the script ends
-    if ($yarnProcess -and !$yarnProcess.HasExited) {
-        Write-Output "Stopping 'yarn preview'..."
-        Stop-Process -Id $yarnProcess.Id -Force
+    # Ensure the preview process is terminated when the script ends
+    if ($previewProcess -and !$previewProcess.HasExited) {
+        Write-Output "Stopping 'npm run preview'..."
+        Stop-Process -Id $previewProcess.Id -Force
     }
     Write-Output "Script complete."
 }
