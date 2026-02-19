@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import * as THREE from "three";
 
 /**
@@ -8,20 +8,26 @@ export function useSketchResize(
   renderer: THREE.WebGLRenderer,
   onResize: (width: number, height: number) => void
 ) {
-  const resize = () => {
-    const canvas = renderer.domElement;
-    const parent = canvas.parentElement;
-    if (!parent) return;
-    renderer.setSize(parent.clientWidth, parent.clientHeight);
-    onResize(canvas.width, canvas.height);
-  };
+  const onResizeRef = useRef(onResize);
+
+  useLayoutEffect(() => {
+    onResizeRef.current = onResize;
+  });
 
   useEffect(() => {
+    const resize = () => {
+      const canvas = renderer.domElement;
+      const parent = canvas.parentElement;
+      if (!parent) return;
+      renderer.setSize(parent.clientWidth, parent.clientHeight);
+      onResizeRef.current(canvas.width, canvas.height);
+    };
+
     resize(); // initial
     window.addEventListener("resize", resize);
 
     return () => {
       window.removeEventListener("resize", resize);
     };
-  }, []);
+  }, [renderer]);
 }

@@ -1,13 +1,8 @@
 import { useEffect } from "react";
 import { ISketch } from "@/sketch";
 
-interface SketchLifecycleOptions {
-  onInitError?: (error: Error) => void;
-  disposeRenderer?: boolean;
-}
-
 /**
- * Runs init/cleanup for the sketch and optionally disposes the renderer.
+ * Runs init/cleanup for the sketch.
  */
 export function useSketchLifecycle(sketch: ISketch) {
   useEffect(() => {
@@ -15,7 +10,6 @@ export function useSketchLifecycle(sketch: ISketch) {
 
     return () => {
       sketch.destroy?.();
-      sketch.renderer.dispose();
     };
   }, [sketch]);
 }

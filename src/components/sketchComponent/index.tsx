@@ -1,5 +1,4 @@
-import React from "react";
-import { Link } from "react-router";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import classnames from "classnames";
 
@@ -7,6 +6,9 @@ import { ISketch, SketchAudioContext, SketchConstructor, UI_EVENTS, UIEventName 
 import { VolumeButton } from "@/components/volumeButton";
 import { HandData, HandOverlay } from "@/components/HandOverlay";
 import { ScreenSaver } from "@/components/screenSaver";
+import { useSketchLifecycle } from "@/common/hooks/useSketchLifecycle";
+import { useSketchAnimationLoop } from "@/common/hooks/useSketchAnimationLoop";
+import { useSketchResize } from "@/common/hooks/useSketchResize";
 
 import "./sketchComponent.scss";
 
@@ -16,282 +18,181 @@ const EVENT_LISTENER_OPTIONS: Partial<Record<UIEventName, AddEventListenerOption
 };
 
 export interface ISketchComponentProps extends React.DOMAttributes<HTMLDivElement> {
-    errorElement?: React.JSX.Element;
     sketchClass: SketchConstructor;
 }
 
-export interface SketchSuccess {
-    type: "success";
-    sketch: ISketch;
-}
-
-export interface SketchError {
-    type: "error";
-    error: Error;
-}
-
-export interface SketchLoading {
-    type: "loading";
-}
-
-export type SketchStatus = SketchSuccess | SketchError | SketchLoading;
-
-interface SketchSuccessComponentProps {
-    sketch: ISketch;
-}
-/**
- * SketchSuccessComponent is responsible for:
- * - running init code on sketch
- * - firing resize events
- * - attaching ui event listeners
- * - keeping focus on the canvas
- */
-class SketchSuccessComponent extends React.Component<SketchSuccessComponentProps, {tick: number}> {
-    private frameId?: number;
-    private lastTimestamp = 0;
-    constructor(props: SketchSuccessComponentProps) {
-        super(props);
-        this.state = {
-            tick: 0,
-        }
-    };
-
-    componentDidMount() {
-        this.updateRendererCanvasToMatchParent(this.props.sketch.renderer);
-        window.addEventListener("resize", this.handleWindowResize);
-
-        // canvas setup
-        const canvas = this.props.sketch.renderer.domElement;
+function useSketchUIEvents(sketch: ISketch) {
+    useEffect(() => {
+        const canvas = sketch.renderer.domElement;
         canvas.setAttribute("tabindex", "1");
-        this.attachUIEvents(canvas);
-        // prevent scrolling the viewport
-        // $canvas.on("touchmove", (event) => {
-        //     event.preventDefault();
-        // });
 
-        // TODO handle errors here
-        this.props.sketch.init();
-        this.frameId = requestAnimationFrame(this.loop);
-    }
+        const events = sketch.events;
+        if (!events) return;
 
-    render() {
-        const { sketch } = this.props;
-        return (
-            <div className="sketch-elements">
-                {sketch.render?.()}
-                {sketch.elements?.map((el, idx) => React.cloneElement(el, { key: idx }))}
-            </div>
-        );
-    }
-
-    componentWillUnmount() {
-        if (this.props.sketch.destroy) {
-            this.props.sketch.destroy();
-        }
-        if (this.frameId != null) {
-            cancelAnimationFrame(this.frameId);
-        }
-        this.props.sketch.renderer.dispose();
-        window.removeEventListener("resize", this.handleWindowResize);
-
-        const canvas = this.props.sketch.canvas;
-        this.removeUIEvents(canvas);
-    }
-
-    private attachUIEvents(target: HTMLElement) {
-        const events = this.props.sketch.events;
-        if (!events) {
-            return;
-        }
-
-        (Object.entries(events) as Array<[UIEventName, EventListener]>).forEach(([eventName, callback]) => {
+        const entries = Object.entries(events) as Array<[UIEventName, EventListener]>;
+        entries.forEach(([eventName, callback]) => {
             if (callback) {
                 const options = EVENT_LISTENER_OPTIONS[eventName];
-                target.addEventListener(eventName, callback, options);
+                canvas.addEventListener(eventName, callback, options);
             }
         });
-    }
 
-    private removeUIEvents(target: HTMLElement) {
-        const events = this.props.sketch.events;
-        if (!events) {
-            return;
-        }
+        return () => {
+            (Object.keys(UI_EVENTS) as Array<keyof typeof UI_EVENTS>).forEach((eventName) => {
+                const callback = events[eventName as UIEventName] as EventListener | undefined;
+                if (callback) {
+                    const options = EVENT_LISTENER_OPTIONS[eventName as UIEventName];
+                    canvas.removeEventListener(eventName, callback, options);
+                }
+            });
+        };
+    }, [sketch]);
+}
 
-        (Object.keys(UI_EVENTS) as Array<keyof typeof UI_EVENTS>).forEach((eventName) => {
-            const callback = events[eventName as UIEventName] as EventListener | undefined;
-            if (callback != null) {
-                const options = EVENT_LISTENER_OPTIONS[eventName as UIEventName];
-                target.removeEventListener(eventName, callback, options);
-            }
-        });
-    }
+function SketchRenderer({ sketch }: { sketch: ISketch }) {
+    const [, setTick] = useState(0);
 
-    private loop = (timestamp: number) => {
-        const millisElapsed = timestamp - this.lastTimestamp;
-        this.lastTimestamp = timestamp;
+    useSketchUIEvents(sketch);
+    useSketchLifecycle(sketch);
+
+    useSketchResize(sketch.renderer, (width, height) => {
+        sketch.resize?.(width, height);
+    });
+
+    useSketchAnimationLoop(({ delta }) => {
         try {
-            this.props.sketch.animate(millisElapsed);
+            sketch.animate(delta);
         } catch (e) {
             console.error(e);
         }
+        // Force re-render to update sketch.render() and sketch.elements
+        setTick((t) => t + 1);
+    });
 
-        // force new render()
-        this.setState(({ tick }) => ({
-            tick: tick + 1,
-        }));
-        this.frameId = requestAnimationFrame(this.loop);
-    }
-
-    private handleWindowResize = () => {
-        const { renderer } = this.props.sketch;
-        this.updateRendererCanvasToMatchParent(renderer);
-        if (this.props.sketch.resize != null) {
-            this.props.sketch.resize(renderer.domElement.width, renderer.domElement.height);
-        }
-    }
-
-    private updateRendererCanvasToMatchParent(renderer: THREE.WebGLRenderer) {
-        const parent = renderer.domElement.parentElement;
-        if (parent != null) {
-            renderer.setSize(parent.clientWidth, parent.clientHeight);
-        }
-    }
+    return (
+        <div className="sketch-elements">
+            {sketch.render?.()}
+            {sketch.elements?.map((el, idx) => <el.type {...el.props} key={idx} />)}
+        </div>
+    );
 }
 
-export interface ISketchComponentState {
-    status: SketchStatus;
-    volumeEnabled: boolean;
-    handData: HandData[];
-    shouldShowScreenSaver: boolean;
-}
+export function SketchComponent({ sketchClass, ...containerProps }: ISketchComponentProps) {
+    const [sketch, setSketch] = useState<ISketch | null>(null);
+    const [volumeEnabled, setVolumeEnabled] = useState(() =>
+        JSON.parse(window.localStorage.getItem("sketch-volumeEnabled") || "true")
+    );
+    const [handData, setHandData] = useState<HandData[]>([]);
+    const [shouldShowScreenSaver, setShouldShowScreenSaver] = useState(false);
 
-export class SketchComponent extends React.Component<ISketchComponentProps, ISketchComponentState> {
-    public state = {
-        status: { type: "loading" } as SketchStatus,
-        volumeEnabled: JSON.parse(window.localStorage.getItem("sketch-volumeEnabled") || "true"),
-        handData: [] as HandData[],
-        shouldShowScreenSaver: false,
-    };
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const audioContextRef = useRef<SketchAudioContext | null>(null);
+    const userVolumeRef = useRef<GainNode | null>(null);
 
-    private renderer?: THREE.WebGLRenderer;
-    private audioContext?: SketchAudioContext;
-    private userVolume?: GainNode;
+    // Initialize sketch when container mounts
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
 
-    private handleContainerRef = (ref: HTMLDivElement | null) => {
-        if (ref != null) {
-            try {
-                // create dependencies, setup sketch, and move to success state
-                // we are responsible for live-updating the global user volume.
-                const audioContext = this.audioContext = new AudioContext() as SketchAudioContext;
-                THREE.AudioContext.setContext(audioContext);
-                this.userVolume = audioContext.createGain();
-                // Set initial volume based on persisted state.
-                this.userVolume.gain.value = this.state.volumeEnabled ? 1 : 0;
-                this.userVolume.connect(audioContext.destination);
-                const audioContextGain = audioContext.gain = audioContext.createGain();
-                audioContextGain.connect(this.userVolume);
-                document.addEventListener("visibilitychange", this.handleVisibilityChange);
+        // Create audio context and gain nodes
+        const audioContext = new AudioContext() as SketchAudioContext;
+        audioContextRef.current = audioContext;
+        THREE.AudioContext.setContext(audioContext);
 
-                if (!this.renderer) {
-                    this.renderer = new THREE.WebGLRenderer({ alpha: true, preserveDrawingBuffer: true, antialias: true });
-                    ref.appendChild(this.renderer.domElement);
-                }
+        const userVolume = audioContext.createGain();
+        userVolumeRef.current = userVolume;
+        userVolume.gain.value = 1;
+        userVolume.connect(audioContext.destination);
 
-                const sketchClassInstance = new this.props.sketchClass(this.renderer, this.audioContext);
-                sketchClassInstance.updateScreenSaverCallback = this.updateScreenSaverCallback;
-                sketchClassInstance.updateHandDataCallback = this.handleHandDataUpdate;
-                this.setState({ status: { type: "success", sketch: sketchClassInstance } });
-            } catch (e) {
-                this.setState({ status: { type: "error", error: e instanceof Error ? e : new Error(String(e)) }});
-                console.error(e);
-            }
-        } else {
-            document.removeEventListener("visibilitychange", this.handleVisibilityChange);
-            if (this.audioContext != null) {
-                this.audioContext.close();
-            }
+        const audioContextGain = audioContext.createGain();
+        audioContext.gain = audioContextGain;
+        audioContextGain.connect(userVolume);
+
+        // Create renderer
+        const renderer = new THREE.WebGLRenderer({
+            alpha: true,
+            preserveDrawingBuffer: true,
+            antialias: true
+        });
+        container.appendChild(renderer.domElement);
+
+        // Create sketch instance
+        const sketchInstance = new sketchClass(renderer, audioContext);
+        sketchInstance.updateScreenSaverCallback = setShouldShowScreenSaver;
+        sketchInstance.updateHandDataCallback = setHandData;
+        queueMicrotask(() => setSketch(sketchInstance));
+
+        return () => {
+            // Clear callbacks to prevent stale references
+            sketchInstance.updateScreenSaverCallback = undefined;
+            sketchInstance.updateHandDataCallback = undefined;
+
+            // Clean up Three.js resources
+            renderer.domElement.remove();
+            renderer.dispose();
+
+            // Clean up audio
+            audioContext.close();
+            audioContextRef.current = null;
+            userVolumeRef.current = null;
+
+            queueMicrotask(() => setSketch(null));
+        };
+    }, [sketchClass]);
+
+    // Sync volume changes to audio context
+    useEffect(() => {
+        const audioContext = audioContextRef.current;
+        const userVolume = userVolumeRef.current;
+        if (!audioContext || !userVolume) return;
+
+        userVolume.gain.value = volumeEnabled ? 1 : 0;
+        if (volumeEnabled && audioContext.state === "suspended") {
+            audioContext.resume();
+        } else if (!volumeEnabled && audioContext.state === "running") {
+            audioContext.suspend();
         }
-    };
+    }, [volumeEnabled]);
 
-    private handleHandDataUpdate = (handData: HandData[]) => {
-        this.setState({ handData });
-    };
+    // Handle visibility changes (pause audio when tab is hidden)
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            const audioContext = audioContextRef.current;
+            if (!audioContext) return;
 
-    private updateScreenSaverCallback = (shouldShow: boolean) => {
-        this.setState({ shouldShowScreenSaver: shouldShow });
-    };
-
-    componentDidUpdate(prevProps: Readonly<ISketchComponentProps>, prevState: Readonly<ISketchComponentState & { handData: HandData[] }>) {
-        if (prevState.volumeEnabled !== this.state.volumeEnabled && this.audioContext && this.userVolume) {
-            const volume = this.state.volumeEnabled ? 1 : 0;
-            this.userVolume.gain.value = volume;
-            if (this.state.volumeEnabled && this.audioContext.state === "suspended") {
-                this.audioContext.resume();
-            } else if (!this.state.volumeEnabled && this.audioContext.state === "running") {
-                this.audioContext.suspend();
-            }
-        }
-    }
-
-    public render() {
-
-        const { sketchClass: _sketchClass, ...containerProps } = this.props;
-        const className = classnames("sketch-component", this.state.status.type);
-        return (
-            <div {...containerProps} id={this.props.sketchClass.id} className={className} ref={this.handleContainerRef}>
-                <div style={{ position: "relative" }}>
-                    {this.renderSketchOrStatus()}
-                </div>
-                <ScreenSaver shouldShow={this.state.shouldShowScreenSaver} />
-                <VolumeButton
-                    volumeEnabled={this.state.volumeEnabled}
-                    onClick={this.handleVolumeButtonClick}
-                />
-            </div>
-        );
-    }
-
-    private renderSketchOrStatus() {
-        const { status } = this.state;
-        if (status.type === "success") {
-            return (
-                <>
-                    <SketchSuccessComponent key={this.props.sketchClass.id} sketch={status.sketch} />
-                    <HandOverlay hands={this.state.handData} />
-                </>
-            );
-        } else if (status.type === "error") {
-            const errorElement = this.props.errorElement || this.renderDefaultErrorElement(status.error.message);
-            return errorElement;
-        } else if (status.type === "loading") {
-            return null;
-        }
-    }
-
-    private renderDefaultErrorElement(message: string) {
-        return (
-            <p className="sketch-error">
-                Oops - something went wrong! Make sure you're using Chrome, or are on your desktop.
-                <pre>{message}</pre>
-                <p><Link className="back" to="/">Back</Link></p>
-            </p>
-        );
-    }
-
-    private handleVolumeButtonClick = () => {
-        const volumeEnabled = !this.state.volumeEnabled;
-        this.setState({ volumeEnabled });
-        window.localStorage.setItem("sketch-volumeEnabled", JSON.stringify(volumeEnabled));
-    }
-
-    private handleVisibilityChange = () => {
-        if (this.audioContext != null) {
             if (document.hidden) {
-                this.audioContext.suspend();
-            } else if (this.state.volumeEnabled) {
-                this.audioContext.resume();
+                audioContext.suspend();
+            } else if (volumeEnabled) {
+                audioContext.resume();
             }
-        }
-    }
+        };
+
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+    }, [volumeEnabled]);
+
+    const handleVolumeButtonClick = () => {
+        setVolumeEnabled((prev: boolean) => {
+            const next = !prev;
+            window.localStorage.setItem("sketch-volumeEnabled", JSON.stringify(next));
+            return next;
+        });
+    };
+
+    const className = classnames("sketch-component", sketch ? "success" : "loading");
+
+    return (
+        <div {...containerProps} id={sketchClass.id} className={className} ref={containerRef}>
+            <div style={{ position: "relative" }}>
+                {sketch && (
+                    <>
+                        <SketchRenderer key={sketchClass.id} sketch={sketch} />
+                        <HandOverlay hands={handData} />
+                    </>
+                )}
+            </div>
+            <ScreenSaver shouldShow={shouldShowScreenSaver} />
+            <VolumeButton volumeEnabled={volumeEnabled} onClick={handleVolumeButtonClick} />
+        </div>
+    );
 }

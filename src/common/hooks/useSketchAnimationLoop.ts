@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 export interface SketchAnimationFrameInfo {
   delta: number;
@@ -11,25 +11,30 @@ export interface SketchAnimationFrameInfo {
 export function useSketchAnimationLoop(
     onFrame: (info: SketchAnimationFrameInfo) => void
 ) {
-  const lastFrameIdRef = useRef<number | null>(null);
   const lastTimestampRef = useRef<number | null>(null);
+  const onFrameRef = useRef(onFrame);
 
-  const animate = (timestamp: number) => {
-    if (lastTimestampRef.current !== null) {
-        const delta = timestamp - lastTimestampRef.current;
-        onFrame({ delta, timestamp });
-    }
-    lastTimestampRef.current = timestamp;
-    lastFrameIdRef.current = requestAnimationFrame(animate);
-  }
+  // Update the callback ref before layout effects
+  useLayoutEffect(() => {
+    onFrameRef.current = onFrame;
+  });
 
   useEffect(() => {
-    lastFrameIdRef.current = requestAnimationFrame(animate);
+    let frameId: number;
+
+    const animate = (timestamp: number) => {
+      if (lastTimestampRef.current !== null) {
+        const delta = timestamp - lastTimestampRef.current;
+        onFrameRef.current({ delta, timestamp });
+      }
+      lastTimestampRef.current = timestamp;
+      frameId = requestAnimationFrame(animate);
+    };
+
+    frameId = requestAnimationFrame(animate);
 
     return () => {
-      if (lastFrameIdRef.current) {
-        cancelAnimationFrame(lastFrameIdRef.current);
-      }
+      cancelAnimationFrame(frameId);
       lastTimestampRef.current = null;
     };
   }, []);
