@@ -24,14 +24,11 @@ interface AudioContextProviderProps {
  */
 export function AudioContextProvider({ children }: AudioContextProviderProps) {
     const [audioContext, setAudioContext] = useState<SketchAudioContext | null>(null);
-    const initialized = useRef(false);
     // Use ref for userVolume since we need to mutate it (Web Audio API requirement)
     const userVolumeRef = useRef<GainNode | null>(null);
 
     useEffect(() => {
-        // Prevent double-initialization in React StrictMode
-        if (initialized.current) return;
-        initialized.current = true;
+        let cancelled = false;
 
         // Create the AudioContext and register it globally with Three.js.
         // This must happen once at app startup, not per-sketch.
@@ -50,10 +47,15 @@ export function AudioContextProvider({ children }: AudioContextProviderProps) {
         ctx.gain = audioContextGain;
         audioContextGain.connect(userVolume);
 
-        // Use queueMicrotask to avoid synchronous setState in effect
-        queueMicrotask(() => setAudioContext(ctx));
+        queueMicrotask(() => {
+            if (!cancelled) {
+                setAudioContext(ctx);
+            }
+        });
 
         return () => {
+            cancelled = true;
+            userVolumeRef.current = null;
             ctx.close();
         };
     }, []);
