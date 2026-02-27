@@ -12,6 +12,11 @@ export class SuperPoint {
     public lastPoint: THREE.Vector3 = new THREE.Vector3();
     private static globalSubtreeIterationIndex = 0;
 
+    /** Tracks the next available geometry buffer slot across all SuperPoints sharing a geometry. Reset before creating a new tree. */
+    public static nextSlot = 0;
+    /** The index in the shared geometry buffer where this SuperPoint's position/color are stored. */
+    public readonly slot: number;
+
     constructor(
         public point: THREE.Vector3,
         public color: THREE.Color,
@@ -20,14 +25,16 @@ export class SuperPoint {
     ) {
         this.lastPoint.copy(point);
 
+        this.slot = SuperPoint.nextSlot++;
+
         const positionAttribute = rootGeometry.attributes.position as THREE.BufferAttribute;
         const colorAttribute = rootGeometry.attributes.color as THREE.BufferAttribute;
 
         const positionArray = positionAttribute.array as Float32Array;
         const colorArray = colorAttribute.array as Float32Array;
 
-        positionArray.set([point.x, point.y, point.z], positionAttribute.count * 3);
-        colorArray.set([color.r, color.g, color.b], colorAttribute.count * 3);
+        positionArray.set([point.x, point.y, point.z], this.slot * 3);
+        colorArray.set([color.r, color.g, color.b], this.slot * 3);
 
         positionAttribute.needsUpdate = true;
         colorAttribute.needsUpdate = true;
@@ -46,6 +53,9 @@ export class SuperPoint {
                 );
             });
         }
+
+        const posArr = (this.rootGeometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
+        const colArr = (this.rootGeometry.attributes.color as THREE.BufferAttribute).array as Float32Array;
 
         for (let idx = 0, l = this.children.length; idx < l; idx++) {
             SuperPoint.globalSubtreeIterationIndex++;
@@ -70,6 +80,9 @@ export class SuperPoint {
                 VARIATIONS.Spherical(child.point);
             }
 
+            posArr.set([child.point.x, child.point.y, child.point.z], child.slot * 3);
+            colArr.set([child.color.r, child.color.g, child.color.b], child.slot * 3);
+
             if (SuperPoint.globalSubtreeIterationIndex % 307 === 0) {
                 for (const v of visitors) {
                     v.visit(child);
@@ -89,9 +102,17 @@ export class SuperPoint {
         ...visitors: UpdateVisitor[]) {
         SuperPoint.globalSubtreeIterationIndex = 0;
         this.point.set(initialX, initialY, initialZ);
+
+        // Write root position back to buffer
+        const posArr = (this.rootGeometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
+        posArr.set([this.point.x, this.point.y, this.point.z], this.slot * 3);
+
         // console.time("updateSubtree");
         this.updateSubtree(depth, shouldLerp, ...visitors);
         // console.timeEnd("updateSubtree");
+
+        this.rootGeometry.setDrawRange(0, SuperPoint.nextSlot);
         (this.rootGeometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+        (this.rootGeometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
     }
 }
