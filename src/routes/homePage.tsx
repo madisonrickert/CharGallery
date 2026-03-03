@@ -35,18 +35,18 @@ export function HomePage() {
                     {renderHighlight("Flame", "/assets/images/flame.jpg")}
                     {renderHighlight("Dots", "/assets/images/dots2.jpg")}
                     {renderHighlight("Waves", "/assets/images/waves2.jpg")}
+                    <div className="work-grid-item credits-block">
+                        <div className="credits-content">
+                            <h2>hellochar</h2>
+                            <ul>
+                                <li><a href="https://github.com/hellochar">Xiaohan Zhang</a></li>
+                                <li><a href="https://joshrickert.com">Madison Rickert</a></li>
+                                <li><a href="https://lovetech.org">Rich Trapani / LoveTech</a></li>
+                            </ul>
+                        </div>
+                    </div>
                 </section>
             </main>
-            <footer className="page-footer">
-                <div className="copyright">
-                    <h3>Credits & Copyright:</h3>
-                    <ul>
-                        <li><a href="https://github.com/hellochar">Xiaohan Zhang</a></li>
-                        <li><a href="https://joshrickert.com">Madison Rickert</a></li>
-                        <li><a href="https://lovetech.org">Rich Trapani / LoveTech</a></li>
-                    </ul>
-                </div>
-            </footer>
         </div>
     );
 }
