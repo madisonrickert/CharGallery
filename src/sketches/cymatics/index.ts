@@ -36,8 +36,6 @@ switch (true) {
 
 // an integer makes perfect standing waves. the 0.002 means that the wave will oscillate very slightly per frame; 500 frames per oscillation period
 const DEFAULT_NUM_CYCLES = 1.002;
-// const DEFAULT_NUM_CYCLES = 0.502;
-
 const MINIMUM_ACTIVE_RADIUS = 0.1;
 const MINIMUM_ACTIVE_RADIUS_INTERACTING = 0.5;
 const TARGET_ACTIVE_RADIUS_INTERACTING = 7.5;
@@ -125,9 +123,6 @@ export default class Cymatics extends ISketch {
 
     public leapController!: Controller;
 
-    // public handScene = new THREE.Scene();
-    // public handCamera = new THREE.OrthographicCamera();
-
     public simulationTime = 0;
     public numCycles = DEFAULT_NUM_CYCLES;
     
@@ -164,13 +159,10 @@ export default class Cymatics extends ISketch {
 
         const initialTexture = this.computation.createTexture();
         this.cellStateVariable = this.computation.addVariable("cellStateVariable", COMPUTE_CELL_STATE, initialTexture);
-        // this.cellStateVariable.minFilter = THREE.NearestFilter;
-        // this.cellStateVariable.magFilter = THREE.NearestFilter;
         this.cellStateVariable.wrapS = THREE.MirroredRepeatWrapping;
         this.cellStateVariable.wrapT = THREE.MirroredRepeatWrapping;
         this.computation.setVariableDependencies(this.cellStateVariable, [this.cellStateVariable]);
         this.cellStateVariable.material.uniforms.iGlobalTime = { value: 0 };
-        // this.cellStateVariable.material.uniforms.iMouse = { value: mousePosition.clone() };
         this.cellStateVariable.material.uniforms.center = { value: new THREE.Vector2(0.5, 0.5) };
         this.cellStateVariable.material.uniforms.activeRadius = { value: MINIMUM_ACTIVE_RADIUS };
         const computationInitError = this.computation.init();
@@ -224,7 +216,6 @@ export default class Cymatics extends ISketch {
     private animateSimulation(): void {
         if (mousePressed) {
             this.numCycles += .0003 + (this.numCycles - DEFAULT_NUM_CYCLES) * 0.0008;
-            // numCycles *= 2;
             if (this.activeRadius < MINIMUM_ACTIVE_RADIUS_INTERACTING) {
                 this.activeRadius = MINIMUM_ACTIVE_RADIUS_INTERACTING;
             }
@@ -258,7 +249,6 @@ export default class Cymatics extends ISketch {
         // play slowly when there's no movement, play faster when there's a lot of movement
         const playbackRate = Math.pow(2, THREE.MathUtils.mapLinear(centerSpeed, 0, 0.005, -0.25, 1.5)) + THREE.MathUtils.mapLinear(this.numCycles, DEFAULT_NUM_CYCLES, 2, 0., 4.);
         this.audio.setBlubPlaybackRate(playbackRate);
-        // console.log("playback:", playbackRate.toFixed(2), "volume:", volume.toFixed(2));
 
         this.audio.setOscVolume(THREE.MathUtils.clamp(THREE.MathUtils.smoothstep(this.numCycles, DEFAULT_NUM_CYCLES, DEFAULT_NUM_CYCLES * 1.1) * 0.5, 0, 1));
         const cycles = (this.numCycles) / (1 + this.slowDownAmount * 3);

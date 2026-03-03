@@ -99,7 +99,6 @@ class LineStrip {
     public update() {
         this.gridOffsetX = ((this.gridOffsetX + this.dx) % this.gridSize + this.gridSize) % this.gridSize;
         this.gridOffsetY = ((this.gridOffsetY + this.dy) % this.gridSize + this.gridSize) % this.gridSize;
-        // console.log(this.gridOffsetX, this.gridOffsetY);
         (this.object.children as PositionedLine[]).forEach((lineMesh) => {
             const { x, y, inlineOffsetX, inlineOffsetY } = lineMesh;
             const geometry = lineMesh.geometry as THREE.BufferGeometry;
@@ -213,10 +212,8 @@ export default class Waves extends ISketch {
 
         // cheap mobile detection
         const gridSize = (window.screen.width > 1024) ? 50 : 100;
-        // lineStrips.push(new LineStrip(HeightMap.width, HeightMap.height, 1, 1, gridSize));
         lineStrips.push(new LineStrip(HeightMap.width, HeightMap.height, 1, -1, gridSize));
         lineStrips.push(new LineStrip(HeightMap.width, HeightMap.height, 0, 1, gridSize));
-        // lineStrips.push(new LineStrip(HeightMap.width, HeightMap.height, 1, 0, gridSize));
 
         lineStrips.forEach((lineStrip) => {
             this.scene.add(lineStrip.object);

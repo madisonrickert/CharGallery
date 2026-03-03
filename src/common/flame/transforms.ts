@@ -56,7 +56,6 @@ export const VARIATIONS = {
                 );
     },
     Normalize: (point: THREE.Vector3) => {
-        // point.setLength(Math.sqrt(point.length()));
         point.normalize();
     },
     Shrink: (point: THREE.Vector3) => {
@@ -69,9 +68,6 @@ export function createInterpolatedVariation(variationA: Transform, variationB: T
         const pointB = pointA.clone();
         variationA(pointA);
         variationB(pointB);
-        // if (Number.isNaN(pointA.lengthManhattan()) || Number.isNaN(pointB.lengthManhattan())) {
-        //     debugger;
-        // }
         const interpolatedAmount = interpolationFn();
         pointA.lerp(pointB, interpolatedAmount);
     };

@@ -278,7 +278,6 @@ export default class FlameSketch extends ISketch {
         countVisitor: BoxCountVisitor,
     ) {
         const velocity = velocityVisitor.computeVelocity();
-        // const variance = varianceVisitor.computeVariance();
         const [count, countDensity] = countVisitor.computeCountAndCountDensity();
 
         // density ranges from 1 to ~6 or 7 at the high end.
@@ -391,7 +390,6 @@ export default class FlameSketch extends ISketch {
         this.compressor.release.setValueAtTime(0.25, 0);
         this.compressor.ratio.setValueAtTime(1.8, 0);
 
-        // const noise = createPinkNoise(context);
         const noise = createWhiteNoise(context);
         this.noiseGain = context.createGain();
         this.noiseGain.gain.setValueAtTime(0, 0);

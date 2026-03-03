@@ -6,7 +6,6 @@ export function computeStats(particleSystem: ParticleSystem) {
     let averageX = 0, averageY = 0, averageVel2 = 0;
     let varianceX2 = 0;
     let varianceY2 = 0;
-    // let varianceVel22 = 0;
     let entropy = 0;
 
     for (let i = 0; i < NUM_PARTICLES; i++) {
@@ -25,7 +24,6 @@ export function computeStats(particleSystem: ParticleSystem) {
             dy2 = Math.pow(particle.y - averageY, 2);
         varianceX2 += dx2;
         varianceY2 += dy2;
-        // varianceVel22 += Math.pow(particle.dx * particle.dx + particle.dy * particle.dy - averageVel2, 2);
         const length = Math.sqrt(dx2 + dy2);
         if (length > 0) {
             entropy += length * Math.log(length);
@@ -34,14 +32,11 @@ export function computeStats(particleSystem: ParticleSystem) {
     entropy /= NUM_PARTICLES;
     varianceX2 /= NUM_PARTICLES;
     varianceY2 /= NUM_PARTICLES;
-    // varianceVel22 /= NUM_PARTICLES;
 
     const varianceX = Math.sqrt(varianceX2);
     const varianceY = Math.sqrt(varianceY2);
-    // const varianceVel2 = Math.sqrt(varianceVel22);
 
     const varianceLength = Math.sqrt(varianceX2 + varianceY2);
-    // const varianceVel = Math.sqrt(varianceVel2);
     const averageVel = Math.sqrt(averageVel2);
 
     // flatRatio = 1 -> perfectly circular

@@ -107,9 +107,7 @@ export class SuperPoint {
         const posArr = (this.rootGeometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
         posArr.set([this.point.x, this.point.y, this.point.z], this.slot * 3);
 
-        // console.time("updateSubtree");
         this.updateSubtree(depth, shouldLerp, ...visitors);
-        // console.timeEnd("updateSubtree");
 
         this.rootGeometry.setDrawRange(0, SuperPoint.nextSlot);
         (this.rootGeometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
