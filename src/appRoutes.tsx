@@ -1,5 +1,6 @@
 import { Route, Routes } from "react-router";
 import { HomePage } from "./routes/homePage";
+import { LicensesPage } from "./routes/licensesPage";
 import { SketchComponent } from "./components/sketchComponent";
 import { useHotkeys } from 'react-hotkeys-hook';
 import { useThrottledNavigate } from "@/common/hooks/useThrottledNavigate";
@@ -19,6 +20,7 @@ export const AppRoutes = () => {
             <Route path="/dots" element={<SketchComponent key="dots" sketchClass={Dots} />} />
             <Route path="/cymatics" element={<SketchComponent key="cymatics" sketchClass={Cymatics} />} />
             <Route path="/waves" element={<SketchComponent key="waves" sketchClass={Waves} />} />
+            <Route path="/licenses" element={<LicensesPage />} />
             <Route path="/" element={<HomePage />} />
         </Routes>
     );

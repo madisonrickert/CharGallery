@@ -43,6 +43,7 @@ export function HomePage() {
                                 <li><a href="https://joshrickert.com">Madison Rickert</a></li>
                                 <li><a href="https://lovetech.org">Rich Trapani / LoveTech</a></li>
                             </ul>
+                            <Link to="/licenses" className="licenses-link">Open Source Licenses</Link>
                         </div>
                     </div>
                 </section>
