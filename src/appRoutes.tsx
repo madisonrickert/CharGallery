@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router";
+import { Route, Routes, useLocation, useNavigate } from "react-router";
 import { HomePage } from "./routes/homePage";
 import { LicensesPage } from "./routes/licensesPage";
 import { SketchComponent } from "./components/sketchComponent";
@@ -7,11 +7,30 @@ import { useThrottledNavigate } from "@/common/hooks/useThrottledNavigate";
 
 import { LineSketch, FlameSketch, Dots, Cymatics, Waves } from "./sketches";
 
+const SKETCH_PATHS = ['/line', '/flame', '/dots', '/cymatics', '/waves'];
+
 export const AppRoutes = () => {
     const throttledNavigate = useThrottledNavigate(500);
+    const location = useLocation();
+    const navigate = useNavigate();
 
-    useHotkeys('z', () => throttledNavigate('/line'));
-    useHotkeys('x', () => throttledNavigate('/cymatics'));
+    useHotkeys('z', () => {
+        const currentIndex = SKETCH_PATHS.indexOf(location.pathname);
+        const prevIndex = currentIndex <= 0 ? SKETCH_PATHS.length - 1 : currentIndex - 1;
+        throttledNavigate(SKETCH_PATHS[prevIndex]);
+    });
+
+    useHotkeys('x', () => {
+        const currentIndex = SKETCH_PATHS.indexOf(location.pathname);
+        const nextIndex = currentIndex === -1 || currentIndex >= SKETCH_PATHS.length - 1 ? 0 : currentIndex + 1;
+        throttledNavigate(SKETCH_PATHS[nextIndex]);
+    });
+
+    useHotkeys('escape', () => {
+        if (location.pathname !== '/') {
+            navigate('/');
+        }
+    });
 
     return (
         <Routes>
