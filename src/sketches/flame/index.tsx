@@ -16,6 +16,7 @@ const quality = screen.width > 480 ? "high" : "low";
 const GEN_DIVISOR = 2147483648 - 1; // 2^31 - 1
 const MAX_POINTS = 200000;
 
+const DEFAULT_NAME = "who are you?";
 const nameFromSearch: string = getQueryParam("name");
 
 function randomBranches(
@@ -130,13 +131,13 @@ function sigmoid(x: number) {
     }
 }
 
-class FlameNameInput extends React.Component<{ onInput: (newName: string) => void }, object> {
+class FlameNameInput extends React.Component<{ onInput: (newName: string, isEmpty: boolean) => void }, object> {
     public render() {
         return (
             <div className="flame-input">
                 <input
                     defaultValue={nameFromSearch}
-                    placeholder="Han"
+                    placeholder={DEFAULT_NAME}
                     maxLength={20}
                     onInput={this.handleInput}
                 />
@@ -146,13 +147,13 @@ class FlameNameInput extends React.Component<{ onInput: (newName: string) => voi
 
     private handleInput = (event: React.FormEvent<HTMLInputElement>) => {
         const value = event.currentTarget.value;
-        const name = (value == null || value === "") ? "Han" : value.trim();
-        this.props.onInput(name);
+        const trimmed = value == null ? "" : value.trim();
+        this.props.onInput(trimmed || DEFAULT_NAME, trimmed === "");
     }
 }
 
 export default class FlameSketch extends ISketch {
-    public elements = [<FlameNameInput key="input" onInput={(name) => this.updateName(name)} />];
+    public elements = [<FlameNameInput key="input" onInput={(name, isEmpty) => this.updateName(name, isEmpty)} />];
     public id = "flame";
     public events = {
         dblclick: () => { },
@@ -223,7 +224,7 @@ export default class FlameSketch extends ISketch {
         this.controls.minDistance = 0.1;
         this.controls.enablePan = false;
 
-        this.updateName(nameFromSearch);
+        this.updateName(nameFromSearch || DEFAULT_NAME, !nameFromSearch);
     }
 
     public animate(_millisElapsed: number) {
@@ -321,9 +322,9 @@ export default class FlameSketch extends ISketch {
         };
     }
 
-    public updateName(name: string = "Han") {
+    public updateName(name: string = DEFAULT_NAME, isEmpty: boolean = true) {
         this.audioContext.gain.gain.setValueAtTime(0, 0);
-        setQueryParams({ name });
+        setQueryParams(isEmpty ? {} : { name });
 
         const hash = stringHash(name);
         const hashNorm = (hash % 1024) / 1024;
