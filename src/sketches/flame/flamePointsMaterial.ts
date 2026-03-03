@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import vertexShader from "./flamePoints.vert.frag";
 import fragmentShader from "./flamePoints.frag";
-import discUrl from "@/common/materials/starMaterial/disc.png";
+import discUrl from "./disc.png";
 
 export class FlamePointsMaterial extends THREE.ShaderMaterial {
     public map: THREE.Texture;
