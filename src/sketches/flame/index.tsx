@@ -131,25 +131,23 @@ function sigmoid(x: number) {
     }
 }
 
-class FlameNameInput extends React.Component<{ onInput: (newName: string, isEmpty: boolean) => void }, object> {
-    public render() {
-        return (
-            <div className="flame-input">
-                <input
-                    defaultValue={nameFromSearch}
-                    placeholder={DEFAULT_NAME}
-                    maxLength={20}
-                    onInput={this.handleInput}
-                />
-            </div>
-        );
-    }
-
-    private handleInput = (event: React.FormEvent<HTMLInputElement>) => {
+function FlameNameInput({ onInput }: { onInput: (newName: string, isEmpty: boolean) => void }) {
+    const handleInput = (event: React.FormEvent<HTMLInputElement>) => {
         const value = event.currentTarget.value;
         const trimmed = value == null ? "" : value.trim();
-        this.props.onInput(trimmed || DEFAULT_NAME, trimmed === "");
-    }
+        onInput(trimmed || DEFAULT_NAME, trimmed === "");
+    };
+
+    return (
+        <div className="flame-input">
+            <input
+                defaultValue={nameFromSearch}
+                placeholder={DEFAULT_NAME}
+                maxLength={20}
+                onInput={handleInput}
+            />
+        </div>
+    );
 }
 
 export default class FlameSketch extends ISketch {
