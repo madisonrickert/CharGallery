@@ -1,5 +1,5 @@
 import * as Leap from "leapjs";
-import { mapLeapToThreePosition } from "@/common/leap/util";
+import { mapLeapToThreePosition, wireLeapConnectionEvents } from "@/common/leap/util";
 import { HandMesh } from "@/common/leap/handMesh";
 import * as THREE from "three";
 import LineSketch from ".";
@@ -14,6 +14,7 @@ const ATTRACTOR_POWER_DECAY_SPEED = 0.5;
 export class LeapAttractorController {
     public controller = new Leap.Controller();
     private _hasActiveInteraction = false;
+    private cleanupLeapConnectionEvents!: () => void;
 
     /**
      * Pool containing all hand meshes.
@@ -39,6 +40,10 @@ export class LeapAttractorController {
         this.controller
             .connect()
             .on('frame', this.handleFrame);
+        this.cleanupLeapConnectionEvents = wireLeapConnectionEvents(
+            this.controller,
+            () => this.sketch.updateLeapConnectionCallback,
+        );
     }
 
     /**
@@ -89,8 +94,7 @@ export class LeapAttractorController {
     }
 
     dispose() {
-        // this.sketch.scene.remove(this._handMeshesGroup);
-        // this._handMeshesGroup.clear();
+        this.cleanupLeapConnectionEvents();
         this.controller
             .removeListener('frame', this.handleFrame)
             .disconnect();

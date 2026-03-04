@@ -2,6 +2,7 @@ import type React from "react";
 import * as THREE from "three";
 import { HandData } from "@/components/handOverlay";
 import { SettingsDefs } from "./sketchSettings";
+import { LeapConnectionStatus } from "./leapStatus";
 
 export type UIEventName =
     | "click"
@@ -120,6 +121,12 @@ export abstract class Sketch {
      * This is set by the parent component to receive hand data updates.
      */
     public updateHandDataCallback?: (handData: HandData[]) => void;
+
+    /**
+     * Callback to report Leap Motion connection status changes.
+     * This is set by the parent component to receive connection status updates.
+     */
+    public updateLeapConnectionCallback?: (status: LeapConnectionStatus) => void;
 }
 
 export interface SketchConstructor {

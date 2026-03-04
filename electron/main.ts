@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -7,7 +7,47 @@ import net from "net";
 // Allow audio autoplay without user gesture
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
+type LeapProcessStatus = "not-started" | "running" | "errored" | "exited" | "external";
+
 let leapProcess: ChildProcess | null = null;
+let leapProcessStatus: LeapProcessStatus = "not-started";
+let mainWindow: BrowserWindow | null = null;
+let externalPollTimer: NodeJS.Timeout | null = null;
+
+function setLeapProcessStatus(status: LeapProcessStatus) {
+  leapProcessStatus = status;
+  mainWindow?.webContents.send("leap-process-status", status);
+
+  // Poll the external server so we notice if it goes away
+  if (status === "external") {
+    startExternalPoll();
+  } else {
+    stopExternalPoll();
+  }
+}
+
+const EXTERNAL_POLL_INTERVAL_MS = 3000;
+
+function startExternalPoll() {
+  if (externalPollTimer) return;
+  externalPollTimer = setInterval(async () => {
+    if (leapProcessStatus !== "external") {
+      stopExternalPoll();
+      return;
+    }
+    if (!(await isPortListening(6437))) {
+      console.log("External Leap WebSocket server is no longer reachable");
+      setLeapProcessStatus("exited");
+    }
+  }, EXTERNAL_POLL_INTERVAL_MS);
+}
+
+function stopExternalPoll() {
+  if (externalPollTimer) {
+    clearInterval(externalPollTimer);
+    externalPollTimer = null;
+  }
+}
 
 function getLeapBinaryName(): string | null {
   switch (process.platform) {
@@ -45,11 +85,15 @@ async function startLeapWebSocket() {
     console.log(
       "Leap WebSocket server already running on port 6437, skipping binary"
     );
+    setLeapProcessStatus("external");
     return;
   }
 
   const binaryName = getLeapBinaryName();
-  if (!binaryName) return;
+  if (!binaryName) {
+    setLeapProcessStatus("not-started");
+    return;
+  }
 
   const binDir = app.isPackaged
     ? path.join(process.resourcesPath, "bin")
@@ -59,6 +103,7 @@ async function startLeapWebSocket() {
 
   if (!fs.existsSync(binaryPath)) {
     console.warn(`Ultraleap binary not found at ${binaryPath}, skipping`);
+    setLeapProcessStatus("not-started");
     return;
   }
 
@@ -69,11 +114,23 @@ async function startLeapWebSocket() {
     });
     leapProcess.on("error", (err) => {
       console.warn("Ultraleap process error:", err.message);
-      leapProcess = null;
+      if (leapProcess) {
+        leapProcess = null;
+        setLeapProcessStatus("errored");
+      }
+    });
+    leapProcess.on("exit", (code) => {
+      console.log(`Ultraleap process exited with code ${code}`);
+      if (leapProcess) {
+        leapProcess = null;
+        setLeapProcessStatus("exited");
+      }
     });
     console.log(`Ultraleap WebSocket started (pid ${leapProcess.pid})`);
+    setLeapProcessStatus("running");
   } catch (err) {
     console.warn("Failed to start Ultraleap:", err);
+    setLeapProcessStatus("errored");
   }
 }
 
@@ -83,6 +140,27 @@ function stopLeapWebSocket() {
     leapProcess = null;
   }
 }
+
+// IPC handlers
+ipcMain.handle("get-leap-process-status", () => {
+  return leapProcessStatus;
+});
+
+ipcMain.handle("start-leap-process", async () => {
+  if (leapProcess) return leapProcessStatus;
+  await startLeapWebSocket();
+  return leapProcessStatus;
+});
+
+ipcMain.handle("stop-leap-process", () => {
+  stopLeapWebSocket();
+  // stopLeapWebSocket sets leapProcess = null before exit handler fires,
+  // so the exit handler guard won't trigger. Set status explicitly.
+  if (leapProcessStatus !== "exited") {
+    setLeapProcessStatus("exited");
+  }
+  return leapProcessStatus;
+});
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -108,6 +186,11 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
+
+  mainWindow = win;
+  win.on("closed", () => {
+    mainWindow = null;
+  });
 }
 
 app.whenReady().then(async () => {
@@ -120,5 +203,6 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  stopExternalPoll();
   stopLeapWebSocket();
 });

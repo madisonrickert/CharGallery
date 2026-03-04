@@ -7,12 +7,14 @@ import { VolumeButton } from "@/components/volumeButton";
 import { HandData, HandOverlay } from "@/components/handOverlay";
 import { ScreenSaver } from "@/components/screenSaver";
 import { DevSettingsPanel } from "@/components/devSettingsPanel";
+import { LeapStatusIndicator } from "@/components/leapStatusIndicator";
 import { useSketchLifecycle } from "@/common/hooks/useSketchLifecycle";
 import { useSketchAnimationLoop } from "@/common/hooks/useSketchAnimationLoop";
 import { useSketchResize } from "@/common/hooks/useSketchResize";
 import { useAudioContext } from "@/common/hooks/useAudioContext";
 import { loadSettings, saveSettings } from "@/common/sketchSettingsStore";
 import { SketchSettingsContext } from "@/common/hooks/useSketchSettings";
+import { useLeapStatus } from "@/common/hooks/useLeapStatus";
 
 import "./sketchComponent.scss";
 
@@ -114,6 +116,7 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
     const [handData, setHandData] = useState<HandData[]>([]);
     const [shouldShowScreenSaver, setShouldShowScreenSaver] = useState(false);
     const [showDevPanel, setShowDevPanel] = useState(false);
+    const { processStatus, connectionStatus, setConnectionStatus, startProcess, stopProcess } = useLeapStatus();
 
     const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -169,12 +172,14 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
         const sketchInstance = new sketchClass(renderer, audioContext);
         sketchInstance.updateScreenSaverCallback = setShouldShowScreenSaver;
         sketchInstance.updateHandDataCallback = setHandData;
+        sketchInstance.updateLeapConnectionCallback = setConnectionStatus;
         queueMicrotask(() => setSketch(sketchInstance));
 
         return () => {
             // Clear callbacks to prevent stale references
             sketchInstance.updateScreenSaverCallback = undefined;
             sketchInstance.updateHandDataCallback = undefined;
+            sketchInstance.updateLeapConnectionCallback = undefined;
 
             // Clean up Three.js resources
             renderer.domElement.remove();
@@ -185,7 +190,7 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
 
             queueMicrotask(() => setSketch(null));
         };
-    }, [sketchClass, audioContext, restartKey]);
+    }, [sketchClass, audioContext, restartKey, setConnectionStatus]);
 
     // Sync volume changes to the shared AudioContext
     useEffect(() => {
@@ -231,6 +236,12 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
                 </div>
                 <ScreenSaver shouldShow={shouldShowScreenSaver} />
                 <VolumeButton volumeEnabled={volumeEnabled} onClick={handleVolumeButtonClick} />
+                <LeapStatusIndicator
+                    processStatus={processStatus}
+                    connectionStatus={connectionStatus}
+                    onStart={startProcess}
+                    onStop={stopProcess}
+                />
                 {showDevPanel && <DevSettingsPanel />}
             </div>
         </SketchSettingsContext.Provider>

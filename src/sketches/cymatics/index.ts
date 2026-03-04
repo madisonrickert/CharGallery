@@ -1,6 +1,6 @@
 import { Controller } from "leapjs";
 import Leap from "leapjs";
-import { mapLeapToThreePosition } from "@/common/leap/util";
+import { mapLeapToThreePosition, wireLeapConnectionEvents } from "@/common/leap/util";
 import * as THREE from "three";
 import { MathUtils } from "three";
 import { EffectComposer, ShaderPass/*, RenderPass */} from "three-stdlib";
@@ -114,6 +114,7 @@ export default class Cymatics extends Sketch {
     public audio!: CymaticsAudio;
 
     public leapController!: Controller;
+    private cleanupLeapConnectionEvents!: () => void;
 
     public simulationTime = 0;
     public numCycles = DEFAULT_NUM_CYCLES;
@@ -167,6 +168,10 @@ export default class Cymatics extends Sketch {
         this.leapController = new Leap.Controller()
             .connect()
             .on('frame', this.handleLeapFrame);
+        this.cleanupLeapConnectionEvents = wireLeapConnectionEvents(
+            this.leapController,
+            () => this.updateLeapConnectionCallback,
+        );
     }
 
     public animate(_dt: number) {
@@ -344,6 +349,7 @@ export default class Cymatics extends Sketch {
         this.audio.dispose();
 
         // Clean up Leap Motion controller
+        this.cleanupLeapConnectionEvents();
         this.leapController
             .removeListener('frame', this.handleLeapFrame)
             .disconnect();
