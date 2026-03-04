@@ -30,6 +30,9 @@ export class AudioClip {
             this.element.appendChild(source);
         }
 
+        this.element.style.display = "none";
+        document.body.appendChild(this.element);
+
         this.node = options.context.createMediaElementSource(this.element);
     }
 
@@ -59,14 +62,9 @@ export class AudioClip {
     }
 
     dispose() {
-        // Stop playback and disconnect
         this.element.pause();
         this.element.currentTime = 0;
         this.node.disconnect();
-        
-        // Remove from DOM if it was added
-        if (this.element.parentNode) {
-            this.element.parentNode.removeChild(this.element);
-        }
+        this.element.remove();
     }
 }
