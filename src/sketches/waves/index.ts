@@ -1,8 +1,10 @@
+import Leap from "leapjs";
 import * as THREE from "three";
-
 import { lerp, map } from "@/common/math";
 import { Sketch } from "@/common/sketch";
 import { createAudioGroup, WavesSketchAudioGroup } from "./audio";
+import { mapLeapToThreePosition, wireLeapConnectionEvents } from "@/common/leap/util";
+import { HandMesh } from "@/common/leap/handMesh";
 
 const LINE_SEGMENT_LENGTH = (window.screen.width > 1024) ? 11 : 22;
 
@@ -159,6 +161,30 @@ export default class Waves extends Sketch {
     private isTimeFast = false;
     private lineMaterial = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.03 });
 
+    // Leap Motion
+    private leapController!: Leap.Controller;
+    private cleanupLeapConnectionEvents!: () => void;
+    private _handMeshesGroup = new THREE.Group();
+    private _activeHandCount = 0;
+    private _handScene = new THREE.Scene();
+    private _handCamera = new THREE.OrthographicCamera(0, 1, 0, 1, 1, 1000);
+    private _handMaterial = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(210 / 255, 190 / 255, 165 / 255),
+        wireframeLinewidth: 5,
+        wireframe: true,
+    });
+
+    // Subtle per-frame fade toward background color to clear hand mesh smears
+    private _fadeScene = new THREE.Scene();
+    private _fadeCamera = new THREE.Camera();
+    private _fadeMaterial = new THREE.MeshBasicMaterial({
+        color: 0xfcfcfc,
+        transparent: true,
+        opacity: 0.01,
+        depthTest: false,
+        depthWrite: false,
+    });
+
     public events = {
         mousemove: (event: MouseEvent) => {
             this.setVelocityFromMouseEvent(event);
@@ -205,6 +231,8 @@ export default class Waves extends Sketch {
         });
         this.renderer.autoClearColor = false;
 
+        this._fadeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this._fadeMaterial));
+
         this.camera.position.z = 500;
 
         // cheap mobile detection
@@ -217,7 +245,23 @@ export default class Waves extends Sketch {
         });
 
         this.resize(this.renderer.domElement.width, this.renderer.domElement.height);
-        // set a default x/y for the mouse so the wave travels to the bottom-right by default
+
+        // Leap Motion setup
+        this._handCamera.position.z = 500;
+        this._handCamera.left = 0;
+        this._handCamera.right = this.canvas.width;
+        this._handCamera.top = 0;
+        this._handCamera.bottom = this.canvas.height;
+        this._handCamera.updateProjectionMatrix();
+        this._handScene.add(this._handMeshesGroup);
+
+        this.leapController = new Leap.Controller()
+            .connect()
+            .on('frame', this.handleLeapFrame);
+        this.cleanupLeapConnectionEvents = wireLeapConnectionEvents(
+            this.leapController,
+            () => this.updateLeapConnectionCallback,
+        );
     }
 
     public animate() {
@@ -243,7 +287,19 @@ export default class Waves extends Sketch {
         this.lineStrips.forEach((lineStrip) => {
             lineStrip.update();
         });
+        // Fade buffer toward background to gradually clear hand mesh smears
+        this.renderer.autoClear = false;
+        this.renderer.render(this._fadeScene, this._fadeCamera);
+        this.renderer.autoClear = true;
         this.renderer.render(this.scene, this.camera);
+
+        // Render hand meshes on top
+        if (this._activeHandCount > 0) {
+            this.renderer.autoClear = false;
+            this.renderer.autoClearColor = true;
+            this.renderer.render(this._handScene, this._handCamera);
+            this.renderer.autoClearColor = false;
+        }
     }
 
     public resize(width: number, height: number) {
@@ -270,6 +326,10 @@ export default class Waves extends Sketch {
         this.lineStrips.forEach((lineStrip) => {
             lineStrip.resize(HeightMap.width, HeightMap.height);
         });
+
+        this._handCamera.right = width;
+        this._handCamera.bottom = height;
+        this._handCamera.updateProjectionMatrix();
     }
 
     setVelocityFromMouseEvent(event: MouseEvent) {
@@ -295,9 +355,56 @@ export default class Waves extends Sketch {
         });
     }
 
+    private getHandMesh(index: number): HandMesh {
+        while (this._handMeshesGroup.children.length <= index) {
+            const handMesh = new HandMesh(this._handMaterial);
+            handMesh.visible = false;
+            this._handMeshesGroup.add(handMesh);
+        }
+        return this._handMeshesGroup.children[index] as HandMesh;
+    }
+
+    private handleLeapFrame = (frame: Leap.Frame) => {
+        const validHands = frame.hands.filter((hand) => hand.valid);
+        this._activeHandCount = validHands.length;
+
+        validHands.forEach((hand, index) => {
+            const { x, y } = mapLeapToThreePosition(this.canvas, hand.palmPosition);
+
+            // Primary hand controls wave direction
+            if (index === 0) {
+                this.setVelocityFromCanvasCoordinates(x, y);
+            }
+
+            // Update hand mesh
+            const handMesh = this.getHandMesh(index);
+            handMesh.update(this.canvas, hand);
+            handMesh.visible = true;
+        });
+
+        // Hide unused hand meshes
+        for (let i = validHands.length; i < this._handMeshesGroup.children.length; i++) {
+            this._handMeshesGroup.children[i].visible = false;
+        }
+
+        if (validHands.length === 0) {
+            return;
+        }
+
+        // Either hand grabbing triggers fast mode
+        const isGrabbing = validHands.some((hand) => hand.grabStrength > 0.5);
+        this.isTimeFast = isGrabbing;
+    }
+
     public destroy() {
         // Clean up audio resources (also removes the <audio> DOM element)
         this.audioGroup.dispose();
+
+        // Clean up Leap Motion controller
+        this.cleanupLeapConnectionEvents();
+        this.leapController
+            .removeListener('frame', this.handleLeapFrame)
+            .disconnect();
 
         // Clean up Three.js resources
         this.lineStrips.forEach((lineStrip) => {
@@ -311,5 +418,8 @@ export default class Waves extends Sketch {
         });
         this.lineMaterial.dispose();
         this.lineStrips.length = 0;
+        this._handMaterial.dispose();
+        this._fadeMaterial.dispose();
+        this._handScene.clear();
     }
 }

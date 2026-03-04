@@ -1,3 +1,4 @@
+import Leap from "leapjs";
 import * as THREE from "three";
 import { EffectComposer, RenderPass } from "three-stdlib";
 
@@ -9,6 +10,8 @@ import { SettingDef } from "@/common/sketchSettings";
 import { Sketch } from "@/common/sketch";
 import { createAudioGroup, DotSketchAudioGroup } from "./audio";
 import { starMaterial } from "@/common/materials/starMaterial";
+import { mapLeapToThreePosition, wireLeapConnectionEvents } from "@/common/leap/util";
+import { HandMesh } from "@/common/leap/handMesh";
 
 const params: ParticleSystemParameters = {
     timeStep: 0.016 * 3,
@@ -23,6 +26,10 @@ const params: ParticleSystemParameters = {
 const ATTRACTOR_POWER_DECAY_SPEED = 0.9;
 const ATTRACTOR_POWER_DECAY_FLOOR = 2;
 
+const LEAP_ATTRACTOR_POWER_ATTACK_SPEED = 0.005;
+const LEAP_ATTRACTOR_POWER_DECAY_SPEED = 0.5;
+const LEAP_ATTRACTOR_POWER_THRESHOLD = 0.05;
+
 export default class Dots extends Sketch {
     static id = "dots";
     static settings = {
@@ -30,8 +37,15 @@ export default class Dots extends Sketch {
         gamma: { default: 1.0, category: "dev", label: "Gamma", requiresRestart: true, step: 0.1 } satisfies SettingDef<number>,
     };
     private attractor = new Attractor();
+    private leapAttractors: Attractor[] = [];
     private mouseX = 0;
     private mouseY = 0;
+
+    // Leap Motion
+    private leapController!: Leap.Controller;
+    private cleanupLeapConnectionEvents!: () => void;
+    private _handMeshesGroup = new THREE.Group();
+    private _activeHandCount = 0;
 
     public events = {
         touchstart: (event: TouchEvent) => {
@@ -119,10 +133,28 @@ export default class Dots extends Sketch {
         this.shader.uniforms.gamma.value = settings.gamma;
         this.shader.renderToScreen = true;
         this.composer.addPass(this.shader);
+
+        // Leap Motion setup
+        this.scene.add(this._handMeshesGroup);
+        this.leapController = new Leap.Controller()
+            .connect()
+            .on('frame', this.handleLeapFrame);
+        this.cleanupLeapConnectionEvents = wireLeapConnectionEvents(
+            this.leapController,
+            () => this.updateLeapConnectionCallback,
+        );
     }
 
     public animate(_millisElapsed: number) {
-        const nonzeroAttractors = this.attractor.power > 0 ? [this.attractor] : [];
+        const nonzeroAttractors: Attractor[] = [];
+        if (this.attractor.power > 0) {
+            nonzeroAttractors.push(this.attractor);
+        }
+        for (const leapAttractor of this.leapAttractors) {
+            if (leapAttractor.power >= LEAP_ATTRACTOR_POWER_THRESHOLD) {
+                nonzeroAttractors.push(leapAttractor);
+            }
+        }
         this.ps.stepParticles(nonzeroAttractors, this.pointCloud);
 
         const { flatRatio, normalizedVarianceLength, groupedUpness, averageVel } = computeStats(this.ps);
@@ -156,9 +188,76 @@ export default class Dots extends Sketch {
         // Clean up audio resources
         this.audioGroup.dispose();
 
+        // Clean up Leap Motion controller
+        this.cleanupLeapConnectionEvents();
+        this.leapController
+            .removeListener('frame', this.handleLeapFrame)
+            .disconnect();
+
         // Clean up Three.js resources
         this.pointCloud.geometry.dispose();
         this.scene.remove(this.pointCloud);
+    }
+
+    private getLeapAttractor(index: number): Attractor {
+        while (this.leapAttractors.length <= index) {
+            this.leapAttractors.push(new Attractor());
+        }
+        return this.leapAttractors[index];
+    }
+
+    private getHandMesh(index: number): HandMesh {
+        while (this._handMeshesGroup.children.length <= index) {
+            const handMesh = new HandMesh();
+            handMesh.visible = false;
+            this._handMeshesGroup.add(handMesh);
+        }
+        return this._handMeshesGroup.children[index] as HandMesh;
+    }
+
+    private handleLeapFrame = (frame: Leap.Frame) => {
+        const validHands = frame.hands.filter((hand) => hand.valid);
+        this._activeHandCount = validHands.length;
+
+        validHands.forEach((hand, index) => {
+            const position = hand.palmPosition;
+            const { x, y } = mapLeapToThreePosition(this.canvas, position);
+
+            // Update per-hand attractor with gradual grab-strength power (like Line)
+            const attractor = this.getLeapAttractor(index);
+            attractor.x = x;
+            attractor.y = y;
+            if (hand.grabStrength < 0.1) {
+                attractor.power *= LEAP_ATTRACTOR_POWER_DECAY_SPEED;
+                if (attractor.power < LEAP_ATTRACTOR_POWER_THRESHOLD) {
+                    attractor.power = 0;
+                }
+            } else {
+                const grabComponent = Math.pow(hand.grabStrength, 1.5);
+                const depthModulator = Math.pow(5, (-position[2] + 350) / 160);
+                const wantedPower = grabComponent * depthModulator;
+                attractor.power = attractor.power * (1 - LEAP_ATTRACTOR_POWER_ATTACK_SPEED) + wantedPower * LEAP_ATTRACTOR_POWER_ATTACK_SPEED;
+            }
+
+            // First hand also drives the shader mouse uniform
+            if (index === 0) {
+                this.mouseX = x;
+                this.mouseY = y;
+            }
+
+            // Update hand mesh
+            const handMesh = this.getHandMesh(index);
+            handMesh.update(this.canvas, hand);
+            handMesh.visible = true;
+        });
+
+        // Hide unused hand meshes and zero unused attractors
+        for (let i = validHands.length; i < this._handMeshesGroup.children.length; i++) {
+            this._handMeshesGroup.children[i].visible = false;
+        }
+        for (let i = validHands.length; i < this.leapAttractors.length; i++) {
+            this.leapAttractors[i].power = 0;
+        }
     }
 
     private createAttractor(x: number, y: number) {
