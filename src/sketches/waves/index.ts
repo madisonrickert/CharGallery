@@ -175,12 +175,14 @@ export default class Waves extends Sketch {
     public events = {
         mousemove: (event: MouseEvent) => {
             this.setVelocityFromMouseEvent(event);
+            this.markInteraction();
         },
 
         mousedown: (event: MouseEvent) => {
             if (event.button === 0) {
                 this.isTimeFast = true;
                 this.setVelocityFromMouseEvent(event);
+                this.markInteraction();
             }
         },
 
@@ -197,10 +199,12 @@ export default class Waves extends Sketch {
 
             this.isTimeFast = true;
             this.setVelocityFromTouchEvent(event);
+            this.markInteraction();
         },
 
         touchmove: (event: TouchEvent) => {
             this.setVelocityFromTouchEvent(event);
+            this.markInteraction();
         },
 
         touchend: (_event: TouchEvent) => {
@@ -255,40 +259,51 @@ export default class Waves extends Sketch {
     }
 
     public animate() {
-        const opacityChangeFactor = 0.1;
-        if (this.isTimeFast) {
-            this.lineMaterial.opacity = this.lineMaterial.opacity * (1 - opacityChangeFactor) + 0.23 * opacityChangeFactor;
-            HeightMap.frame += 4;
-        } else {
-            this.lineMaterial.opacity = this.lineMaterial.opacity * (1 - opacityChangeFactor) + 0.03 * opacityChangeFactor;
-            HeightMap.frame += 1;
-        }
+        const currentTimeMs = performance.now();
 
-        this.audioGroup.updateParameters();
-
-        if (HeightMap.frame % 1000 < 500) {
-            this.lineMaterial.color.set("rgb(50, 12, 12)");
-        } else {
-            this.lineMaterial.color.set("rgb(252, 247, 243)");
-        }
-
-        const scale = map(Math.sin(HeightMap.frame / 550), -1, 1, 1, 0.8);
-        this.camera.scale.set(scale, scale, 1);
-        this.lineStrips.forEach((lineStrip) => {
-            lineStrip.update();
-        });
-        // Fade buffer toward background to gradually clear hand mesh smears
-        this.renderer.autoClear = false;
-        this.renderer.render(this._fadeScene, this._fadeCamera);
-        this.renderer.autoClear = true;
-        this.renderer.render(this.scene, this.camera);
-
-        // Render hand meshes on top
+        // Check for Leap Motion interaction
         if (this.leapHands.activeHandCount > 0) {
-            this.renderer.autoClearColor = true;
-            this.leapHands.renderOverlay();
-            this.renderer.autoClearColor = false;
+            this.markInteraction(currentTimeMs);
         }
+
+        if (!this.isIdle) {
+            const opacityChangeFactor = 0.1;
+            if (this.isTimeFast) {
+                this.lineMaterial.opacity = this.lineMaterial.opacity * (1 - opacityChangeFactor) + 0.23 * opacityChangeFactor;
+                HeightMap.frame += 4;
+            } else {
+                this.lineMaterial.opacity = this.lineMaterial.opacity * (1 - opacityChangeFactor) + 0.03 * opacityChangeFactor;
+                HeightMap.frame += 1;
+            }
+
+            this.audioGroup.updateParameters();
+
+            if (HeightMap.frame % 1000 < 500) {
+                this.lineMaterial.color.set("rgb(50, 12, 12)");
+            } else {
+                this.lineMaterial.color.set("rgb(252, 247, 243)");
+            }
+
+            const scale = map(Math.sin(HeightMap.frame / 550), -1, 1, 1, 0.8);
+            this.camera.scale.set(scale, scale, 1);
+            this.lineStrips.forEach((lineStrip) => {
+                lineStrip.update();
+            });
+            // Fade buffer toward background to gradually clear hand mesh smears
+            this.renderer.autoClear = false;
+            this.renderer.render(this._fadeScene, this._fadeCamera);
+            this.renderer.autoClear = true;
+            this.renderer.render(this.scene, this.camera);
+
+            // Render hand meshes on top
+            if (this.leapHands.activeHandCount > 0) {
+                this.renderer.autoClearColor = true;
+                this.leapHands.renderOverlay();
+                this.renderer.autoClearColor = false;
+            }
+        }
+
+        this.updateIdleState(currentTimeMs);
     }
 
     public resize(width: number, height: number) {

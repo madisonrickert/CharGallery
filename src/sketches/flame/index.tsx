@@ -139,13 +139,18 @@ export default class FlameSketch extends Sketch {
     private quality = screen.width > 480 ? "high" : "low";
     private savedName: string = loadSettings("flame", FlameSketch.settings).name;
     public events = {
-        dblclick: () => { },
+        dblclick: () => {
+            this.markInteraction();
+        },
         mousemove: (event: MouseEvent) => {
             const { x, y } = this.getRelativeCoordinates(event.clientX, event.clientY);
             this.mousePosition.x = x;
             this.mousePosition.y = y;
+            this.markInteraction();
         },
-        mousedown: (_event: MouseEvent) => { },
+        mousedown: (_event: MouseEvent) => {
+            this.markInteraction();
+        },
     };
 
     // Three.js
@@ -282,6 +287,21 @@ export default class FlameSketch extends Sketch {
     }
 
     public animate(_millisElapsed: number) {
+        const currentTimeMs = performance.now();
+
+        // Check for Leap Motion interaction
+        if (this.leapHands.activeHandCount > 0) {
+            this.markInteraction(currentTimeMs);
+        }
+
+        if (!this.isIdle) {
+            this.animateSimulation();
+        }
+
+        this.updateIdleState(currentTimeMs);
+    }
+
+    private animateSimulation() {
         if (this.quality === "high") {
             this.animateSuperPoint();
         }

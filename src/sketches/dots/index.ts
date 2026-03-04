@@ -52,6 +52,7 @@ export default class Dots extends Sketch {
             this.createAttractor(x, y);
             this.mouseX = x;
             this.mouseY = y;
+            this.markInteraction();
         },
 
         touchmove: (event: TouchEvent) => {
@@ -63,6 +64,7 @@ export default class Dots extends Sketch {
             this.moveAttractor(x, y);
             this.mouseX = x;
             this.mouseY = y;
+            this.markInteraction();
         },
 
         touchend: (_event: TouchEvent) => {
@@ -75,6 +77,7 @@ export default class Dots extends Sketch {
                 this.mouseX = x;
                 this.mouseY = y;
                 this.createAttractor(this.mouseX, this.mouseY);
+                this.markInteraction();
             }
         },
 
@@ -83,6 +86,7 @@ export default class Dots extends Sketch {
             this.mouseX = x;
             this.mouseY = y;
             this.moveAttractor(this.mouseX, this.mouseY);
+            this.markInteraction();
         },
 
         mouseup: (event: MouseEvent) => {
@@ -163,32 +167,43 @@ export default class Dots extends Sketch {
     }
 
     public animate(_millisElapsed: number) {
-        const nonzeroAttractors: Attractor[] = [];
-        if (this.attractor.power > 0) {
-            nonzeroAttractors.push(this.attractor);
+        const currentTimeMs = performance.now();
+
+        // Check for Leap Motion interaction
+        if (this.leapHands.activeHandCount > 0) {
+            this.markInteraction(currentTimeMs);
         }
-        for (const leapAttractor of this.leapAttractors) {
-            if (leapAttractor.power >= LEAP_ATTRACTOR_POWER_THRESHOLD) {
-                nonzeroAttractors.push(leapAttractor);
+
+        if (!this.isIdle) {
+            const nonzeroAttractors: Attractor[] = [];
+            if (this.attractor.power > 0) {
+                nonzeroAttractors.push(this.attractor);
+            }
+            for (const leapAttractor of this.leapAttractors) {
+                if (leapAttractor.power >= LEAP_ATTRACTOR_POWER_THRESHOLD) {
+                    nonzeroAttractors.push(leapAttractor);
+                }
+            }
+            this.ps.stepParticles(nonzeroAttractors, this.pointCloud);
+
+            const { flatRatio, normalizedVarianceLength, groupedUpness, averageVel } = computeStats(this.ps);
+            this.audioGroup.lfo.frequency.cancelScheduledValues(this.audioContext.currentTime);
+            this.audioGroup.lfo.frequency.setTargetAtTime(flatRatio, this.audioContext.currentTime, 0.016);
+            this.audioGroup.setFrequency(120 / normalizedVarianceLength * averageVel / 100 );
+            this.audioGroup.setVolume(Math.max(groupedUpness - 0.05, 0));
+
+            this.shader.uniforms.iMouse.value = new THREE.Vector2(this.mouseX / this.canvas.width, (this.canvas.height - this.mouseY) / this.canvas.height);
+
+            this.composer.render();
+
+            if (this.attractor.power > 0) {
+                this.attractor.power =
+                    ATTRACTOR_POWER_DECAY_FLOOR +
+                    (this.attractor.power - ATTRACTOR_POWER_DECAY_FLOOR) * ATTRACTOR_POWER_DECAY_SPEED;
             }
         }
-        this.ps.stepParticles(nonzeroAttractors, this.pointCloud);
 
-        const { flatRatio, normalizedVarianceLength, groupedUpness, averageVel } = computeStats(this.ps);
-        this.audioGroup.lfo.frequency.cancelScheduledValues(this.audioContext.currentTime);
-        this.audioGroup.lfo.frequency.setTargetAtTime(flatRatio, this.audioContext.currentTime, 0.016);
-        this.audioGroup.setFrequency(120 / normalizedVarianceLength * averageVel / 100 );
-        this.audioGroup.setVolume(Math.max(groupedUpness - 0.05, 0));
-
-        this.shader.uniforms.iMouse.value = new THREE.Vector2(this.mouseX / this.canvas.width, (this.canvas.height - this.mouseY) / this.canvas.height);
-
-        this.composer.render();
-
-        if (this.attractor.power > 0) {
-            this.attractor.power =
-                ATTRACTOR_POWER_DECAY_FLOOR +
-                (this.attractor.power - ATTRACTOR_POWER_DECAY_FLOOR) * ATTRACTOR_POWER_DECAY_SPEED;
-        }
+        this.updateIdleState(currentTimeMs);
     }
 
     public resize(width: number, height: number) {
@@ -233,5 +248,16 @@ export default class Dots extends Sketch {
 
     private removeAttractor() {
         this.attractor.power = 0;
+    }
+
+    private hasActiveAttractors(): boolean {
+        if (this.attractor.power > ATTRACTOR_POWER_DECAY_FLOOR + 1e-2) {
+            return true;
+        }
+        return this.leapAttractors.some((attractor) => attractor.power >= LEAP_ATTRACTOR_POWER_THRESHOLD);
+    }
+
+    protected isReadyToSleep(): boolean {
+        return !this.hasActiveAttractors();
     }
 }
