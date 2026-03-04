@@ -26,9 +26,10 @@
     "start": "vite --port 5173",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "electron:dev": "ELECTRON=1 vite --port 5173",
-    "electron:build": "ELECTRON=1 vite build",
+    "electron:dev": "cross-env ELECTRON=1 vite --port 5173",
+    "electron:build": "cross-env ELECTRON=1 vite build",
     "electron:package": "electron-builder",
+    "release:tag": "git tag v$(node -p \"require('./package.json').version\") && git push origin v$(node -p \"require('./package.json').version\")",
     "test": "NODE_OPTIONS='--no-webstorage' vitest",
     "test:run": "NODE_OPTIONS='--no-webstorage' vitest run",
     "test:coverage": "NODE_OPTIONS='--no-webstorage' vitest run --coverage"
@@ -58,6 +59,7 @@
     "@types/three": "^0.183.1",
     "@vitejs/plugin-react": "^5.1.4",
     "@vitest/coverage-v8": "^4.0.18",
+    "cross-env": "^10.1.0",
     "electron": "^40.6.1",
     "electron-builder": "^26.8.1",
     "eslint": "^9.39.3",
@@ -84,21 +86,24 @@
       "dist/**/*",
       "dist-electron/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "bin/",
-        "to": "bin/",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.entertainment"
+      "category": "public.app-category.entertainment",
+      "extraResources": [
+        {
+          "from": "bin/Ultraleap-Tracking-WS-macos-applesilicon",
+          "to": "bin/Ultraleap-Tracking-WS-macos-applesilicon"
+        }
+      ]
     },
     "win": {
-      "target": "portable"
+      "target": "portable",
+      "extraResources": [
+        {
+          "from": "bin/Ultraleap-Tracking-WS-win32.exe",
+          "to": "bin/Ultraleap-Tracking-WS-win32.exe"
+        }
+      ]
     }
   }
 }

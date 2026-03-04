@@ -54,6 +54,15 @@ npm run electron:build && npx electron-builder --win
 
 The Electron app auto-launches the Ultraleap WebSocket binary (if present in `bin/`) and enables audio autoplay without user gesture.
 
+## Releasing
+
+1. Bump `version` in `package.json` and commit
+2. Run `npm run release:tag` to create and push the git tag
+3. GitHub Actions builds macOS DMG + Windows exe and creates a draft release
+4. Review the draft on the [Releases](../../releases) page, edit notes if needed, then publish
+
+The web build deploys to GitHub Pages automatically on every push to `main`.
+
 ## Keyboard Shortcuts
 
 | Key       | Action                          |
@@ -65,7 +74,7 @@ The Electron app auto-launches the Ultraleap WebSocket binary (if present in `bi
 
 ## Leap Motion
 
-Optional. The line and cymatics sketches support [Leap Motion](https://www.ultraleap.com/) hand tracking.
+Optional. Sketches support [Leap Motion](https://www.ultraleap.com/) hand tracking.
 
 Compatible with Leap Motion Software 4.x out of the box. For 5.x+ (Gemini), the [UltraleapTrackingWebSocket](https://github.com/ultraleap/UltraleapTrackingWebSocket) compatibility layer is needed. A pre-built macOS Apple Silicon binary is included:
 
