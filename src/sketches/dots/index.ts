@@ -118,6 +118,7 @@ export default class Dots extends Sketch {
         this.ps.stepParticles(nonzeroAttractors, this.pointCloud);
 
         const { flatRatio, normalizedVarianceLength, groupedUpness, averageVel } = computeStats(this.ps);
+        this.audioGroup.lfo.frequency.cancelScheduledValues(this.audioContext.currentTime);
         this.audioGroup.lfo.frequency.setTargetAtTime(flatRatio, this.audioContext.currentTime, 0.016);
         this.audioGroup.setFrequency(120 / normalizedVarianceLength * averageVel / 100 );
         this.audioGroup.setVolume(Math.max(groupedUpness - 0.05, 0));

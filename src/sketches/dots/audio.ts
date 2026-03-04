@@ -78,13 +78,18 @@ export function createAudioGroup(audioContext: SketchAudioContext): DotSketchAud
         filter2,
         filterGain,
         setFrequency(freq: number) {
+            filter.frequency.cancelScheduledValues(audioContext.currentTime);
             filter.frequency.setTargetAtTime(freq, audioContext.currentTime, 0.016);
+            filter2.frequency.cancelScheduledValues(audioContext.currentTime);
             filter2.frequency.setTargetAtTime(freq, audioContext.currentTime, 0.016);
+            lfoGain.gain.cancelScheduledValues(audioContext.currentTime);
             lfoGain.gain.setTargetAtTime(freq * .06, audioContext.currentTime, 0.016);
         },
         setVolume(volume: number) {
-            sourceGain.gain.setValueAtTime(volume, 0);
-            noiseGain.gain.setValueAtTime(volume * 0.05, 0);
+            sourceGain.gain.cancelScheduledValues(audioContext.currentTime);
+            sourceGain.gain.setTargetAtTime(volume, audioContext.currentTime, 0.016);
+            noiseGain.gain.cancelScheduledValues(audioContext.currentTime);
+            noiseGain.gain.setTargetAtTime(volume * 0.05, audioContext.currentTime, 0.016);
         },
         dispose() {
             tracker.dispose();
