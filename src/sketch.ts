@@ -1,24 +1,21 @@
-import React from "react";
+import type React from "react";
 import * as THREE from "three";
 import { HandData } from "./components/HandOverlay";
 
-export const UI_EVENTS = {
-    click: true,
-    contextmenu: true,
-    dblclick: true,
-    mousedown: true,
-    mouseup: true,
-    mousemove: true,
-    touchstart: true,
-    touchmove: true,
-    touchend: true,
-    keyup: true,
-    keydown: true,
-    keypress: true,
-    wheel: true,
-} as const;
-
-export type UIEventName = keyof typeof UI_EVENTS;
+export type UIEventName =
+    | "click"
+    | "contextmenu"
+    | "dblclick"
+    | "mousedown"
+    | "mouseup"
+    | "mousemove"
+    | "touchstart"
+    | "touchmove"
+    | "touchend"
+    | "keyup"
+    | "keydown"
+    | "keypress"
+    | "wheel";
 
 type UIEventMap = Pick<GlobalEventHandlersEventMap, UIEventName>;
 

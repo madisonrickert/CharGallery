@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import classnames from "classnames";
 
-import { Sketch, SketchConstructor, UI_EVENTS, UIEventName } from "@/sketch";
+import { Sketch, SketchConstructor, UIEventName } from "@/sketch";
 import { VolumeButton } from "@/components/volumeButton";
 import { HandData, HandOverlay } from "@/components/HandOverlay";
 import { ScreenSaver } from "@/components/screenSaver";
@@ -39,10 +39,9 @@ function useSketchUIEvents(sketch: Sketch) {
         });
 
         return () => {
-            (Object.keys(UI_EVENTS) as Array<keyof typeof UI_EVENTS>).forEach((eventName) => {
-                const callback = events[eventName as UIEventName] as EventListener | undefined;
+            entries.forEach(([eventName, callback]) => {
                 if (callback) {
-                    const options = EVENT_LISTENER_OPTIONS[eventName as UIEventName];
+                    const options = EVENT_LISTENER_OPTIONS[eventName];
                     canvas.removeEventListener(eventName, callback, options);
                 }
             });
