@@ -21,7 +21,7 @@ export function HomePage() {
             <figure className="work-highlight work-grid-item" key={name}>
                 <Wrapper {...wrapperProps}>
                     <div className="work-highlight-image">
-                        <img className="full-width" src={imageUrl} />
+                        <img className="full-width" src={imageUrl} alt={name} />
                         <span className="work-highlight-name">{name}</span>
                         <div className="work-highlight-sheen sheen-on-hover">
                             <FaPlay />
