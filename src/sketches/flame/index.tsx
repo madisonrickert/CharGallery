@@ -312,14 +312,6 @@ export default class FlameSketch extends ISketch {
         return depth;
     }
 
-    private getRelativeCoordinates(clientX: number, clientY: number) {
-        const rect = this.canvas.getBoundingClientRect();
-        return {
-            x: clientX - rect.left,
-            y: clientY - rect.top,
-        };
-    }
-
     public updateName(name: string = DEFAULT_NAME, isEmpty: boolean = true) {
         this.audioContext.gain.gain.setValueAtTime(0, 0);
         setQueryParams(isEmpty ? {} : { name });

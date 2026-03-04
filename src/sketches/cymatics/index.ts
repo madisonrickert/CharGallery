@@ -130,14 +130,6 @@ export default class Cymatics extends ISketch {
         this.cellStateVariable.material.uniforms.activeRadius.value = t;
     }
 
-    private getRelativeCoordinates(clientX: number, clientY: number) {
-        const rect = this.canvas.getBoundingClientRect();
-        return {
-            x: clientX - rect.left,
-            y: clientY - rect.top,
-        };
-    }
-
     public init() {
         this.renderer.setClearColor(0xfcfcfc);
         this.renderer.clear();

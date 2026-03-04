@@ -272,7 +272,7 @@ export default class Waves extends ISketch {
     }
 
     setVelocityFromMouseEvent(event: MouseEvent) {
-        const { x, y } = this.getCanvasRelativeCoordinates(event.clientX, event.clientY);
+        const { x, y } = this.getRelativeCoordinates(event.clientX, event.clientY);
         this.setVelocityFromCanvasCoordinates(x, y);
     }
 
@@ -281,7 +281,7 @@ export default class Waves extends ISketch {
         if (!touch) {
             return;
         }
-        const { x, y } = this.getCanvasRelativeCoordinates(touch.clientX, touch.clientY);
+        const { x, y } = this.getRelativeCoordinates(touch.clientX, touch.clientY);
         this.setVelocityFromCanvasCoordinates(x, y);
     }
 
@@ -292,14 +292,6 @@ export default class Waves extends ISketch {
             lineStrip.dx = dx;
             lineStrip.dy = dy;
         });
-    }
-
-    private getCanvasRelativeCoordinates(clientX: number, clientY: number) {
-        const rect = this.canvas.getBoundingClientRect();
-        return {
-            x: clientX - rect.left,
-            y: clientY - rect.top,
-        };
     }
 
     public destroy() {

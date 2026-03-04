@@ -315,14 +315,6 @@ export default class LineSketch extends ISketch {
         this.mouseAttractor.power = 0;
     }
 
-    private getRelativeCoordinates(clientX: number, clientY: number) {
-        const rect = this.canvas.getBoundingClientRect();
-        return {
-            x: clientX - rect.left,
-            y: clientY - rect.top,
-        };
-    }
-
     private markInteraction(timestampMs: number = performance.now()) {
         this.lastInteractionTimestampMs = timestampMs;
         this.isIdle = false;

@@ -49,6 +49,18 @@ export abstract class ISketch {
     }
 
     /**
+     * Converts client (viewport) coordinates to canvas-relative coordinates
+     * by subtracting the canvas element's bounding rect offset.
+     */
+    protected getRelativeCoordinates(clientX: number, clientY: number) {
+        const rect = this.canvas.getBoundingClientRect();
+        return {
+            x: clientX - rect.left,
+            y: clientY - rect.top,
+        };
+    }
+
+    /**
      * Called in componentDidMount of the Sketch component.
      */
     abstract init(): void;

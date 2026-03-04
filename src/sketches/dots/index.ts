@@ -22,17 +22,6 @@ const params: ParticleSystemParameters = {
 const ATTRACTOR_POWER_DECAY_SPEED = 0.9;
 const ATTRACTOR_POWER_DECAY_FLOOR = 2;
 
-function getRelativePoint(target: EventTarget | null, clientX: number, clientY: number) {
-    if (target instanceof HTMLElement) {
-        const rect = target.getBoundingClientRect();
-        return {
-            x: clientX - rect.left,
-            y: clientY - rect.top,
-        };
-    }
-    return { x: clientX, y: clientY };
-}
-
 export default class Dots extends ISketch {
     private attractor = new Attractor();
     private mouseX = 0;
@@ -46,7 +35,7 @@ export default class Dots extends ISketch {
             if (!touch) {
                 return;
             }
-            const { x, y } = getRelativePoint(event.currentTarget, touch.clientX, touch.clientY);
+            const { x, y } = this.getRelativeCoordinates(touch.clientX, touch.clientY);
             this.createAttractor(x, y);
             this.mouseX = x;
             this.mouseY = y;
@@ -57,7 +46,7 @@ export default class Dots extends ISketch {
             if (!touch) {
                 return;
             }
-            const { x, y } = getRelativePoint(event.currentTarget, touch.clientX, touch.clientY);
+            const { x, y } = this.getRelativeCoordinates(touch.clientX, touch.clientY);
             this.moveAttractor(x, y);
             this.mouseX = x;
             this.mouseY = y;
@@ -69,7 +58,7 @@ export default class Dots extends ISketch {
 
         mousedown: (event: MouseEvent) => {
             if (event.button === 0) {
-                const { x, y } = getRelativePoint(event.currentTarget, event.clientX, event.clientY);
+                const { x, y } = this.getRelativeCoordinates(event.clientX, event.clientY);
                 this.mouseX = x;
                 this.mouseY = y;
                 this.createAttractor(this.mouseX, this.mouseY);
@@ -77,7 +66,7 @@ export default class Dots extends ISketch {
         },
 
         mousemove: (event: MouseEvent) => {
-            const { x, y } = getRelativePoint(event.currentTarget, event.clientX, event.clientY);
+            const { x, y } = this.getRelativeCoordinates(event.clientX, event.clientY);
             this.mouseX = x;
             this.mouseY = y;
             this.moveAttractor(this.mouseX, this.mouseY);
