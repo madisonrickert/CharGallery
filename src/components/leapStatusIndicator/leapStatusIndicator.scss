@@ -1,6 +1,6 @@
 .leap-status {
     position: fixed;
-    top: 12px;
+    bottom: 12px;
     left: 12px;
     z-index: 1000;
 
@@ -26,7 +26,7 @@
 
     .leap-status-panel {
         position: absolute;
-        top: 20px;
+        bottom: 20px;
         left: 0;
         background: rgba(0, 0, 0, 0.75);
         color: #eee;
@@ -34,7 +34,7 @@
         border-radius: 8px;
         font-family: monospace;
         font-size: 13px;
-        min-width: 200px;
+        min-width: 260px;
         backdrop-filter: blur(4px);
 
         .leap-status-panel-title {

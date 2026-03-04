@@ -14,6 +14,7 @@ import { useAudioContext } from "@/common/hooks/useAudioContext";
 import { loadSettings, saveSettings } from "@/common/sketchSettingsStore";
 import { SketchSettingsContext } from "@/common/hooks/useSketchSettings";
 import { useLeapStatus } from "@/common/hooks/useLeapStatus";
+import { HomeButton } from "@/components/homeButton";
 
 import "./sketchComponent.scss";
 
@@ -240,6 +241,7 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
                     )}
                 </div>
                 <ScreenSaver shouldShow={shouldShowScreenSaver} />
+                <HomeButton />
                 <VolumeButton volumeEnabled={volumeEnabled} onClick={handleVolumeButtonClick} />
                 <LeapStatusIndicator
                     processStatus={processStatus}
