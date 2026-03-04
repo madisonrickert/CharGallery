@@ -2,7 +2,7 @@ import React from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three-stdlib";
 
-import { createWhiteNoise } from "@/audio/noise";
+import { createWhiteNoise, AudioNodeTracker } from "@/audio";
 import { AFFINES, BoxCountVisitor, Branch, createInterpolatedVariation, createRouterVariation, LengthVarianceTrackerVisitor, SuperPoint, VARIATIONS, VelocityTrackerVisitor } from "@/common/flame";
 import { map } from "@/common/math";
 import { getQueryParam, setQueryParams } from "@/common/queryParams";
@@ -163,6 +163,7 @@ export default class FlameSketch extends Sketch {
     private mousePosition = new THREE.Vector2(0, 0);
 
     // Audio nodes
+    private audioTracker!: AudioNodeTracker;
     private noiseGain!: GainNode;
     private oscLow!: OscillatorNode;
     private oscHigh!: OscillatorNode;
@@ -232,11 +233,7 @@ export default class FlameSketch extends Sketch {
     }
 
     public destroy() {
-        this.oscLow.stop();
-        this.oscHigh.stop();
-        this.chord.root.stop();
-        this.chord.third.stop();
-        this.chord.fifth.stop();
+        this.audioTracker.dispose();
         this.controls.dispose();
         this.geometry.dispose();
         this.material.dispose();
@@ -356,6 +353,8 @@ export default class FlameSketch extends Sketch {
 
     private initAudio() {
         const context = this.audioContext;
+        const tracker = new AudioNodeTracker();
+        this.audioTracker = tracker;
 
         this.compressor = context.createDynamicsCompressor();
         this.compressor.threshold.setValueAtTime(-40, 0);
@@ -365,18 +364,18 @@ export default class FlameSketch extends Sketch {
         this.compressor.ratio.setValueAtTime(1.8, 0);
 
         const noise = createWhiteNoise(context);
+        tracker.trackSource(noise);
         this.noiseGain = context.createGain();
         this.noiseGain.gain.setValueAtTime(0, 0);
         noise.connect(this.noiseGain);
         this.noiseGain.connect(this.compressor);
 
-        this.oscLow = context.createOscillator();
-        this.oscLow.frequency.setValueAtTime(0, 0);
-        this.oscLow.type = "square";
-        this.oscLow.start(0);
-        const oscLowGain = context.createGain();
-        oscLowGain.gain.setValueAtTime(0.6, 0);
-        this.oscLow.connect(oscLowGain);
+        const { osc: oscLow, gain: oscLowGain } = tracker.createOsc(context, {
+            frequency: 0,
+            type: "square",
+            gain: 0.6,
+        });
+        this.oscLow = oscLow;
 
         this.filter = context.createBiquadFilter();
         this.filter.type = "lowpass";
@@ -384,13 +383,13 @@ export default class FlameSketch extends Sketch {
         this.filter.Q.setValueAtTime(2.18, 0);
         oscLowGain.connect(this.filter);
 
-        this.oscHigh = context.createOscillator();
-        this.oscHigh.frequency.setValueAtTime(0, 0);
-        this.oscHigh.type = "triangle";
-        this.oscHigh.start(0);
-        this.oscHighGain = context.createGain();
-        this.oscHighGain.gain.setValueAtTime(0.05, 0);
-        this.oscHigh.connect(this.oscHighGain);
+        const { osc: oscHigh, gain: oscHighGain } = tracker.createOsc(context, {
+            frequency: 0,
+            type: "triangle",
+            gain: 0.05,
+        });
+        this.oscHigh = oscHigh;
+        this.oscHighGain = oscHighGain;
 
         this.oscGain = context.createGain();
         this.oscGain.gain.setValueAtTime(0.0, 0);
@@ -400,34 +399,11 @@ export default class FlameSketch extends Sketch {
 
         // plays a major or minor chord
         this.chord = (() => {
-            const root = context.createOscillator();
-            root.type = "sine";
-            root.start(0);
-
-            const third = context.createOscillator();
-            third.type = "sine";
-            third.start(0);
-
-            const fifth = context.createOscillator();
-            fifth.type = "sine";
-            fifth.start(0);
-            const fifthGain = context.createGain();
-            fifthGain.gain.setValueAtTime(0.7, 0);
-            fifth.connect(fifthGain);
-
-            const sub = context.createOscillator();
-            sub.type = "triangle";
-            sub.start(0);
-            const subGain = context.createGain();
-            subGain.gain.setValueAtTime(0.9, 0);
-            sub.connect(subGain);
-
-            const sub2 = context.createOscillator();
-            sub2.type = "triangle";
-            sub2.start(0);
-            const sub2Gain = context.createGain();
-            sub2Gain.gain.setValueAtTime(0.8, 0);
-            sub2.connect(sub2Gain);
+            const { osc: root } = tracker.createOsc(context, { type: "sine" });
+            const { osc: third } = tracker.createOsc(context, { type: "sine" });
+            const { osc: fifth, gain: fifthGain } = tracker.createOsc(context, { type: "sine", gain: 0.7 });
+            const { osc: sub, gain: subGain } = tracker.createOsc(context, { type: "triangle", gain: 0.9 });
+            const { osc: sub2, gain: sub2Gain } = tracker.createOsc(context, { type: "triangle", gain: 0.8 });
 
             const gain = context.createGain();
             gain.gain.setValueAtTime(0, 0);
@@ -436,6 +412,8 @@ export default class FlameSketch extends Sketch {
             fifthGain.connect(gain);
             subGain.connect(gain);
             sub2Gain.connect(gain);
+
+            tracker.trackNode(gain);
 
             // 0 = full major, 1 = full minor
             let minorBias = 0;
@@ -498,6 +476,7 @@ export default class FlameSketch extends Sketch {
         })();
         this.chord.gain.connect(this.compressor);
 
+        tracker.trackNode(this.noiseGain, this.filter, this.oscGain, this.compressor);
         this.compressor.connect(context.gain);
     }
 }
