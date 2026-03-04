@@ -30,11 +30,13 @@ export function wireLeapConnectionEvents(
     };
 }
 
+const LEAP_RANGE_MIN = 0.2;
+const LEAP_RANGE_MAX = 0.8;
+
 export function mapLeapToThreePosition(canvas: HTMLCanvasElement, position: number[]) {
-    const range = [0.2, 0.8];
     // position[0] is left/right; left is negative, right is positive. each unit is one millimeter
-    const x = map(position[0], -200, 200, canvas.width * range[0],  canvas.width * range[1]);
+    const x = map(position[0], -200, 200, canvas.width * LEAP_RANGE_MIN,  canvas.width * LEAP_RANGE_MAX);
     // 40 is about 4cm, 1 inch, to 35cm = 13 inches above
-    const y = map(position[1], 350, 40,   canvas.height * range[0], canvas.height * range[1]);
+    const y = map(position[1], 350, 40,   canvas.height * LEAP_RANGE_MIN, canvas.height * LEAP_RANGE_MAX);
     return { x, y };
 }

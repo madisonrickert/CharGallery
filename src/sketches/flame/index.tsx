@@ -1,4 +1,3 @@
-import Leap from "leapjs";
 import React from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three-stdlib";
@@ -12,8 +11,7 @@ import { Sketch } from "@/common/sketch";
 import { DEFAULT_NAME, FlameNameInput } from "./FlameNameInput";
 import { FlamePointsMaterial } from "./flamePointsMaterial";
 import { Chord } from "./types";
-import { mapLeapToThreePosition, wireLeapConnectionEvents } from "@/common/leap/util";
-import { HandMesh } from "@/common/leap/handMesh";
+import { LeapHandController } from "@/common/leap/LeapHandController";
 
 import "./flame.scss";
 
@@ -171,12 +169,7 @@ export default class FlameSketch extends Sketch {
     private mousePosition = new THREE.Vector2(0, 0);
 
     // Leap Motion
-    private leapController!: Leap.Controller;
-    private cleanupLeapConnectionEvents!: () => void;
-    private _handMeshesGroup = new THREE.Group();
-    private _activeHandCount = 0;
-    private _handScene = new THREE.Scene();
-    private _handCamera = new THREE.OrthographicCamera(0, 1, 0, 1, 1, 1000);
+    private leapHands!: LeapHandController;
 
     // Grab-and-fling state
     private _grabbingHandCount = 0;
@@ -236,21 +229,56 @@ export default class FlameSketch extends Sketch {
         this.updateName(this.savedName || DEFAULT_NAME, !this.savedName);
 
         // Leap Motion setup
-        this._handCamera.position.z = 500;
-        this._handCamera.left = 0;
-        this._handCamera.right = this.canvas.width;
-        this._handCamera.top = 0;
-        this._handCamera.bottom = this.canvas.height;
-        this._handCamera.updateProjectionMatrix();
-        this._handScene.add(this._handMeshesGroup);
+        this.leapHands = new LeapHandController({
+            canvas: this.canvas,
+            renderer: this.renderer,
+            getConnectionCallback: () => this.updateLeapConnectionCallback,
+            renderMode: { type: "overlay" },
+            onFrame: (hands) => {
+                // Only grabbing hands drive the sketch
+                const grabbingHands = hands.filter(({ hand }) => hand.grabStrength > 0.5);
 
-        this.leapController = new Leap.Controller()
-            .connect()
-            .on('frame', this.handleLeapFrame);
-        this.cleanupLeapConnectionEvents = wireLeapConnectionEvents(
-            this.leapController,
-            () => this.updateLeapConnectionCallback,
-        );
+                if (grabbingHands.length === 0) {
+                    if (this._grabbingHandCount > 0) {
+                        this._grabbingHandCount = 0;
+                    }
+                    return;
+                }
+
+                // Average positions of grabbing hands only
+                let avgX = 0;
+                let avgY = 0;
+                for (const { canvasPosition } of grabbingHands) {
+                    avgX += canvasPosition.x;
+                    avgY += canvasPosition.y;
+                }
+                avgX /= grabbingHands.length;
+                avgY /= grabbingHands.length;
+
+                if (grabbingHands.length !== this._grabbingHandCount) {
+                    this._grabMouseOffsetX = this.mousePosition.x - avgX;
+                    this._grabMouseOffsetY = this.mousePosition.y - avgY;
+                    this._lastGrabX = avgX;
+                    this._lastGrabY = avgY;
+                    if (this._grabbingHandCount === 0) {
+                        this._angularVelocityX = 0;
+                        this._angularVelocityY = 0;
+                    }
+                    this._grabbingHandCount = grabbingHands.length;
+                } else {
+                    const deltaX = (avgX - this._lastGrabX) / this.canvas.width * Math.PI * 2;
+                    const deltaY = (avgY - this._lastGrabY) / this.canvas.height * Math.PI * 2;
+                    this.controls.setAzimuthalAngle(this.controls.getAzimuthalAngle() - deltaX);
+                    this.controls.setPolarAngle(this.controls.getPolarAngle() - deltaY);
+                    this._angularVelocityX = this._angularVelocityX * 0.7 + deltaX * 0.3;
+                    this._angularVelocityY = this._angularVelocityY * 0.7 + deltaY * 0.3;
+                    this._lastGrabX = avgX;
+                    this._lastGrabY = avgY;
+                }
+
+                this.mousePosition.set(avgX + this._grabMouseOffsetX, avgY + this._grabMouseOffsetY);
+            },
+        });
     }
 
     public animate(_millisElapsed: number) {
@@ -279,19 +307,13 @@ export default class FlameSketch extends Sketch {
         this.renderer.render(this.scene, this.camera);
 
         // Render hand meshes on top
-        if (this._activeHandCount > 0) {
-            this.renderer.autoClear = false;
-            this.renderer.render(this._handScene, this._handCamera);
-            this.renderer.autoClear = true;
-        }
+        this.leapHands.renderOverlay();
     }
 
     public resize(width: number, height: number) {
         this.camera.aspect = width / height;
         this.camera.updateProjectionMatrix();
-        this._handCamera.right = width;
-        this._handCamera.bottom = height;
-        this._handCamera.updateProjectionMatrix();
+        this.leapHands?.resize(width, height);
     }
 
     public destroy() {
@@ -302,11 +324,7 @@ export default class FlameSketch extends Sketch {
         this.scene.clear();
 
         // Clean up Leap Motion controller
-        this.cleanupLeapConnectionEvents();
-        this.leapController
-            .removeListener('frame', this.handleLeapFrame)
-            .disconnect();
-        this._handScene.clear();
+        this.leapHands.dispose();
     }
 
     private animateSuperPoint() {
@@ -549,81 +567,4 @@ export default class FlameSketch extends Sketch {
         this.compressor.connect(context.gain);
     }
 
-    private getHandMesh(index: number): HandMesh {
-        while (this._handMeshesGroup.children.length <= index) {
-            const handMesh = new HandMesh();
-            handMesh.visible = false;
-            this._handMeshesGroup.add(handMesh);
-        }
-        return this._handMeshesGroup.children[index] as HandMesh;
-    }
-
-    private handleLeapFrame = (frame: Leap.Frame) => {
-        const validHands = frame.hands.filter((hand) => hand.valid);
-        this._activeHandCount = validHands.length;
-
-        // Update hand meshes
-        validHands.forEach((hand, index) => {
-            const handMesh = this.getHandMesh(index);
-            handMesh.update(this.canvas, hand);
-            handMesh.visible = true;
-        });
-
-        // Hide unused hand meshes
-        for (let i = validHands.length; i < this._handMeshesGroup.children.length; i++) {
-            this._handMeshesGroup.children[i].visible = false;
-        }
-
-        // Only grabbing hands drive the sketch
-        const grabbingHands = validHands.filter((hand) => hand.grabStrength > 0.5);
-
-        if (grabbingHands.length === 0) {
-            if (this._grabbingHandCount > 0) {
-                // All hands released — fling with stored angular velocity
-                this._grabbingHandCount = 0;
-            }
-            return;
-        }
-
-        // Average positions of grabbing hands only
-        let avgX = 0;
-        let avgY = 0;
-        for (const hand of grabbingHands) {
-            const { x, y } = mapLeapToThreePosition(this.canvas, hand.palmPosition);
-            avgX += x;
-            avgY += y;
-        }
-        avgX /= grabbingHands.length;
-        avgY /= grabbingHands.length;
-
-        if (grabbingHands.length !== this._grabbingHandCount) {
-            // Grab set changed — recapture offsets to prevent jolts
-            this._grabMouseOffsetX = this.mousePosition.x - avgX;
-            this._grabMouseOffsetY = this.mousePosition.y - avgY;
-            this._lastGrabX = avgX;
-            this._lastGrabY = avgY;
-            if (this._grabbingHandCount === 0) {
-                // Fresh grab — reset angular velocity
-                this._angularVelocityX = 0;
-                this._angularVelocityY = 0;
-            }
-            this._grabbingHandCount = grabbingHands.length;
-        } else {
-            // Continue grab — compute delta and apply rotation
-            const deltaX = (avgX - this._lastGrabX) / this.canvas.width * Math.PI * 2;
-            const deltaY = (avgY - this._lastGrabY) / this.canvas.height * Math.PI * 2;
-            this.controls.setAzimuthalAngle(this.controls.getAzimuthalAngle() - deltaX);
-            this.controls.setPolarAngle(this.controls.getPolarAngle() - deltaY);
-
-            // Track angular velocity (smoothed)
-            this._angularVelocityX = this._angularVelocityX * 0.7 + deltaX * 0.3;
-            this._angularVelocityY = this._angularVelocityY * 0.7 + deltaY * 0.3;
-
-            this._lastGrabX = avgX;
-            this._lastGrabY = avgY;
-        }
-
-        // Drive fractal offset with captured offset so movement is relative
-        this.mousePosition.set(avgX + this._grabMouseOffsetX, avgY + this._grabMouseOffsetY);
-    }
 }

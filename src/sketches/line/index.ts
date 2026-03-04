@@ -9,7 +9,10 @@ import { SettingDef } from "@/common/sketchSettings";
 import { Sketch } from "@/common/sketch";
 import { createAudioGroup, LineSketchAudioGroup } from "./audio";
 import { starMaterial } from "@/common/materials/starMaterial";
-import { LeapAttractorController } from "./LeapAttractorController";
+import { LeapHandController } from "@/common/leap/LeapHandController";
+
+const LEAP_ATTRACTOR_POWER_ATTACK_SPEED = 0.005;
+const LEAP_ATTRACTOR_POWER_DECAY_SPEED = 0.5;
 
 const PARTICLE_SYSTEM_PARAMS = {
     GRAVITY_CONSTANT: 280,
@@ -102,7 +105,7 @@ export default class LineSketch extends Sketch {
     public gravityFocalY = 0;
     public scene = new THREE.Scene();
     public pointCloud!: THREE.Points;
-    public leapAttractorController!: LeapAttractorController;
+    private leapHands!: LeapHandController;
     public composer!: EffectComposer;
     public ps!: ParticleSystem;
 
@@ -162,7 +165,34 @@ export default class LineSketch extends Sketch {
         this.composer.addPass(this.gravityShaderPass);
 
         // Set up Leap Motion controller
-        this.leapAttractorController = new LeapAttractorController(this);
+        this.leapHands = new LeapHandController({
+            canvas: this.canvas,
+            renderer: this.renderer,
+            getConnectionCallback: () => this.updateLeapConnectionCallback,
+            renderMode: { type: "in-scene", scene: this.scene },
+            onFrame: (hands) => {
+                hands.forEach(({ hand, index, canvasPosition }) => {
+                    if (index === 0) {
+                        this.setGravityFocalPoint(canvasPosition.x, canvasPosition.y);
+                    }
+                    const attractor = this.getLeapAttractor(index);
+                    attractor.x = canvasPosition.x;
+                    attractor.y = canvasPosition.y;
+                    const position = hand.palmPosition;
+                    if (hand.grabStrength === 0) {
+                        attractor.power *= LEAP_ATTRACTOR_POWER_DECAY_SPEED;
+                    } else {
+                        const grabComponent = Math.pow(hand.grabStrength, 1.5);
+                        const depthModulator = Math.pow(5, (-position[2] + 350) / 160);
+                        const wantedPower = grabComponent * depthModulator;
+                        attractor.power = attractor.power * (1 - LEAP_ATTRACTOR_POWER_ATTACK_SPEED) + wantedPower * LEAP_ATTRACTOR_POWER_ATTACK_SPEED;
+                    }
+                });
+                for (let i = hands.length; i < this.leapAttractors.length; i++) {
+                    this.leapAttractors[i].power = 0;
+                }
+            },
+        });
     }
 
     public animate(_millisElapsed: number) {
@@ -175,7 +205,7 @@ export default class LineSketch extends Sketch {
         }
 
         // Check for Leap Motion interaction and reset interaction timer
-        if (this.leapAttractorController.hasActiveInteraction()) {
+        if (this.leapHands.activeHandCount > 0) {
             this.markInteraction(currentTimeMs);
         }
 
@@ -251,7 +281,7 @@ export default class LineSketch extends Sketch {
         this.audioGroup.dispose();
 
         // Detach Leap Motion controller
-        this.leapAttractorController.dispose();
+        this.leapHands.dispose();
 
         // Clear scene
         this.particles.length = 0;
