@@ -118,7 +118,7 @@ export default class GPUComputationRenderer {
 
     public currentTextureIndex = 0;
 
-    public dataType: number = THREE.FloatType;
+    public dataType: THREE.TextureDataType = THREE.FloatType;
 
     public scene = new THREE.Scene();
 
@@ -146,7 +146,7 @@ export default class GPUComputationRenderer {
         this.scene.add( this.mesh );
     }
 
-    public setDataType( type: number ) {
+    public setDataType( type: THREE.TextureDataType ) {
         this.dataType = type;
         return this;
     }
