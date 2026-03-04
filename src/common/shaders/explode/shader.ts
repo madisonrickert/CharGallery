@@ -4,10 +4,10 @@ import fragmentShader from "./fragment.glsl";
 
 export const explodeShader = {
     uniforms: {
-        iMouse:      { type: "v2", value: new THREE.Vector2(0, 0) },
-        iResolution: { type: "v2", value: new THREE.Vector2(100, 100) },
-        shrinkFactor: { type: "f", value: 0.98 },
-        tDiffuse:    { type: "t", value: null },
+        iMouse:      { value: new THREE.Vector2(0, 0) },
+        iResolution: { value: new THREE.Vector2(100, 100) },
+        shrinkFactor: { value: 0.98 },
+        tDiffuse:    { value: null },
     },
     vertexShader,
     fragmentShader,
