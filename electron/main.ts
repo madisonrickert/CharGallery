@@ -52,7 +52,7 @@ function stopExternalPoll() {
 function getLeapBinaryName(): string | null {
   switch (process.platform) {
     case "darwin":
-      return "Ultraleap-Tracking-WS-macos-applesilicon";
+      return "Ultraleap-Tracking-WS-arm64";
     case "win32":
       return "Ultraleap-Tracking-WS-win32.exe";
     default:

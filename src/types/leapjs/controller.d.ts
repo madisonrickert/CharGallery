@@ -23,6 +23,10 @@ declare module 'leapjs' {
         connectionType?: unknown;
         /** Whether running in Node.js environment */
         inNode?: boolean;
+        /** Whether to receive frames even when the application is not focused */
+        background?: boolean;
+        /** Whether to optimize for head-mounted displays */
+        optimizeHMD?: boolean;
     }
 
     /**

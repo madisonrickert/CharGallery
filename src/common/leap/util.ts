@@ -6,26 +6,44 @@ import { LeapConnectionStatus } from "@/common/leapStatus";
  * Wires Leap controller connection events to a status callback.
  * Returns a cleanup function that removes all listeners.
  *
- * Streaming detection: Our UltraleapTrackingWebSocket server reports protocol
- * v6 but doesn't send deviceEvent messages, so leapjs's built-in
- * streamingStarted/streamingStopped events never fire. Instead, we detect
- * streaming by monitoring actual frames on the connection (not controller —
- * connection frames are server-only, not synthetic animation frames).
+ * Uses deviceEvent messages from the server (via leapjs's streamingStarted/
+ * streamingStopped and deviceAttached/deviceRemoved events) to track device
+ * and streaming state.
  */
 export function wireLeapConnectionEvents(
     controller: Controller,
     getCallback: () => ((status: LeapConnectionStatus) => void) | undefined,
     getProtocolVersionCallback?: () => ((version: number | null) => void) | undefined,
 ) {
-    const STREAMING_TIMEOUT_MS = 3000;
-    let streamingTimeout: ReturnType<typeof setTimeout> | null = null;
-    let isStreaming = false;
+    let deviceAttached = false;
+    let streaming = false;
+    let frameTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const FRAME_TIMEOUT_MS = 500;
+
+    function clearFrameTimeout() {
+        if (frameTimeout !== null) {
+            clearTimeout(frameTimeout);
+            frameTimeout = null;
+        }
+    }
+
+    function setStreamingState(value: boolean) {
+        streaming = value;
+        if (value) {
+            deviceAttached = true;
+            getCallback()?.("streaming");
+        } else {
+            getCallback()?.(deviceAttached ? "device-connected" : "connected");
+        }
+    }
 
     const onConnect = () => getCallback()?.("connected");
 
     const onDisconnect = () => {
-        isStreaming = false;
-        if (streamingTimeout) { clearTimeout(streamingTimeout); streamingTimeout = null; }
+        clearFrameTimeout();
+        deviceAttached = false;
+        streaming = false;
         getCallback()?.("disconnected");
         getProtocolVersionCallback?.()?.call(null, null);
     };
@@ -35,33 +53,62 @@ export function wireLeapConnectionEvents(
         getProtocolVersionCallback?.()?.call(null, version);
     };
 
-    const onConnectionFrame = () => {
-        if (!isStreaming) {
-            isStreaming = true;
-            getCallback()?.("streaming");
+    const onDeviceAttached = () => {
+        deviceAttached = true;
+        if (!streaming) {
+            getCallback()?.("device-connected");
         }
-        if (streamingTimeout) clearTimeout(streamingTimeout);
-        streamingTimeout = setTimeout(() => {
-            if (isStreaming) {
-                isStreaming = false;
-                getCallback()?.("connected");
-            }
-        }, STREAMING_TIMEOUT_MS);
+    };
+
+    const onDeviceRemoved = () => {
+        clearFrameTimeout();
+        deviceAttached = false;
+        streaming = false;
+        getCallback()?.("connected");
+    };
+
+    const onStreamingStarted = () => {
+        if (!streaming) setStreamingState(true);
+    };
+
+    const onStreamingStopped = () => {
+        clearFrameTimeout();
+        if (streaming) setStreamingState(false);
+    };
+
+    // Detect streaming from actual device frames, not the 'frame' event
+    // which re-emits the last valid frame on every animation tick via
+    // loopWhileDisconnected. Only 'deviceFrame' fires for fresh data
+    // from the server.
+    const onDeviceFrame = () => {
+        if (!streaming) setStreamingState(true);
+        clearFrameTimeout();
+        frameTimeout = setTimeout(() => {
+            if (streaming) setStreamingState(false);
+        }, FRAME_TIMEOUT_MS);
     };
 
     controller
         .on('connect', onConnect)
         .on('disconnect', onDisconnect)
-        .on('ready', onReady);
-    controller.connection.on('frame', onConnectionFrame);
+        .on('ready', onReady)
+        .on('deviceAttached', onDeviceAttached)
+        .on('deviceRemoved', onDeviceRemoved)
+        .on('streamingStarted', onStreamingStarted)
+        .on('streamingStopped', onStreamingStopped)
+        .on('deviceFrame', onDeviceFrame);
 
     return () => {
-        if (streamingTimeout) { clearTimeout(streamingTimeout); streamingTimeout = null; }
+        clearFrameTimeout();
         controller
             .removeListener('connect', onConnect)
             .removeListener('disconnect', onDisconnect)
-            .removeListener('ready', onReady);
-        controller.connection.removeListener('frame', onConnectionFrame);
+            .removeListener('ready', onReady)
+            .removeListener('deviceAttached', onDeviceAttached)
+            .removeListener('deviceRemoved', onDeviceRemoved)
+            .removeListener('streamingStarted', onStreamingStarted)
+            .removeListener('streamingStopped', onStreamingStopped)
+            .removeListener('deviceFrame', onDeviceFrame);
     };
 }
 

@@ -14,12 +14,14 @@ interface LeapStatusIndicatorProps {
 const CONNECTION_LABELS: Record<LeapConnectionStatus, string> = {
     disconnected: "Disconnected",
     connected: "Server Only",
+    "device-connected": "Device Connected",
     streaming: "Streaming",
 };
 
 const CONNECTION_COLORS: Record<LeapConnectionStatus, string> = {
     disconnected: "#e74c3c",
     connected: "#f39c12",
+    "device-connected": "#3498db",
     streaming: "#2ecc71",
 };
 

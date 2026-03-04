@@ -53,7 +53,7 @@ export class LeapHandController {
             this._handScene.add(this._handMeshesGroup);
         }
 
-        this._controller = new Leap.Controller();
+        this._controller = new Leap.Controller({ background: true });
         this._controller
             .connect()
             .on("frame", this._handleFrame);
