@@ -1,5 +1,6 @@
 import React from "react";
 import { FaHandPaper, FaHandRock } from "react-icons/fa";
+import "./handOverlay.scss";
 
 export interface HandData {
   index: number;
@@ -13,28 +14,14 @@ interface HandOverlayProps {
 
 export const HandOverlay: React.FC<HandOverlayProps> = ({ hands }) => {
   return (
-    <div 
-      className="hand-overlay" 
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        pointerEvents: "none",
-        zIndex: 10,
-      }}
-    >
+    <div className="hand-overlay">
       {hands.map((hand) => (
         <div
           key={hand.index}
+          className="hand-cursor"
           style={{
-            position: "absolute",
             left: `${hand.position.x}px`,
             top: `${hand.position.y}px`,
-            transform: "translate(-50%, -50%)",
-            fontSize: "32px",
-            color: "rgba(255, 255, 255, 0.5)",
           }}
         >
           {hand.pinched ? <FaHandRock /> : <FaHandPaper />}
