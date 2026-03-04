@@ -3,14 +3,14 @@ import Leap from "leapjs";
 import { mapLeapToThreePosition, wireLeapConnectionEvents } from "@/common/leap/util";
 import * as THREE from "three";
 import { MathUtils } from "three";
-import { EffectComposer, ShaderPass/*, RenderPass */} from "three-stdlib";
+import { EffectComposer, ShaderPass, RenderPass, UnrealBloomPass } from "three-stdlib";
 
 import GPUComputationRenderer, { GPUComputationRendererVariable } from "./gpuComputationRenderer";
 import { mirroredRepeat } from "@/common/math";
 import { Sketch } from "@/common/sketch";
 import { CymaticsAudio } from "./audio";
 import { RenderCymaticsShader } from "./renderCymaticsShader";
-import { HandData } from "@/components/handOverlay";
+import { HandMesh } from "@/common/leap/handMesh";
 
 import COMPUTE_CELL_STATE from "./computeCellState.frag";
 
@@ -40,7 +40,18 @@ const INTERACTION_CENTER_LERP_FACTOR = 0.01;
 
 export default class Cymatics extends Sketch {
     public slowDownAmount = 0;
-    public handData: HandData[] = [];
+
+    private _handScene = new THREE.Scene();
+    private _handCamera = new THREE.OrthographicCamera(0, 1, 0, 1, 1, 1000);
+    private _handMeshesGroup = new THREE.Group();
+    private _handMaterial = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(235 / 255, 89 / 255, 56 / 255), // cymatics orange (BASE_BODY_COL)
+        wireframeLinewidth: 5,
+        wireframe: true,
+    });
+    private _handComposer!: EffectComposer;
+    private _bloomPass!: UnrealBloomPass;
+    private _activeHandCount = 0;
 
     protected idleTimeoutSeconds = IDLE_TIMEOUT_SECONDS;
 
@@ -172,13 +183,57 @@ export default class Cymatics extends Sketch {
             this.leapController,
             () => this.updateLeapConnectionCallback,
         );
+
+        // Hand mesh rendering setup with bloom
+        this._handCamera.position.z = 500;
+        this._handCamera.left = 0;
+        this._handCamera.right = this.canvas.width;
+        this._handCamera.top = 0;
+        this._handCamera.bottom = this.canvas.height;
+        this._handCamera.updateProjectionMatrix();
+        this._handScene.add(this._handMeshesGroup);
+
+        this._handComposer = new EffectComposer(this.renderer);
+        const handRenderPass = new RenderPass(this._handScene, this._handCamera);
+        handRenderPass.clearColor = new THREE.Color(0x000000);
+        handRenderPass.clearAlpha = 0;
+        this._handComposer.addPass(handRenderPass);
+        this._bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(this.canvas.width, this.canvas.height),
+            1.5,  // strength
+            0.5,  // radius
+            0.0,  // threshold (bloom everything non-black)
+        );
+        this._handComposer.addPass(this._bloomPass);
+
+        // Additive blend pass composites bloomed hands onto the cymatics output
+        const additiveBlendPass = new ShaderPass(new THREE.ShaderMaterial({
+            uniforms: { tDiffuse: { value: null } },
+            vertexShader: /* glsl */`
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: /* glsl */`
+                uniform sampler2D tDiffuse;
+                varying vec2 vUv;
+                void main() {
+                    gl_FragColor = texture2D(tDiffuse, vUv);
+                }
+            `,
+            blending: THREE.AdditiveBlending,
+            transparent: true,
+        }));
+        this._handComposer.addPass(additiveBlendPass);
     }
 
     public animate(_dt: number) {
         const currentTimeMs = performance.now();
 
         // Check for Leap Motion interaction and reset screensaver timer
-        if (this.handData.length > 0) {
+        if (this._activeHandCount > 0) {
             this.markInteraction(currentTimeMs);
         }
 
@@ -257,37 +312,57 @@ export default class Cymatics extends Sketch {
         this.renderCymaticsPass.uniforms.cellStateVariable.value = this.computation.getCurrentRenderTarget(this.cellStateVariable).texture;
         this.composer.render();
 
+        // Render bloomed hand meshes on top of the cymatics output
+        if (this._activeHandCount > 0) {
+            this.renderer.autoClear = false;
+            this._handComposer.render();
+            this.renderer.autoClear = true;
+        }
+
         this.slowDownAmount *= 0.95;
+    }
+
+    private getHandMesh(index: number): HandMesh {
+        while (this._handMeshesGroup.children.length <= index) {
+            const handMesh = new HandMesh(this._handMaterial);
+            handMesh.visible = false;
+            this._handMeshesGroup.add(handMesh);
+        }
+        return this._handMeshesGroup.children[index] as HandMesh;
     }
 
     private handleLeapFrame = (frame: Leap.Frame) => {
         const validHands = frame.hands.filter((hand) => hand.valid);
-        const newHands = validHands.flatMap((hand, idx): HandData[] => {
-            const finger = hand.indexFinger;
-            if (!finger) return [];
-            const position = finger.bones[3].center();
-            const { x, y } = mapLeapToThreePosition(this.canvas, position);
-            return [{ index: idx, position: { x, y }, pinched: !finger.extended }];
+        const oldHandCount = this._activeHandCount;
+        this._activeHandCount = validHands.length;
+
+        // Update 3D hand meshes
+        validHands.forEach((hand, index) => {
+            const handMesh = this.getHandMesh(index);
+            handMesh.update(this.canvas, hand);
+            handMesh.visible = true;
         });
-        const oldHandCount = this.handData.length;
-        this.handData = newHands;
-        if (this.updateHandDataCallback) {
-            this.updateHandDataCallback(this.handData);
+
+        // Hide unused hand meshes
+        for (let i = validHands.length; i < this._handMeshesGroup.children.length; i++) {
+            this._handMeshesGroup.children[i].visible = false;
         }
-        if (newHands.length === 0 && oldHandCount > 0) {
+
+        if (validHands.length === 0 && oldHandCount > 0) {
             this.mousePressed = false;
         }
 
-        if (newHands.length === 0) {
+        if (validHands.length === 0) {
             return;
         }
 
-        // For now, only one hand controls position
-        const primaryHand = newHands[0];
-        this.setMouse(primaryHand.position.x, primaryHand.position.y);
+        // Primary hand controls simulation position
+        const primaryHand = validHands[0];
+        const { x, y } = mapLeapToThreePosition(this.canvas, primaryHand.palmPosition);
+        this.setMouse(x, y);
 
-        // Either hand can pinch or squeeze to trigger the effect
-        const isPinched = newHands.some((hand) => hand.pinched);
+        // Either hand can grab to trigger the effect
+        const isPinched = validHands.some((hand) => hand.grabStrength > 0.5);
         if (isPinched) {
             if (!this.mousePressed) {
                 this.mousePressed = true;
@@ -342,6 +417,10 @@ export default class Cymatics extends Sketch {
 
     resize(width: number, height: number) {
         this.renderCymaticsPass.uniforms.resolution.value.set(width, height);
+        this._handCamera.right = width;
+        this._handCamera.bottom = height;
+        this._handCamera.updateProjectionMatrix();
+        this._handComposer.setSize(width, height);
     }
 
     destroy(): void {
@@ -353,6 +432,10 @@ export default class Cymatics extends Sketch {
         this.leapController
             .removeListener('frame', this.handleLeapFrame)
             .disconnect();
+
+        // Clean up hand mesh resources
+        this._handComposer.dispose();
+        this._handScene.clear();
 
         // Clean up Three.js resources
         while(this.composer.passes.length > 0) {

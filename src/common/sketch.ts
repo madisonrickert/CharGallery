@@ -1,6 +1,5 @@
 import type React from "react";
 import * as THREE from "three";
-import { HandData } from "@/components/handOverlay";
 import { SettingsDefs } from "./sketchSettings";
 import { LeapConnectionStatus } from "./leapStatus";
 
@@ -115,12 +114,6 @@ export abstract class Sketch {
      * This is set by the parent component to control the visibility of the screen saver.
      */
     public updateScreenSaverCallback?: (shouldShow: boolean) => void;
-
-    /**
-     * Callback to handle hand data updates.
-     * This is set by the parent component to receive hand data updates.
-     */
-    public updateHandDataCallback?: (handData: HandData[]) => void;
 
     /**
      * Callback to report Leap Motion connection status changes.

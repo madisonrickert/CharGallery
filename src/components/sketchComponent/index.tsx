@@ -4,7 +4,6 @@ import classnames from "classnames";
 
 import { Sketch, SketchConstructor, UIEventName } from "@/common/sketch";
 import { VolumeButton } from "@/components/volumeButton";
-import { HandData, HandOverlay } from "@/components/handOverlay";
 import { ScreenSaver } from "@/components/screenSaver";
 import { DevSettingsPanel } from "@/components/devSettingsPanel";
 import { LeapStatusIndicator } from "@/components/leapStatusIndicator";
@@ -113,7 +112,6 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
     const [volumeEnabled, setVolumeEnabled] = useState(() =>
         JSON.parse(window.localStorage.getItem("sketch-volumeEnabled") || "true")
     );
-    const [handData, setHandData] = useState<HandData[]>([]);
     const [shouldShowScreenSaver, setShouldShowScreenSaver] = useState(false);
     const [showDevPanel, setShowDevPanel] = useState(false);
     const { processStatus, connectionStatus, setConnectionStatus, startProcess, stopProcess } = useLeapStatus();
@@ -171,14 +169,12 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
         // Create sketch instance using the shared audioContext
         const sketchInstance = new sketchClass(renderer, audioContext);
         sketchInstance.updateScreenSaverCallback = setShouldShowScreenSaver;
-        sketchInstance.updateHandDataCallback = setHandData;
         sketchInstance.updateLeapConnectionCallback = setConnectionStatus;
         queueMicrotask(() => setSketch(sketchInstance));
 
         return () => {
             // Clear callbacks to prevent stale references
             sketchInstance.updateScreenSaverCallback = undefined;
-            sketchInstance.updateHandDataCallback = undefined;
             sketchInstance.updateLeapConnectionCallback = undefined;
 
             // Clean up Three.js resources
@@ -230,7 +226,6 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
                     {sketch && (
                         <SketchErrorBoundary>
                             <SketchRenderer key={sketchClass.id} sketch={sketch} />
-                            <HandOverlay hands={handData} />
                         </SketchErrorBoundary>
                     )}
                 </div>

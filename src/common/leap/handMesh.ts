@@ -7,43 +7,37 @@ import { mapLeapToThreePosition } from './util';
 
 export class HandMesh extends THREE.Group {
     static boneGeometry = new THREE.SphereGeometry(10, 3, 3);
-    static boneMeshMaterial = new THREE.MeshBasicMaterial({
+    static defaultMaterial = new THREE.MeshBasicMaterial({
         color: 0xadd6b6,
         wireframeLinewidth: 5,
         wireframe: true,
     });
 
     private bones: { [id: string]: THREE.Mesh } = {};
+    private material: THREE.MeshBasicMaterial;
 
-    constructor() {
+    constructor(material?: THREE.MeshBasicMaterial) {
         super();
         this.name = 'Hand';
+        this.material = material ?? HandMesh.defaultMaterial;
     }
 
     private getBoneMesh(fingerType: number, boneType: number): THREE.Mesh {
         const id = `${fingerType},${boneType}`;
         if (!this.bones[id]) {
-            const boneMesh = new THREE.Mesh(HandMesh.boneGeometry, HandMesh.boneMeshMaterial);
+            const boneMesh = new THREE.Mesh(HandMesh.boneGeometry, this.material);
             this.bones[id] = boneMesh;
             this.add(boneMesh);
         }
         return this.bones[id];
     }
 
-    private updateBonePosition(fingerType: number, boneType: number, x: number, y: number, z: number) {
-        const id = `${fingerType},${boneType}`;
-        if (this.bones[id]) {
-            this.bones[id].position.set(x, y, z);
-        }
-    }
-
     public update(canvas: HTMLCanvasElement, hand: Leap.Hand) {
         for (const finger of hand.fingers) {
             for (const bone of finger.bones) {
-                this.getBoneMesh(finger.type, bone.type);
+                const mesh = this.getBoneMesh(finger.type, bone.type);
                 const {x, y} = mapLeapToThreePosition(canvas, bone.center());
-                const z = 300; // z is set to 300 to keep it close to the camera
-                this.updateBonePosition(finger.type, bone.type, x, y, z);
+                mesh.position.set(x, y, 300);
             }
         }
     }
