@@ -12,6 +12,8 @@ function makeAudioSrcs(fileName: string) {
     ];
 }
 
+const OSC_FREQ_BASE = 126;
+
 interface OscWithGain {
     osc: OscillatorNode;
     gain: GainNode;
@@ -150,5 +152,3 @@ export class CymaticsAudio {
         this.blub.dispose();
     }
 }
-
-const OSC_FREQ_BASE = 126;
