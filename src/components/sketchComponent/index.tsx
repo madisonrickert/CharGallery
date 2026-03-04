@@ -89,7 +89,6 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
     const [shouldShowScreenSaver, setShouldShowScreenSaver] = useState(false);
 
     const containerRef = useRef<HTMLDivElement | null>(null);
-    const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
 
     // Initialize sketch when container mounts
     useEffect(() => {
@@ -103,7 +102,6 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
             antialias: true
         });
         renderer.setSize(container.clientWidth, container.clientHeight);
-        rendererRef.current = renderer;
         container.appendChild(renderer.domElement);
 
         // Create sketch instance using the shared audioContext
@@ -120,7 +118,6 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
             // Clean up Three.js resources
             renderer.domElement.remove();
             renderer.dispose();
-            rendererRef.current = null;
 
             // Note: We don't close the audioContext here - it's shared across sketches
             // The sketch's destroy() method handles disconnecting its audio nodes
