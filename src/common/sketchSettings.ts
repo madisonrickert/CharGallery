@@ -9,6 +9,10 @@ export interface SettingDef<T = unknown> {
     requiresRestart?: boolean;
     /** Step increment for number inputs */
     step?: number;
+    /** Minimum value for number inputs */
+    min?: number;
+    /** Maximum value for number inputs */
+    max?: number;
     /** Input type hint (e.g. "color" for a color picker, "image" for an image upload) */
     type?: "color" | "image";
 }

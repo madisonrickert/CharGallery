@@ -44,7 +44,7 @@ export function DevSettingsPanel() {
 }
 
 function SettingInput({ def, value, onChange }: {
-    def: { default: unknown; step?: number; type?: "color" | "image" };
+    def: { default: unknown; step?: number; min?: number; max?: number; type?: "color" | "image" };
     value: unknown;
     onChange: (value: unknown) => void;
 }) {
@@ -63,7 +63,14 @@ function SettingInput({ def, value, onChange }: {
                 type="number"
                 value={value as number}
                 step={def.step}
-                onChange={(e) => onChange(e.target.valueAsNumber || 0)}
+                min={def.min}
+                max={def.max}
+                onChange={(e) => {
+                    let v = e.target.valueAsNumber || 0;
+                    if (def.min != null) v = Math.max(def.min, v);
+                    if (def.max != null) v = Math.min(def.max, v);
+                    onChange(v);
+                }}
             />
         );
     }
@@ -77,7 +84,7 @@ function SettingInput({ def, value, onChange }: {
 }
 
 function SettingRow({ def, value, onChange }: {
-    def: { label: string; requiresRestart?: boolean; default: unknown; step?: number; type?: "color" | "image" };
+    def: { label: string; requiresRestart?: boolean; default: unknown; step?: number; min?: number; max?: number; type?: "color" | "image" };
     value: unknown;
     onChange: (value: unknown) => void;
 }) {

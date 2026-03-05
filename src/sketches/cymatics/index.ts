@@ -4,22 +4,26 @@ import { EffectComposer, ShaderPass, RenderPass, UnrealBloomPass } from "three-s
 
 import GPUComputationRenderer, { GPUComputationRendererVariable } from "./gpuComputationRenderer";
 import { Sketch } from "@/common/sketch";
+import { SettingDef } from "@/common/sketchSettings";
+import { loadSettings } from "@/common/sketchSettingsStore";
 import { CymaticsAudio } from "./audio";
 import { RenderCymaticsShader } from "./renderCymaticsShader";
 import { LeapHandController } from "@/common/leap/LeapHandController";
 
 import COMPUTE_CELL_STATE from "./computeCellState.frag";
 
-enum Quality {
-    Low,
-    Medium,
-    High,
+/** Compute a sane default vertical resolution based on screen size. */
+function defaultVerticalResolution(): number {
+    if (screen.width > 960) return 1024;
+    if (screen.width > 480) return 512;
+    return 256;
 }
 
-function computeQuality(): Quality {
-    if (screen.width > 960) return Quality.High;
-    if (screen.width > 480) return Quality.Medium;
-    return Quality.Low;
+/** Compute a sane default iteration count based on screen size. */
+function defaultIterations(): number {
+    if (screen.width > 960) return 30;
+    if (screen.width > 480) return 20;
+    return 15;
 }
 
 // an integer makes perfect standing waves. the 0.002 means that the wave will oscillate very slightly per frame; 500 frames per oscillation period
@@ -35,6 +39,29 @@ const IDLE_TIMEOUT_SECONDS = 10;
 const INTERACTION_CENTER_LERP_FACTOR = 0.01;
 
 export default class Cymatics extends Sketch {
+    static id = "cymatics";
+
+    static settings = {
+        verticalResolution: {
+            default: defaultVerticalResolution(),
+            category: "dev",
+            label: "Vertical resolution",
+            requiresRestart: true,
+            step: 1,
+            min: 1,
+            max: 1080,
+        } satisfies SettingDef<number>,
+        iterations: {
+            default: defaultIterations(),
+            category: "dev",
+            label: "Iterations per frame",
+            requiresRestart: true,
+            step: 1,
+            min: 1,
+            max: 50,
+        } satisfies SettingDef<number>,
+    };
+
     public slowDownAmount = 0;
 
     private leapHands!: LeapHandController;
@@ -47,7 +74,10 @@ export default class Cymatics extends Sketch {
     private mousePosition2 = new THREE.Vector2(0, 0);
     /** Leap hand ID holding each center, or null if free */
     private centerHeldByHandId: [string | null, string | null] = [null, null];
-    private quality: Quality = computeQuality();
+    /** The vertical resolution used for this sketch instance (set in init). */
+    private verticalRes!: number;
+    /** Number of simulation iterations per frame (set in init). */
+    private numIterations!: number;
 
     public events = {
         touchstart: (event: TouchEvent) => {
@@ -113,8 +143,6 @@ export default class Cymatics extends Sketch {
         this.pixelToNDC(pixelX, pixelY, this.mousePosition2);
     }
 
-    static id = "cymatics";
-
     public computation!: GPUComputationRenderer;
 
     public cellStateVariable!: GPUComputationRendererVariable;
@@ -137,22 +165,12 @@ export default class Cymatics extends Sketch {
         this.renderer.setClearColor(0xfcfcfc);
         this.renderer.clear();
 
-        // Vertical resolution from quality tier; horizontal matches window aspect ratio
-        let verticalRes: number;
-        switch(this.quality) {
-            case Quality.High:
-                verticalRes = 1024;
-                break;
-            case Quality.Medium:
-                verticalRes = 512;
-                break;
-            default:
-                verticalRes = 256;
-                break;
-        }
+        const settings = loadSettings("cymatics", Cymatics.settings);
+        this.verticalRes = Math.max(1, Math.min(1080, Math.round(settings.verticalResolution)));
+        this.numIterations = Math.max(1, Math.min(50, Math.round(settings.iterations)));
         const screenAR = this.canvas.width / this.canvas.height;
-        const horizontalRes = Math.round(verticalRes * screenAR);
-        this.computation = new GPUComputationRenderer(horizontalRes, verticalRes, this.renderer);
+        const horizontalRes = Math.round(this.verticalRes * screenAR);
+        this.computation = new GPUComputationRenderer(horizontalRes, this.verticalRes, this.renderer);
 
         const initialTexture = this.computation.createTexture();
         this.cellStateVariable = this.computation.addVariable("cellStateVariable", COMPUTE_CELL_STATE, initialTexture);
@@ -359,20 +377,8 @@ export default class Cymatics extends Sketch {
         const frequencyScalar = cycles / DEFAULT_NUM_CYCLES;
         this.audio.setOscFrequencyScalar(frequencyScalar);
 
-        let numIterations;
-        switch(this.quality) {
-            case Quality.High:
-                numIterations = 30;
-                break;
-            case Quality.Medium:
-                numIterations = 20;
-                break;
-            default:
-                numIterations = 15;
-                break;
-        }
-        const wantedSimulationDt = cycles * Math.PI * 2 / numIterations;
-        for (let i = 0; i < numIterations; i++) {
+        const wantedSimulationDt = cycles * Math.PI * 2 / this.numIterations;
+        for (let i = 0; i < this.numIterations; i++) {
             this.cellStateVariable.material.uniforms.iGlobalTime.value = this.simulationTime;
             this.computation.compute();
             this.simulationTime += wantedSimulationDt;
