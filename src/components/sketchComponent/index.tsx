@@ -235,7 +235,25 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
 
     const handleVolumeButtonClick = toggleVolume;
 
-    const className = classnames("sketch-component", sketch ? "success" : "loading");
+    // Fade out overlay buttons after mouse inactivity
+    const [mouseIdle, setMouseIdle] = useState(false);
+    useEffect(() => {
+        let timer = setTimeout(() => setMouseIdle(true), 3000);
+        const resetIdle = () => {
+            setMouseIdle(false);
+            clearTimeout(timer);
+            timer = setTimeout(() => setMouseIdle(true), 3000);
+        };
+        window.addEventListener("mousemove", resetIdle);
+        window.addEventListener("mousedown", resetIdle);
+        return () => {
+            clearTimeout(timer);
+            window.removeEventListener("mousemove", resetIdle);
+            window.removeEventListener("mousedown", resetIdle);
+        };
+    }, []);
+
+    const className = classnames("sketch-component", sketch ? "success" : "loading", mouseIdle && "mouse-idle");
 
     const settingsContextValue = useMemo(() => ({
         settings, defs, sketchId, setSetting
