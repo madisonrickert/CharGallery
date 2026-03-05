@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { HexColorPicker } from "react-colorful";
+import { HexColorPicker, HexColorInput } from "react-colorful";
 import { useSketchSettings } from "@/common/hooks/useSketchSettings";
 import { GLOBAL_SETTINGS_DEFS, loadGlobalSettings, saveGlobalSetting } from "@/common/globalSettings";
 
@@ -71,6 +71,12 @@ function SettingRow({ def, value, onChange }: {
                         className="advanced-settings-color-swatch"
                         style={{ backgroundColor: value as string }}
                         onClick={() => setColorOpen(!colorOpen)}
+                    />
+                    <HexColorInput
+                        className="advanced-settings-color-input"
+                        color={value as string}
+                        prefixed
+                        onChange={(c) => onChange(c)}
                     />
                     {colorOpen && (
                         <div className="advanced-settings-color-popover">

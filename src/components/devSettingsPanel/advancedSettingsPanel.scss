@@ -47,6 +47,9 @@
 
     .advanced-settings-color {
         position: relative;
+        display: flex;
+        align-items: center;
+        gap: 6px;
 
         .advanced-settings-color-swatch {
             width: 28px;
@@ -55,9 +58,34 @@
             border: 2px solid rgba(255, 255, 255, 0.25);
             cursor: pointer;
             padding: 0;
+            flex-shrink: 0;
 
             &:hover {
                 border-color: rgba(255, 255, 255, 0.5);
+            }
+        }
+
+        .advanced-settings-color-input {
+            width: 70px;
+            padding: 5px 8px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 6px;
+            color: #fff;
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: 12px;
+            transition: border-color 0.2s, background 0.2s;
+            outline: none;
+
+            &:hover {
+                border-color: rgba(255, 255, 255, 0.25);
+                background: rgba(255, 255, 255, 0.08);
+            }
+
+            &:focus {
+                border-color: $blue3;
+                background: rgba(255, 255, 255, 0.1);
+                box-shadow: 0 0 0 2px rgba($blue3, 0.25);
             }
         }
 
