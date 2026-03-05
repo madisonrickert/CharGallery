@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three-stdlib";
 
 import { createWhiteNoise, AudioNodeTracker } from "@/audio";
-import { AFFINES, BoxCountVisitor, Branch, createInterpolatedVariation, createRouterVariation, LengthVarianceTrackerVisitor, SuperPoint, VARIATIONS, VelocityTrackerVisitor } from "./flame";
+import { AFFINES, BoxCountVisitor, Branch, createInterpolatedVariation, createRouterVariation, SuperPoint, VARIATIONS, VelocityTrackerVisitor } from "./flame";
 import { map } from "@/common/math";
 import { loadSettings, saveSetting } from "@/common/sketchSettingsStore";
 import { SettingDef } from "@/common/sketchSettings";
@@ -352,16 +352,14 @@ export default class FlameSketch extends Sketch {
         const time = performance.now() / 3000;
         this.cX = 2 * sigmoid(6 * Math.sin(time)) - 1;
         const velocityVisitor = new VelocityTrackerVisitor();
-        const varianceVisitor = new LengthVarianceTrackerVisitor();
         const countVisitor = new BoxCountVisitor([1, 0.1, 0.01, 0.001]);
-        this.superPoint.recalculate(this.jumpiness, this.jumpiness, this.jumpiness, this.computeDepth(), true, [velocityVisitor, varianceVisitor, countVisitor]);
+        this.superPoint.recalculate(this.jumpiness, this.jumpiness, this.jumpiness, this.computeDepth(), true, [velocityVisitor, countVisitor]);
 
-        this.updateAudio(velocityVisitor, varianceVisitor, countVisitor);
+        this.updateAudio(velocityVisitor, countVisitor);
     }
 
     private updateAudio(
         velocityVisitor: VelocityTrackerVisitor,
-        varianceVisitor: LengthVarianceTrackerVisitor,
         countVisitor: BoxCountVisitor,
     ) {
         const velocity = velocityVisitor.computeVelocity();
