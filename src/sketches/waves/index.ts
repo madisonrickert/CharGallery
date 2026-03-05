@@ -24,9 +24,27 @@ export class HeightMap {
      */
     cachedWaviness = 0;
 
+    /** Smoothed ripple center in world-space coordinates. Driven by hand/mouse position. */
+    rippleCenterX = 0;
+    rippleCenterY = 0;
+    /** Target ripple center — the smoothed values lerp toward these each frame. */
+    rippleTargetX = 0;
+    rippleTargetY = 0;
+    /**
+     * Smoothed ripple amplitude. Default 800 (one hand or mouse).
+     * With two hands, scales inversely with distance — closer = stronger/focused.
+     */
+    rippleAmplitude = 400;
+    rippleTargetAmplitude = 400;
+
     /** Must be called once per frame before any evaluate/gradient calls. */
     cacheFrame() {
         this.cachedWaviness = (1 + Math.sin(this.frame / 100)) / 2;
+        // Smooth ripple center and amplitude toward targets
+        const smoothing = 0.15;
+        this.rippleCenterX = lerp(this.rippleCenterX, this.rippleTargetX, smoothing);
+        this.rippleCenterY = lerp(this.rippleCenterY, this.rippleTargetY, smoothing);
+        this.rippleAmplitude = lerp(this.rippleAmplitude, this.rippleTargetAmplitude, smoothing);
     }
 
     /** Returns the height value at world-space position (x, y). */
@@ -36,10 +54,10 @@ export class HeightMap {
         const z1 = 23000 / (1 + Math.exp(-length2 / 10000));
         // z2 creates the radial wave shapes from the center
         const z2 = 600 * Math.cos(length2 / 25000 + this.frame / 25);
-        // z3 is a smaller radial wave shape that is centered towards the mouse
-        const dx = x - this.width;
-        const dy = y - this.height;
-        const z3 = 100 * Math.cos(Math.sqrt(dx * dx + dy * dy) / 20 + this.frame / 25);
+        // z3 is a radial ripple centered on the ripple origin (hand/mouse position)
+        const dx = x - this.rippleCenterX;
+        const dy = y - this.rippleCenterY;
+        const z3 = this.rippleAmplitude * Math.cos(Math.sqrt(dx * dx + dy * dy) / 20 - this.frame / 25);
 
         return lerp(z1, z2, this.cachedWaviness) + z3;
     }
@@ -302,11 +320,34 @@ export default class Waves extends Sketch {
                 wireframe: true,
             }),
             onFrame: (hands) => {
-                if (hands.length > 0) {
-                    this.setVelocityFromCanvasCoordinates(hands[0].canvasPosition.x, hands[0].canvasPosition.y);
-                    // Use the strongest grab across all hands as the speed factor
-                    const maxGrab = Math.max(...hands.map(({ hand }) => hand.grabStrength));
-                    this.speedFactor = maxGrab;
+                if (hands.length === 0) return;
+
+                // Use the strongest grab across all hands as the speed factor
+                const maxGrab = Math.max(...hands.map(({ hand }) => hand.grabStrength));
+                this.speedFactor = maxGrab;
+
+                if (hands.length === 1) {
+                    // One hand: ripple follows hand, default amplitude
+                    const pos = hands[0].canvasPosition;
+                    this.setVelocityFromCanvasCoordinates(pos.x, pos.y);
+                    this.heightMap.rippleTargetAmplitude = 400;
+                } else {
+                    // Two hands: ripple at midpoint, amplitude scales with proximity
+                    const p0 = hands[0].canvasPosition;
+                    const p1 = hands[1].canvasPosition;
+                    const midX = (p0.x + p1.x) / 2;
+                    const midY = (p0.y + p1.y) / 2;
+                    this.setVelocityFromCanvasCoordinates(midX, midY);
+
+                    // Distance in canvas pixels, normalized to canvas diagonal
+                    const dx = p0.x - p1.x;
+                    const dy = p0.y - p1.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const diag = Math.sqrt(this.canvas.width * this.canvas.width + this.canvas.height * this.canvas.height);
+                    const normalizedDist = dist / diag; // 0 = overlapping, ~1 = opposite corners
+
+                    // Close together (0) → focused/strong (1000), far apart (1) → diffuse/subtle (150)
+                    this.heightMap.rippleTargetAmplitude = lerp(1000, 150, normalizedDist);
                 }
             },
         });
@@ -408,6 +449,13 @@ export default class Waves extends Sketch {
             lineStrip.dx = dx;
             lineStrip.dy = dy;
         });
+        this.setRippleTargetFromCanvasCoordinates(canvasX, canvasY);
+    }
+
+    /** Maps canvas pixel coordinates to heightmap world coordinates and sets the ripple target. */
+    private setRippleTargetFromCanvasCoordinates(canvasX: number, canvasY: number) {
+        this.heightMap.rippleTargetX = map(canvasX, 0, this.canvas.width, -this.heightMap.width / 2, this.heightMap.width / 2);
+        this.heightMap.rippleTargetY = map(canvasY, 0, this.canvas.height, -this.heightMap.height / 2, this.heightMap.height / 2);
     }
 
     public destroy() {
