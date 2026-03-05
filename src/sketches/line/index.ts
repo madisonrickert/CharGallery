@@ -10,6 +10,7 @@ import { Sketch } from "@/common/sketch";
 import { createAudioGroup, LineSketchAudioGroup } from "./audio";
 import { starMaterial } from "@/common/materials/starMaterial";
 import { LeapHandController } from "@/common/leap/LeapHandController";
+import { sampleParticlesFromHeatmap } from "./heatmapSampler";
 
 const LEAP_ATTRACTOR_POWER_ATTACK_SPEED = 0.005;
 const LEAP_ATTRACTOR_POWER_DECAY_SPEED = 0.5;
@@ -32,6 +33,7 @@ export default class LineSketch extends Sketch {
     static settings = {
         particleDensity: { default: 10, category: "dev", label: "Particle density (per px)", requiresRestart: true } satisfies SettingDef<number>,
         gamma: { default: 1.0, category: "dev", label: "Gamma", requiresRestart: true, step: 0.1 } satisfies SettingDef<number>,
+        spawnTemplate: { default: "", category: "dev", label: "Spawn template image", requiresRestart: true, type: "image" } satisfies SettingDef<string>,
     };
     public events = {
         touchstart: (event: TouchEvent) => {
@@ -138,23 +140,34 @@ export default class LineSketch extends Sketch {
         this.scene.add(this.mouseAttractor.ringMeshesGroup);
 
         const particleCount = Math.round(params.particleDensity * this.canvas.width);
-        
-        // Evenly space particles across the middle of the screen in a line
-        for (let i = 0; i < particleCount; i++) {
-            this.particles.push(createParticle(
-                i / particleCount * this.canvas.width,
-                this.canvas.height / 2 + ((i % 5) - 2) * 2, // Very subtle sawtooth wave
-            ));
-        }
 
-        // Set up particle system and points
-        this.ps = new ParticleSystem(
-            this.canvas,
-            this.particles,
-            PARTICLE_SYSTEM_PARAMS,
-        );
-        this.pointCloud = createParticlePoints(this.particles, starMaterial);
-        this.scene.add(this.pointCloud);
+        // Spawn particles — either from a heatmap image or in a default horizontal line
+        const initParticles = (particles: IParticle[]) => {
+            this.particles = particles;
+            this.ps = new ParticleSystem(this.canvas, this.particles, PARTICLE_SYSTEM_PARAMS);
+            this.pointCloud = createParticlePoints(this.particles, starMaterial);
+            this.scene.add(this.pointCloud);
+        };
+
+        if (params.spawnTemplate) {
+            // Load the template image and sample particle positions from brightness
+            const img = new Image();
+            img.onload = () => {
+                const particles = sampleParticlesFromHeatmap(img, this.canvas.width, this.canvas.height, particleCount);
+                initParticles(particles);
+            };
+            img.src = params.spawnTemplate;
+        } else {
+            // Default: evenly space particles across the middle of the screen in a line
+            const particles: IParticle[] = [];
+            for (let i = 0; i < particleCount; i++) {
+                particles.push(createParticle(
+                    i / particleCount * this.canvas.width,
+                    this.canvas.height / 2 + ((i % 5) - 2) * 2, // Very subtle sawtooth wave
+                ));
+            }
+            initParticles(particles);
+        }
 
         // Set up postprocessing composer and passes
         this.composer = new EffectComposer(this.renderer);
@@ -225,6 +238,9 @@ export default class LineSketch extends Sketch {
     }
 
     private animateSimulation(now: number = performance.now()): void {
+        // Guard: particles may not be initialized yet if spawn template is loading
+        if (!this.ps) return;
+
         // Step particles with all active attractors
         this.activeAttractors.length = 0; // clear without reallocating
         if (this.mouseAttractor.power !== 0) {
@@ -295,8 +311,8 @@ export default class LineSketch extends Sketch {
         }
         this.composer.dispose();
         
-        // Dispose point cloud
-        this.pointCloud.geometry.dispose();
+        // Dispose point cloud (may not exist if image was still loading)
+        this.pointCloud?.geometry.dispose();
     }
 
     public setGravityFocalPoint(x: number, y: number) {
