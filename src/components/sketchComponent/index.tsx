@@ -1,4 +1,4 @@
-import React, { Component, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import classnames from "classnames";
 
@@ -70,9 +70,8 @@ function SketchRenderer({ sketch }: { sketch: Sketch }) {
         } catch (e) {
             console.error(e);
         }
-        // Force re-render to update sketch.render() — use startTransition
-        // so this doesn't starve React Router's navigation transitions
-        startTransition(() => setTick((t) => t + 1));
+        // Force re-render to update sketch.render()
+        setTick((t) => t + 1);
     });
 
     return (
