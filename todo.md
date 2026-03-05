@@ -51,52 +51,6 @@
 
 ---
 
-## Flame: remaining cleanup
-
-### Dead `variance` field on `LengthVarianceTrackerVisitor`
-`updateVisitor.ts:29` — `public variance = 0` is declared but never written to. The actual value comes from `computeVariance()`. Remove the field.
-
-### Dead audio state fields
-`index.tsx:200-208` — `baseFrequency`, `baseLowFrequency`, `baseThirdBias`, `baseFifthBias`, `oscLowGate`, `oscHighGate` are computed from the name hash in `updateName()` but never applied to any oscillator or chord. `oscLow`/`oscHigh` (lines 191-192) are created at 0 Hz and never updated. `audioHasChord` (line 424) is hardcoded `true`. Either wire these up or remove them.
-
-### Per-frame visitor allocations
-`animateSuperPoint()` (index.tsx:354-356) creates 3 new visitor objects every frame. Could reuse them by adding a `reset()` method and keeping them as class fields. Minor GC pressure.
-
-### Per-frame array allocations in `computeCountAndCountDensity`
-`updateVisitor.ts:101-102` — `logCounts` and `logDensities` are allocated via `.map()` every frame. Could use pre-allocated arrays. Very minor.
-
-### Missing test coverage
-- `VARIATIONS.Polar` and `VARIATIONS.Swirl` — no tests (transforms.test.ts)
-- `createInterpolatedVariation` at t=0.5 — only boundary cases (t=0, t=1) are tested (transforms.test.ts:105-128)
-
----
-
-## Waves: Immersive Hand Interaction Ideas
-
-### One-Hand Interactions
-
-**Palm height (Z) → waviness override.** Currently waviness is purely time-driven (`sin(frame/100)`). Let hand Z position override or blend with it — push down for bulbous, lift up for ripply. This naturally drives the audio filter too since `b1` already tracks waviness.
-
-**Hand roll → line grid rotation.** Rotate both LineStrips as a pair based on palm roll angle. Makes the whole field feel like it responds to hand orientation, not just position.
-
-**Open palm vs fist → line density.** Interpolate `gridSize` (or scale the strip objects) based on grab strength — open hand = sparse/airy, closing fist = dense/intense before the speed ramp kicks in. Gives squeeze a two-phase feel: lines compress, then accelerate.
-
-### Two-Hand Interactions
-
-**Hand distance → heightmap scale.** Hands far apart = zoomed in, gentle undulations. Hands close = zoomed out, tighter patterns. Maps to scaling the divisors in `evaluate()` (`/10000`, `/25000`) or camera scale.
-
-**Two-hand spread/pinch → color cycle speed.** The 1000-frame color period is currently fixed. Pulling hands apart slows it (meditative), pushing together speeds it (frantic). Gives the second hand a distinct purpose.
-
-**Midpoint of two hands → ripple center.** z3 currently tracks one point. With two hands, the ripple origin could be the midpoint, and ripple amplitude could scale with distance — hands together = focused, hands apart = diffuse.
-
-### Audio-Responsive Ideas
-
-**Microphone input → heightmap modulation.** Feed mic through an analyser, use bass energy to perturb frame advancement or add a fourth z-term that pulses with the beat. Existing AudioWorklet infrastructure makes this straightforward.
-
-**Per-hand audio panning.** Background audio is mono. With a StereoPannerNode, hand X position could pan the filtered noise left/right — audio spatially matches where you're interacting.
-
----
-
 ### Add windows WS binary
 ### Add macOS x86 WS binary
 
