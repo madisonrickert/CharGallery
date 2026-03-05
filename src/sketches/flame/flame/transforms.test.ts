@@ -133,6 +133,45 @@ describe('VARIATIONS', () => {
       expect(p.length()).toBeCloseTo(Math.exp(-1));
     });
   });
+
+  describe('Polar', () => {
+    it('converts to polar-like coordinates', () => {
+      const p = new THREE.Vector3(1, 0, 0);
+      VARIATIONS.Polar(p);
+      // atan2(0,1)/PI = 0, length(1,0,0)-1 = 0, atan2(0,1) = 0
+      expect(p.x).toBeCloseTo(0);
+      expect(p.y).toBeCloseTo(0);
+      expect(p.z).toBeCloseTo(0);
+    });
+
+    it('maps (0,1,0) correctly', () => {
+      const p = new THREE.Vector3(0, 1, 0);
+      VARIATIONS.Polar(p);
+      // atan2(1,0)/PI = 0.5, length-1 = 0, atan2(0,0) = 0
+      expect(p.x).toBeCloseTo(0.5);
+      expect(p.y).toBeCloseTo(0);
+      expect(p.z).toBeCloseTo(0);
+    });
+  });
+
+  describe('Swirl', () => {
+    it('transforms the zero vector to zero', () => {
+      const p = new THREE.Vector3(0, 0, 0);
+      VARIATIONS.Swirl(p);
+      expect(p.x).toBeCloseTo(0);
+      expect(p.y).toBeCloseTo(0);
+      expect(p.z).toBeCloseTo(0);
+    });
+
+    it('transforms a known point', () => {
+      const p = new THREE.Vector3(1, 0, 0);
+      // r2 = 1, sin(1) ≈ 0.8415, cos(1) ≈ 0.5403
+      VARIATIONS.Swirl(p);
+      expect(p.x).toBeCloseTo(0);                              // z*sin(r2) - y*cos(r2) = 0
+      expect(p.y).toBeCloseTo(Math.cos(1));                    // x*cos(r2) + z*sin(r2)
+      expect(p.z).toBeCloseTo(Math.sin(1));                    // x*sin(r2) - y*sin(r2)
+    });
+  });
 });
 
 describe('createInterpolatedVariation', () => {
