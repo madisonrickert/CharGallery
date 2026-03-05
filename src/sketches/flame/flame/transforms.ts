@@ -63,13 +63,15 @@ export const VARIATIONS = {
     },
 };
 
+const _tempInterp = new THREE.Vector3();
+
 export function createInterpolatedVariation(variationA: Transform, variationB: Transform, interpolationFn: () => number) {
     return (pointA: THREE.Vector3) => {
-        const pointB = pointA.clone();
+        _tempInterp.copy(pointA);
         variationA(pointA);
-        variationB(pointB);
+        variationB(_tempInterp);
         const interpolatedAmount = interpolationFn();
-        pointA.lerp(pointB, interpolatedAmount);
+        pointA.lerp(_tempInterp, interpolatedAmount);
     };
 }
 

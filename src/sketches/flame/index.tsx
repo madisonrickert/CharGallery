@@ -354,7 +354,7 @@ export default class FlameSketch extends Sketch {
         const velocityVisitor = new VelocityTrackerVisitor();
         const varianceVisitor = new LengthVarianceTrackerVisitor();
         const countVisitor = new BoxCountVisitor([1, 0.1, 0.01, 0.001]);
-        this.superPoint.recalculate(this.jumpiness, this.jumpiness, this.jumpiness, this.computeDepth(), true, velocityVisitor, varianceVisitor, countVisitor);
+        this.superPoint.recalculate(this.jumpiness, this.jumpiness, this.jumpiness, this.computeDepth(), true, [velocityVisitor, varianceVisitor, countVisitor]);
 
         this.updateAudio(velocityVisitor, varianceVisitor, countVisitor);
     }
@@ -455,7 +455,7 @@ export default class FlameSketch extends Sketch {
         this.scene.add(this.pointCloud);
 
         if (this.quality === "low") {
-            this.superPoint.recalculate(this.jumpiness, this.jumpiness, this.jumpiness, this.computeDepth(), false);
+            this.superPoint.recalculate(this.jumpiness, this.jumpiness, this.jumpiness, this.computeDepth(), false, []);
         }
     }
 

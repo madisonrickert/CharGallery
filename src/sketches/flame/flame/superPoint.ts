@@ -33,14 +33,16 @@ export class SuperPoint {
         const positionArray = positionAttribute.array as Float32Array;
         const colorArray = colorAttribute.array as Float32Array;
 
-        positionArray.set([point.x, point.y, point.z], this.slot * 3);
-        colorArray.set([color.r, color.g, color.b], this.slot * 3);
-
-        positionAttribute.needsUpdate = true;
-        colorAttribute.needsUpdate = true;
+        const offset = this.slot * 3;
+        positionArray[offset] = point.x;
+        positionArray[offset + 1] = point.y;
+        positionArray[offset + 2] = point.z;
+        colorArray[offset] = color.r;
+        colorArray[offset + 1] = color.g;
+        colorArray[offset + 2] = color.b;
     }
 
-    public updateSubtree(depth: number, shouldLerp: boolean, ...visitors: UpdateVisitor[]) {
+    public updateSubtree(depth: number, shouldLerp: boolean, visitors: UpdateVisitor[]) {
         if (depth === 0) { return; }
 
         if (this.children === undefined) {
@@ -59,7 +61,7 @@ export class SuperPoint {
 
         for (let idx = 0, l = this.children.length; idx < l; idx++) {
             SuperPoint.globalSubtreeIterationIndex++;
-            const child = this.children[idx];
+            const child: SuperPoint = this.children[idx];
             const branch = this.branches[idx];
             // reset the child's position to your updated position so it's ready to get stepped
             child.lastPoint.copy(child.point);
@@ -80,16 +82,21 @@ export class SuperPoint {
                 VARIATIONS.Spherical(child.point);
             }
 
-            posArr.set([child.point.x, child.point.y, child.point.z], child.slot * 3);
-            colArr.set([child.color.r, child.color.g, child.color.b], child.slot * 3);
+            const childOffset = child.slot * 3;
+            posArr[childOffset] = child.point.x;
+            posArr[childOffset + 1] = child.point.y;
+            posArr[childOffset + 2] = child.point.z;
+            colArr[childOffset] = child.color.r;
+            colArr[childOffset + 1] = child.color.g;
+            colArr[childOffset + 2] = child.color.b;
 
-            if (SuperPoint.globalSubtreeIterationIndex % 307 === 0) {
+            if (visitors.length > 0 && SuperPoint.globalSubtreeIterationIndex % 307 === 0) {
                 for (const v of visitors) {
                     v.visit(child);
                 }
             }
 
-            child.updateSubtree(depth - 1, shouldLerp, ...visitors);
+            child.updateSubtree(depth - 1, shouldLerp, visitors);
         }
     }
 
@@ -99,15 +106,18 @@ export class SuperPoint {
         initialZ: number,
         depth: number,
         shouldLerp: boolean,
-        ...visitors: UpdateVisitor[]) {
+        visitors: UpdateVisitor[]) {
         SuperPoint.globalSubtreeIterationIndex = 0;
         this.point.set(initialX, initialY, initialZ);
 
         // Write root position back to buffer
         const posArr = (this.rootGeometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
-        posArr.set([this.point.x, this.point.y, this.point.z], this.slot * 3);
+        const rootOffset = this.slot * 3;
+        posArr[rootOffset] = this.point.x;
+        posArr[rootOffset + 1] = this.point.y;
+        posArr[rootOffset + 2] = this.point.z;
 
-        this.updateSubtree(depth, shouldLerp, ...visitors);
+        this.updateSubtree(depth, shouldLerp, visitors);
 
         this.rootGeometry.setDrawRange(0, SuperPoint.nextSlot);
         (this.rootGeometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
