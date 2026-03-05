@@ -72,10 +72,10 @@ export function LeapStatusIndicator({ processStatus, connectionStatus, protocolV
                 title={tooltipText}
             />
             {expanded && (
-                <div className="leap-status-panel">
-                    <div className="leap-status-panel-title">Ultraleap Status</div>
-                    <div className="leap-status-row">
-                        <span className="leap-status-label">Process</span>
+                <div className="overlay-panel leap-status-panel">
+                    <div className="overlay-panel-title">Ultraleap Status</div>
+                    <div className="overlay-panel-row">
+                        <span className="overlay-panel-label">Process</span>
                         <span className="leap-status-value">
                             <span
                                 className="leap-status-value-dot"
@@ -84,8 +84,8 @@ export function LeapStatusIndicator({ processStatus, connectionStatus, protocolV
                             {PROCESS_LABELS[processStatus]}
                         </span>
                     </div>
-                    <div className="leap-status-row">
-                        <span className="leap-status-label">Connection</span>
+                    <div className="overlay-panel-row">
+                        <span className="overlay-panel-label">Connection</span>
                         <span className="leap-status-value">
                             <span
                                 className="leap-status-value-dot"
@@ -95,8 +95,8 @@ export function LeapStatusIndicator({ processStatus, connectionStatus, protocolV
                         </span>
                     </div>
                     {protocolVersion !== null && (
-                        <div className="leap-status-row">
-                            <span className="leap-status-label">Protocol</span>
+                        <div className="overlay-panel-row">
+                            <span className="overlay-panel-label">Protocol</span>
                             <span className="leap-status-value">v{protocolVersion}</span>
                         </div>
                     )}

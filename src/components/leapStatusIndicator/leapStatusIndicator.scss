@@ -28,33 +28,6 @@
         position: absolute;
         bottom: 20px;
         left: 0;
-        background: rgba(0, 0, 0, 0.75);
-        color: #eee;
-        padding: 12px 16px;
-        border-radius: 8px;
-        font-family: monospace;
-        font-size: 13px;
-        min-width: 260px;
-        backdrop-filter: blur(4px);
-
-        .leap-status-panel-title {
-            font-weight: bold;
-            margin-bottom: 8px;
-            font-size: 14px;
-            color: #aaa;
-        }
-
-        .leap-status-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            margin-bottom: 6px;
-        }
-
-        .leap-status-label {
-            color: #999;
-        }
 
         .leap-status-value {
             display: flex;
@@ -72,17 +45,18 @@
         .leap-status-toggle {
             margin-top: 8px;
             width: 100%;
-            padding: 4px 8px;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 4px;
+            padding: 5px 8px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 6px;
             color: #fff;
-            font-family: monospace;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: 13px;
             cursor: pointer;
+            transition: background 0.2s;
 
             &:hover:not(:disabled) {
-                background: rgba(255, 255, 255, 0.2);
+                background: rgba(255, 255, 255, 0.12);
             }
 
             &:disabled {

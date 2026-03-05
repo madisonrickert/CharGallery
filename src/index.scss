@@ -1,5 +1,7 @@
 @use "@/styles/colors" as *;
 @use "@/styles/fonts" as *;
+@use "@/styles/overlayButton";
+@use "@/styles/overlayPanel";
 
 * {
     box-sizing: border-box;

@@ -13,7 +13,7 @@ export interface VolumeButtonProps {
  * @returns {JSX.Element} The VolumeButton component.
  */
 export const VolumeButton: React.FC<VolumeButtonProps> = ({ volumeEnabled, onClick }) => (
-    <button className="user-volume" onClick={onClick}>
+    <button className="overlay-button user-volume" onClick={onClick} title={volumeEnabled ? "Mute (v)" : "Unmute (v)"}>
         {volumeEnabled ? <FaVolumeUp /> : <FaVolumeOff />}
     </button>
 );

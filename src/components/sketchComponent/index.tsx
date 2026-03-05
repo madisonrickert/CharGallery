@@ -3,6 +3,7 @@ import * as THREE from "three";
 import classnames from "classnames";
 
 import { Sketch, SketchConstructor, UIEventName } from "@/common/sketch";
+import { FaCog } from "react-icons/fa";
 import { VolumeButton } from "@/components/volumeButton";
 import { ScreenSaver } from "@/components/screenSaver";
 import { DevSettingsPanel } from "@/components/devSettingsPanel";
@@ -253,6 +254,13 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
                 <ScreenSaver shouldShow={shouldShowScreenSaver} />
                 <HomeButton />
                 <VolumeButton volumeEnabled={volumeEnabled} onClick={handleVolumeButtonClick} />
+                <button
+                    className="overlay-button advanced-settings-toggle"
+                    onClick={() => setShowDevPanel(prev => !prev)}
+                    title="Advanced Settings (Shift+D)"
+                >
+                    <FaCog />
+                </button>
                 <LeapStatusIndicator
                     processStatus={processStatus}
                     connectionStatus={connectionStatus}

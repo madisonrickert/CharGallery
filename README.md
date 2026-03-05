@@ -8,7 +8,7 @@ Interactive art gallery built with React, Three.js/WebGL, and Web Audio. Feature
 - **Generative audio** — every sketch produces real-time audio driven by its simulation state
 - **Mouse, touch, and Leap Motion input** — immersive tactile interaction from a variety of input styles
 - **Screensaver mode** — auto-activates after 30 seconds of idle
-- **Developer settings panel** — per-sketch tuning (particle density, quality, gamma) via `Shift`+`D`
+- **Advanced settings panel** — per-sketch tuning (particle density, quality, gamma) via `Shift`+`D` or gear icon
 - **Electron desktop app** — fullscreen kiosk mode with display sleep prevention, auto-launching Leap Motion Websocket compatibility server
 - **Cross-platform builds** — DMG for macOS, portable exe for Windows, and a browser target for web portfolio use
 
@@ -70,7 +70,8 @@ The web build deploys to GitHub Pages automatically on every push to `main`.
 | `z` / `←`    | Previous sketch                 |
 | `x` / `→`    | Next sketch                     |
 | `Escape`     | Return to home / gallery        |
-| `Shift+D`    | Toggle dev settings panel       |
+| `v`          | Toggle volume on/off            |
+| `Shift+D`    | Toggle advanced settings panel  |
 
 ## Leap Motion
 

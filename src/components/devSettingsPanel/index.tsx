@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useSketchSettings } from "@/common/hooks/useSketchSettings";
 import { GLOBAL_SETTINGS_DEFS, loadGlobalSettings, saveGlobalSetting } from "@/common/globalSettings";
 
-import "./devSettingsPanel.scss";
+import "./advancedSettingsPanel.scss";
 
 export function DevSettingsPanel() {
     const { defs, settings, setSetting } = useSketchSettings();
@@ -18,8 +18,8 @@ export function DevSettingsPanel() {
     const globalDevEntries = Object.entries(GLOBAL_SETTINGS_DEFS).filter(([, def]) => def.category === "dev");
 
     return (
-        <div className="dev-settings-panel">
-            <div className="dev-settings-title">Dev Settings</div>
+        <div className="overlay-panel advanced-settings-panel">
+            <div className="overlay-panel-title">Advanced Settings</div>
             {globalDevEntries.map(([key, def]) => (
                 <SettingRow
                     key={`global-${key}`}
@@ -46,17 +46,21 @@ function SettingRow({ def, value, onChange }: {
     onChange: (value: unknown) => void;
 }) {
     return (
-        <label className="dev-settings-row">
-            <span className="dev-settings-label">
+        <label className="overlay-panel-row advanced-settings-row">
+            <span className="overlay-panel-label">
                 {def.label}
-                {def.requiresRestart && <span className="dev-settings-restart"> (restart)</span>}
+                {def.requiresRestart && <span className="advanced-settings-restart"> (restart)</span>}
             </span>
             {typeof def.default === "boolean" ? (
-                <input
-                    type="checkbox"
-                    checked={value as boolean}
-                    onChange={(e) => onChange(e.target.checked)}
-                />
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={value as boolean}
+                    className={`advanced-settings-toggle-switch ${value ? "on" : ""}`}
+                    onClick={() => onChange(!(value as boolean))}
+                >
+                    <span className="advanced-settings-toggle-knob" />
+                </button>
             ) : typeof def.default === "number" ? (
                 <input
                     type="number"
