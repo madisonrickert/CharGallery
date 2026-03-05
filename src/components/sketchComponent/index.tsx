@@ -124,6 +124,7 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
     const { processStatus, connectionStatus, setConnectionStatus, protocolVersion, setProtocolVersion, startProcess, stopProcess } = useLeapStatus();
 
     const containerRef = useRef<HTMLDivElement | null>(null);
+    const devPanelRef = useRef<HTMLDivElement | null>(null);
 
     // Settings management
     const sketchId = sketchClass.id ?? sketchClass.name;
@@ -139,13 +140,20 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
         });
     }, [sketchId]);
 
-    // Compute a key from requiresRestart settings — when it changes, sketch re-inits
-    const restartKey = useMemo(() => {
+    // Compute a key from requiresRestart settings — when it changes, sketch re-inits.
+    // Debounced so rapid changes (e.g. dragging a color picker) don't spam re-inits.
+    const rawRestartKey = useMemo(() => {
         return Object.entries(defs)
             .filter(([, def]) => def.requiresRestart)
             .map(([k]) => `${k}=${JSON.stringify(settings[k])}`)
             .join("&");
     }, [defs, settings]);
+
+    const [restartKey, setRestartKey] = useState(rawRestartKey);
+    useEffect(() => {
+        const timer = setTimeout(() => setRestartKey(rawRestartKey), 300);
+        return () => clearTimeout(timer);
+    }, [rawRestartKey]);
 
     const toggleVolume = useCallback(() => {
         setVolumeEnabled((prev: boolean) => {
@@ -169,6 +177,18 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, [toggleVolume]);
+
+    // Close settings panel on click outside
+    useEffect(() => {
+        if (!showDevPanel) return;
+        const handleMouseDown = (e: MouseEvent) => {
+            if (devPanelRef.current && !devPanelRef.current.contains(e.target as Node)) {
+                setShowDevPanel(false);
+            }
+        };
+        document.addEventListener("mousedown", handleMouseDown);
+        return () => document.removeEventListener("mousedown", handleMouseDown);
+    }, [showDevPanel]);
 
     // Initialize sketch when container mounts (or restartKey changes)
     useEffect(() => {
@@ -272,13 +292,16 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
                 <ScreenSaver shouldShow={shouldShowScreenSaver} />
                 <HomeButton />
                 <VolumeButton volumeEnabled={volumeEnabled} onClick={handleVolumeButtonClick} />
-                <button
-                    className="overlay-button advanced-settings-toggle"
-                    onClick={() => setShowDevPanel(prev => !prev)}
-                    title="Advanced Settings (Shift+D)"
-                >
-                    <FaCog />
-                </button>
+                <div ref={devPanelRef}>
+                    <button
+                        className="overlay-button advanced-settings-toggle"
+                        onClick={() => setShowDevPanel(prev => !prev)}
+                        title="Advanced Settings (Shift+D)"
+                    >
+                        <FaCog />
+                    </button>
+                    {showDevPanel && <DevSettingsPanel />}
+                </div>
                 <LeapStatusIndicator
                     processStatus={processStatus}
                     connectionStatus={connectionStatus}
@@ -286,7 +309,6 @@ export function SketchComponent({ sketchClass, ...containerProps }: SketchCompon
                     onStart={startProcess}
                     onStop={stopProcess}
                 />
-                {showDevPanel && <DevSettingsPanel />}
             </div>
         </SketchSettingsContext.Provider>
     );

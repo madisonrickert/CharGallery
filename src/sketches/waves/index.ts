@@ -3,6 +3,8 @@ import { lerp, map } from "@/common/math";
 import { Sketch } from "@/common/sketch";
 import { createAudioGroup, WavesSketchAudioGroup } from "./audio";
 import { LeapHandController } from "@/common/leap/LeapHandController";
+import { SettingDef } from "@/common/sketchSettings";
+import { loadSettings } from "@/common/sketchSettingsStore";
 
 const LINE_SEGMENT_LENGTH = (window.screen.width > 1024) ? 11 : 22;
 
@@ -220,6 +222,12 @@ class LineStrip {
  * The color palette cycles between dark red and off-white over a 1000-frame period.
  */
 export default class Waves extends Sketch {
+    static id = "waves";
+    static settings = {
+        lineColor: { default: "#320c0c", category: "dev", label: "Line color", requiresRestart: true, type: "color" } satisfies SettingDef<string>,
+        backgroundColor: { default: "#ffffff", category: "dev", label: "Background color", requiresRestart: true, type: "color" } satisfies SettingDef<string>,
+    };
+
     private heightMap = new HeightMap();
     private lineStrips: LineStrip[] = [];
     /**
@@ -230,12 +238,14 @@ export default class Waves extends Sketch {
     private lineMaterial = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.03 });
 
     private leapHands!: LeapHandController;
+    /** Hand wireframe color, derived from the background color in init(). */
+    private _handColor = new THREE.Color();
 
     // Subtle per-frame fade toward background color to clear hand mesh smears
     private _fadeScene = new THREE.Scene();
     private _fadeCamera = new THREE.Camera();
     private _fadeMaterial = new THREE.MeshBasicMaterial({
-        color: 0xfcfcfc,
+        color: 0xffffff,
         transparent: true,
         opacity: 0.01,
         depthTest: false,
@@ -287,6 +297,16 @@ export default class Waves extends Sketch {
     public scene = new THREE.Scene();
 
     public init() {
+        const { lineColor, backgroundColor } = loadSettings("waves", Waves.settings);
+        this.lineMaterial.color.set(lineColor);
+        this._fadeMaterial.color.set(backgroundColor);
+
+        // Derive hand mesh color from background: lighten if dark, darken if bright.
+        const bgHsl = { h: 0, s: 0, l: 0 };
+        this._fadeMaterial.color.getHSL(bgHsl);
+        const handL = bgHsl.l > 0.85 ? bgHsl.l - 0.2 : bgHsl.l + 0.3;
+        this._handColor.setHSL(bgHsl.h, bgHsl.s * 0.5, Math.min(1, Math.max(0, handL)));
+
         this.audioGroup = createAudioGroup(this.audioContext, {
             heightMap: this.heightMap,
         });
@@ -315,7 +335,7 @@ export default class Waves extends Sketch {
             getProtocolVersionCallback: () => this.updateLeapProtocolVersionCallback,
             renderMode: { type: "overlay" },
             handMaterial: new THREE.MeshBasicMaterial({
-                color: new THREE.Color(210 / 255, 190 / 255, 165 / 255),
+                color: this._handColor,
                 wireframeLinewidth: 5,
                 wireframe: true,
             }),
@@ -371,13 +391,6 @@ export default class Waves extends Sketch {
             this.heightMap.cacheFrame();
             this.audioGroup.updateParameters();
 
-            // Cycle line color between dark red and off-white over a 1000-frame period
-            if (this.heightMap.frame % 1000 < 500) {
-                this.lineMaterial.color.setRGB(50 / 255, 12 / 255, 12 / 255);
-            } else {
-                this.lineMaterial.color.setRGB(252 / 255, 247 / 255, 243 / 255);
-            }
-
             const scale = map(Math.sin(this.heightMap.frame / 550), -1, 1, 1, 0.8);
             this.camera.scale.set(scale, scale, 1);
             this.lineStrips.forEach((lineStrip) => {
@@ -415,7 +428,7 @@ export default class Waves extends Sketch {
         camera.right = this.heightMap.width / 2;
         camera.updateProjectionMatrix();
 
-        this.renderer.setClearColor(0xfcfcfc, 1);
+        this.renderer.setClearColor(this._fadeMaterial.color, 1);
         this.renderer.clear();
 
         // draw black again

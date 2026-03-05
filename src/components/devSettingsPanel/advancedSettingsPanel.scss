@@ -45,6 +45,30 @@
         font-size: 11px;
     }
 
+    .advanced-settings-color {
+        position: relative;
+
+        .advanced-settings-color-swatch {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            cursor: pointer;
+            padding: 0;
+
+            &:hover {
+                border-color: rgba(255, 255, 255, 0.5);
+            }
+        }
+
+        .advanced-settings-color-popover {
+            position: absolute;
+            top: 36px;
+            right: 0;
+            z-index: 10;
+        }
+    }
+
     .advanced-settings-toggle-switch {
         position: relative;
         width: 36px;

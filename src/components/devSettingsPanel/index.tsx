@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { HexColorPicker } from "react-colorful";
 import { useSketchSettings } from "@/common/hooks/useSketchSettings";
 import { GLOBAL_SETTINGS_DEFS, loadGlobalSettings, saveGlobalSetting } from "@/common/globalSettings";
 
@@ -41,10 +42,12 @@ export function DevSettingsPanel() {
 }
 
 function SettingRow({ def, value, onChange }: {
-    def: { label: string; requiresRestart?: boolean; default: unknown; step?: number };
+    def: { label: string; requiresRestart?: boolean; default: unknown; step?: number; type?: "color" };
     value: unknown;
     onChange: (value: unknown) => void;
 }) {
+    const [colorOpen, setColorOpen] = useState(false);
+
     return (
         <label className="overlay-panel-row advanced-settings-row">
             <span className="overlay-panel-label">
@@ -61,6 +64,20 @@ function SettingRow({ def, value, onChange }: {
                 >
                     <span className="advanced-settings-toggle-knob" />
                 </button>
+            ) : def.type === "color" ? (
+                <div className="advanced-settings-color">
+                    <button
+                        type="button"
+                        className="advanced-settings-color-swatch"
+                        style={{ backgroundColor: value as string }}
+                        onClick={() => setColorOpen(!colorOpen)}
+                    />
+                    {colorOpen && (
+                        <div className="advanced-settings-color-popover">
+                            <HexColorPicker color={value as string} onChange={(c) => onChange(c)} />
+                        </div>
+                    )}
+                </div>
             ) : typeof def.default === "number" ? (
                 <input
                     type="number"

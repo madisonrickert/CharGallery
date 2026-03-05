@@ -9,6 +9,8 @@ export interface SettingDef<T = unknown> {
     requiresRestart?: boolean;
     /** Step increment for number inputs */
     step?: number;
+    /** Input type hint (e.g. "color" for a color picker) */
+    type?: "color";
 }
 
 export type SettingsDefs = Record<string, SettingDef>;
