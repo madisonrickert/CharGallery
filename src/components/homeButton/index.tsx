@@ -10,7 +10,7 @@ export function HomeButton() {
         <button
             className="overlay-button home-button"
             onClick={() => navigate("/")}
-            title="Back to home"
+            title="Back to home (Esc)"
         >
             <FaHome />
         </button>
