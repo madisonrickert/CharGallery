@@ -33,7 +33,7 @@ describe('SuperPoint', () => {
 
     it('writes initial position and color to geometry buffer', () => {
       const geometry = makeGeometry();
-      const sp = new SuperPoint(new THREE.Vector3(1, 2, 3), new THREE.Color(0.5, 0.6, 0.7), geometry, [makeBranch()]);
+      const _sp = new SuperPoint(new THREE.Vector3(1, 2, 3), new THREE.Color(0.5, 0.6, 0.7), geometry, [makeBranch()]);
       const posArr = (geometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
       const colArr = (geometry.attributes.color as THREE.BufferAttribute).array as Float32Array;
       expect(posArr[0]).toBe(1);

@@ -3,7 +3,7 @@ import { useLeapStatus } from './useLeapStatus';
 
 describe('useLeapStatus', () => {
     afterEach(() => {
-        delete (window as any).electronAPI;
+        delete (window as Record<string, unknown>).electronAPI;
     });
 
     it('returns default statuses when electronAPI is not available', () => {
@@ -13,7 +13,7 @@ describe('useLeapStatus', () => {
     });
 
     it('queries initial process status from electronAPI', async () => {
-        (window as any).electronAPI = {
+        window.electronAPI = {
             getLeapProcessStatus: vi.fn().mockResolvedValue('running'),
             onLeapProcessStatus: vi.fn().mockReturnValue(vi.fn()),
             startLeapProcess: vi.fn(),
@@ -33,7 +33,7 @@ describe('useLeapStatus', () => {
         let statusCallback: ((status: string) => void) | null = null;
         const cleanup = vi.fn();
 
-        (window as any).electronAPI = {
+        window.electronAPI = {
             getLeapProcessStatus: vi.fn().mockResolvedValue('running'),
             onLeapProcessStatus: vi.fn((cb: (status: string) => void) => {
                 statusCallback = cb;
@@ -83,7 +83,7 @@ describe('useLeapStatus', () => {
     });
 
     it('startProcess calls electronAPI and updates status', async () => {
-        (window as any).electronAPI = {
+        window.electronAPI = {
             getLeapProcessStatus: vi.fn().mockResolvedValue('exited'),
             onLeapProcessStatus: vi.fn().mockReturnValue(vi.fn()),
             startLeapProcess: vi.fn().mockResolvedValue('running'),
@@ -102,7 +102,7 @@ describe('useLeapStatus', () => {
     });
 
     it('stopProcess calls electronAPI and updates status', async () => {
-        (window as any).electronAPI = {
+        window.electronAPI = {
             getLeapProcessStatus: vi.fn().mockResolvedValue('running'),
             onLeapProcessStatus: vi.fn().mockReturnValue(vi.fn()),
             startLeapProcess: vi.fn(),
