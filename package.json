@@ -89,12 +89,20 @@
       "dist-electron/**/*"
     ],
     "mac": {
-      "target": "dmg",
+      "target": {
+        "target": "dmg",
+        "arch": "universal"
+      },
       "category": "public.app-category.entertainment",
+      "x64ArchFiles": "{Contents/Resources/app.asar.unpacked/node_modules/@parcel/watcher-darwin-x64,Contents/Resources/bin}/**",
       "extraResources": [
         {
           "from": "bin/Ultraleap-Tracking-WS-arm64",
           "to": "bin/Ultraleap-Tracking-WS-arm64"
+        },
+        {
+          "from": "bin/Ultraleap-Tracking-WS-x86",
+          "to": "bin/Ultraleap-Tracking-WS-x86"
         }
       ]
     },
