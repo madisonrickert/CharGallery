@@ -79,6 +79,8 @@ The web build deploys to GitHub Pages automatically on every push to `main`.
 | `Escape`     | Return to home / gallery        |
 | `v`          | Toggle volume on/off            |
 | `Shift+D`    | Toggle advanced settings panel  |
+| `F11`        | Toggle fullscreen (Electron)    |
+| `Alt+F4`     | Quit application (Electron/Windows) |
 
 ## Leap Motion
 
