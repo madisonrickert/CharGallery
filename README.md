@@ -1,5 +1,7 @@
 # CharGallery
 
+![CharGallery](screenshot.png)
+
 Interactive art gallery built with React, Three.js/WebGL, and Web Audio. Features generative visualizations that respond to mouse, touch, and Leap Motion hand tracking. Runs as a website or a self-contained Electron desktop app.
 
 ## Features
