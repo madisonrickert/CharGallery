@@ -18,6 +18,9 @@ class TestSketch extends BaseSketch {
     get _idleTimeoutSeconds() { return this.idleTimeoutSeconds; }
     set _idleTimeoutSeconds(v: number) { this.idleTimeoutSeconds = v; }
     doMarkInteraction(ts?: number) { this.markInteraction(ts); }
+    setMockLeapHands(mock: Partial<NonNullable<typeof this.leapHands>>) {
+        this.leapHands = mock as NonNullable<typeof this.leapHands>;
+    }
 }
 
 function createTestSketch(): TestSketch {
@@ -43,7 +46,7 @@ describe('Sketch.animate', () => {
 
     it('marks interaction when leap hands are active', () => {
         const sketch = createTestSketch();
-        sketch['leapHands'] = { activeHandCount: 2 } as any;
+        sketch.setMockLeapHands({ activeHandCount: 2 });
 
         // Set a long idle timeout so updateIdleState won't immediately re-idle
         sketch._idleTimeoutSeconds = 9999;
@@ -65,7 +68,7 @@ describe('Sketch.destroy', () => {
     it('disposes leapHands if present', () => {
         const sketch = createTestSketch();
         const dispose = vi.fn();
-        sketch['leapHands'] = { dispose } as any;
+        sketch.setMockLeapHands({ dispose });
 
         sketch.destroy();
         expect(dispose).toHaveBeenCalledTimes(1);
