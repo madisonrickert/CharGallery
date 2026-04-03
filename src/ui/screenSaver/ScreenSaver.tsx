@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import classnames from "classnames";
 
 import "./screenSaver.css";
@@ -11,13 +12,27 @@ export interface ScreenSaverProps {
 }
 
 export function ScreenSaver({ shouldShow }: ScreenSaverProps) {
+    // Keep the video mounted briefly after hiding so the CSS fade-out completes
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        if (shouldShow) {
+            setMounted(true);
+        } else {
+            const timer = setTimeout(() => setMounted(false), 600);
+            return () => clearTimeout(timer);
+        }
+    }, [shouldShow]);
+
     return (
         <div className={classnames("screen-saver", { visible: shouldShow })}>
-            <video autoPlay muted loop className="video">
-                <source src={screenSaverVideoMP4} type="video/mp4" />
-                <source src={screenSaverVideoWEBM} type="video/webm" />
-                Your browser does not support the video tag.
-            </video>
+            {mounted && (
+                <video autoPlay muted loop playsInline className="video">
+                    <source src={screenSaverVideoMP4} type="video/mp4" />
+                    <source src={screenSaverVideoWEBM} type="video/webm" />
+                    Your browser does not support the video tag.
+                </video>
+            )}
             <img src={statueSVG} alt="Statue" className="statue graphic" />
             <img src={handSVG} alt="Left Hand" className="hand graphic" />
             <img src={handSVG} alt="Right Hand" className="hand hand-right graphic" />
