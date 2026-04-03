@@ -62,6 +62,14 @@ npm run electron:build && npx electron-builder --win
 
 The Electron app auto-launches the Ultraleap WebSocket binary (if present in `bin/`) and enables audio autoplay without user gesture.
 
+## Installation
+
+Download the latest release from the [Releases](../../releases) page.
+
+**macOS:** The app is self-signed but not notarized, so Gatekeeper will show a warning on first launch. Right-click the app and choose **Open**, then click **Open** in the dialog. You only need to do this once. Alternatively, run `xattr -cr /Applications/CharGallery.app` from Terminal.
+
+**Windows:** SmartScreen may show "Windows protected your PC" since the exe is not signed. Click **More info**, then **Run anyway**.
+
 ## Releasing
 
 1. Bump `version` in `package.json` and commit

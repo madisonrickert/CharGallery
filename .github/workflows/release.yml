@@ -9,8 +9,21 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:run
+
   build:
+    needs: test
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -34,7 +47,11 @@ jobs:
         run: npm ci
 
       - name: Build and package
-        run: npm run electron:build && npx electron-builder ${{ matrix.platform_flag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MACOS_CERT_P12 || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MACOS_CERT_PASSWORD || '' }}
+        run: npm run electron:build && npx electron-builder ${{ matrix.platform_flag }} --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -42,6 +59,7 @@ jobs:
           name: release-${{ matrix.os }}
           path: |
             release/*.dmg
+            release/*.zip
             release/*.exe
 
   release:
