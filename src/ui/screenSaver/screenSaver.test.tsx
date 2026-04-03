@@ -9,22 +9,22 @@ beforeEach(() => {
 
 describe('ScreenSaver', () => {
   it('renders with visible class when shouldShow is true', () => {
-    const { container } = render(<ScreenSaver shouldShow={true} />);
+    const { container } = render(<ScreenSaver shouldShow={true} dismissMethod="mouse" />);
     expect(container.querySelector('.screen-saver')).toHaveClass('visible');
   });
 
   it('does not have visible class when shouldShow is false', () => {
-    const { container } = render(<ScreenSaver shouldShow={false} />);
+    const { container } = render(<ScreenSaver shouldShow={false} dismissMethod="mouse" />);
     expect(container.querySelector('.screen-saver')).not.toHaveClass('visible');
   });
 
   it('renders a video element', () => {
-    const { container } = render(<ScreenSaver shouldShow={false} />);
+    const { container } = render(<ScreenSaver shouldShow={false} dismissMethod="mouse" />);
     expect(container.querySelector('video')).toBeInTheDocument();
   });
 
   it('video does not have autoplay attribute', () => {
-    const { container } = render(<ScreenSaver shouldShow={false} />);
+    const { container } = render(<ScreenSaver shouldShow={false} dismissMethod="mouse" />);
     expect(container.querySelector('video')?.autoplay).toBe(false);
   });
 });

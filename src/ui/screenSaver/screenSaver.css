@@ -79,20 +79,6 @@
     }
 }
 
-.screen-saver .touch-only {
-    display: none;
-}
-
-@media (pointer: coarse) {
-    .screen-saver .desktop-only {
-        display: none;
-    }
-
-    .screen-saver .touch-only {
-        display: block;
-    }
-}
-
 .screen-saver .hand-point {
     top: 50%;
     left: 50%;

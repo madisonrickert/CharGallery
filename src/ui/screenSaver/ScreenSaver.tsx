@@ -8,11 +8,14 @@ import statueSVG from "./statue.svg";
 import handSVG from "./hand.svg";
 import handPointSVG from "./hand-point.svg";
 
+export type DismissMethod = "mouse" | "touch" | "motion";
+
 export interface ScreenSaverProps {
     shouldShow: boolean;
+    dismissMethod: DismissMethod;
 }
 
-export function ScreenSaver({ shouldShow }: ScreenSaverProps) {
+export function ScreenSaver({ shouldShow, dismissMethod }: ScreenSaverProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
 
     // Control video playback imperatively to avoid iOS Safari's fullscreen
@@ -36,10 +39,15 @@ export function ScreenSaver({ shouldShow }: ScreenSaverProps) {
                 <source src={screenSaverVideoWEBM} type="video/webm" />
                 Your browser does not support the video tag.
             </video>
-            <img src={statueSVG} alt="Statue" className="statue graphic desktop-only" />
-            <img src={handSVG} alt="Left Hand" className="hand graphic desktop-only" />
-            <img src={handSVG} alt="Right Hand" className="hand hand-right graphic desktop-only" />
-            <img src={handPointSVG} alt="Touch" className="hand-point graphic touch-only" />
+            {dismissMethod === "motion" ? (
+                <>
+                    <img src={statueSVG} alt="Statue" className="statue graphic" />
+                    <img src={handSVG} alt="Left Hand" className="hand graphic" />
+                    <img src={handSVG} alt="Right Hand" className="hand hand-right graphic" />
+                </>
+            ) : (
+                <img src={handPointSVG} alt="Touch" className="hand-point graphic" />
+            )}
         </div>
     );
 }

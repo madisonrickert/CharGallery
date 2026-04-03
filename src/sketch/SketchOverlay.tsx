@@ -2,11 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { FaCog } from "react-icons/fa";
 
 import { VolumeButton } from "@/ui/volumeButton/VolumeButton";
-import { ScreenSaver } from "@/ui/screenSaver/ScreenSaver";
+import { DismissMethod, ScreenSaver } from "@/ui/screenSaver/ScreenSaver";
 import { DevSettingsPanel } from "@/settings/DevSettingsPanel/DevSettingsPanel";
 import { LeapStatusIndicator } from "@/leap/LeapStatusIndicator/LeapStatusIndicator";
 import { HomeButton } from "@/ui/homeButton/HomeButton";
 import { useLeapStatus } from "@/leap/useLeapStatus";
+import { LeapConnectionStatus } from "@/leap/leapStatus";
+
+const isTouchDevice = matchMedia("(pointer: coarse)").matches;
+
+function getDismissMethod(connectionStatus: LeapConnectionStatus): DismissMethod {
+    if (isTouchDevice) return "touch";
+    if (connectionStatus !== "disconnected") return "motion";
+    return "mouse";
+}
 
 export interface SketchOverlayProps {
     volumeEnabled: boolean;
@@ -55,7 +64,7 @@ export function SketchOverlay({ volumeEnabled, onToggleVolume, shouldShowScreenS
 
     return (
         <>
-            <ScreenSaver shouldShow={shouldShowScreenSaver} />
+            <ScreenSaver shouldShow={shouldShowScreenSaver} dismissMethod={getDismissMethod(leapStatus.connectionStatus)} />
             <HomeButton />
             <VolumeButton volumeEnabled={volumeEnabled} onClick={onToggleVolume} />
             <div ref={devPanelRef}>
