@@ -1,5 +1,11 @@
 # CharGallery
 
+[![Release](https://img.shields.io/github/v/release/madisonrickert/CharGallery)](https://github.com/madisonrickert/CharGallery/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/madisonrickert/CharGallery/release.yml)](https://github.com/madisonrickert/CharGallery/actions)
+[![Deploy](https://img.shields.io/github/actions/workflow/status/madisonrickert/CharGallery/deploy-web.yml?label=deploy)](https://madisonrickert.github.io/CharGallery/)
+[![License](https://img.shields.io/github/license/madisonrickert/CharGallery)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Web-blue)]()
+
 ![CharGallery](screenshot.png)
 
 Interactive art gallery built with React, Three.js/WebGL, and Web Audio. Features generative visualizations that respond to mouse, touch, and Leap Motion hand tracking. Runs as a website or a self-contained Electron desktop app.
