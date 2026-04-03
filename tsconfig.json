@@ -8,17 +8,17 @@
         "sourceMap": true,
         "jsx": "react-jsx",
         "esModuleInterop": true,
+        "skipLibCheck": true,
         "typeRoots": [
             "./node_modules/@types",
             "./src/types"
         ],
-        "baseUrl": ".",
         "paths": {
-            "@/*": ["src/*"]
+            "@/*": ["./src/*"]
         }
     },
     "include": [
         "src",
         "electron"
-    ]
+    ],
 }

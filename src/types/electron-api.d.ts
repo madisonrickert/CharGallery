@@ -1,6 +1,6 @@
 import { LeapProcessStatus } from "@/leap/leapStatus";
 
-interface ElectronAPI {
+export interface ElectronAPI {
   getLeapProcessStatus: () => Promise<LeapProcessStatus>;
   startLeapProcess: () => Promise<LeapProcessStatus>;
   stopLeapProcess: () => Promise<LeapProcessStatus>;

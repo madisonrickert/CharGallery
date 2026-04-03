@@ -1,9 +1,23 @@
 import { renderHook, act } from '@testing-library/react';
 import { useLeapStatus } from './useLeapStatus';
+import { LeapProcessStatus } from './leapStatus';
+import { ElectronAPI } from '@/types/electron-api';
+
+function mockElectronAPI(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
+    return {
+        getLeapProcessStatus: vi.fn().mockResolvedValue('running'),
+        onLeapProcessStatus: vi.fn().mockReturnValue(vi.fn()),
+        startLeapProcess: vi.fn(),
+        stopLeapProcess: vi.fn(),
+        startPowerSaveBlocker: vi.fn().mockResolvedValue(undefined),
+        stopPowerSaveBlocker: vi.fn().mockResolvedValue(undefined),
+        ...overrides,
+    };
+}
 
 describe('useLeapStatus', () => {
     afterEach(() => {
-        delete (window as Record<string, unknown>).electronAPI;
+        delete (window as unknown as Record<string, unknown>).electronAPI;
     });
 
     it('returns default statuses when electronAPI is not available', () => {
@@ -13,12 +27,7 @@ describe('useLeapStatus', () => {
     });
 
     it('queries initial process status from electronAPI', async () => {
-        window.electronAPI = {
-            getLeapProcessStatus: vi.fn().mockResolvedValue('running'),
-            onLeapProcessStatus: vi.fn().mockReturnValue(vi.fn()),
-            startLeapProcess: vi.fn(),
-            stopLeapProcess: vi.fn(),
-        };
+        window.electronAPI = mockElectronAPI();
 
         const { result } = renderHook(() => useLeapStatus());
 
@@ -30,18 +39,15 @@ describe('useLeapStatus', () => {
     });
 
     it('subscribes to process status updates', async () => {
-        let statusCallback: ((status: string) => void) | null = null;
+        let statusCallback: ((status: LeapProcessStatus) => void) | null = null;
         const cleanup = vi.fn();
 
-        window.electronAPI = {
-            getLeapProcessStatus: vi.fn().mockResolvedValue('running'),
-            onLeapProcessStatus: vi.fn((cb: (status: string) => void) => {
+        window.electronAPI = mockElectronAPI({
+            onLeapProcessStatus: vi.fn((cb: (status: LeapProcessStatus) => void) => {
                 statusCallback = cb;
                 return cleanup;
             }),
-            startLeapProcess: vi.fn(),
-            stopLeapProcess: vi.fn(),
-        };
+        });
 
         const { result, unmount } = renderHook(() => useLeapStatus());
         await act(async () => {});
@@ -83,12 +89,10 @@ describe('useLeapStatus', () => {
     });
 
     it('startProcess calls electronAPI and updates status', async () => {
-        window.electronAPI = {
+        window.electronAPI = mockElectronAPI({
             getLeapProcessStatus: vi.fn().mockResolvedValue('exited'),
-            onLeapProcessStatus: vi.fn().mockReturnValue(vi.fn()),
             startLeapProcess: vi.fn().mockResolvedValue('running'),
-            stopLeapProcess: vi.fn(),
-        };
+        });
 
         const { result } = renderHook(() => useLeapStatus());
         await act(async () => {});
@@ -102,12 +106,10 @@ describe('useLeapStatus', () => {
     });
 
     it('stopProcess calls electronAPI and updates status', async () => {
-        window.electronAPI = {
+        window.electronAPI = mockElectronAPI({
             getLeapProcessStatus: vi.fn().mockResolvedValue('running'),
-            onLeapProcessStatus: vi.fn().mockReturnValue(vi.fn()),
-            startLeapProcess: vi.fn(),
             stopLeapProcess: vi.fn().mockResolvedValue('exited'),
-        };
+        });
 
         const { result } = renderHook(() => useLeapStatus());
         await act(async () => {});

@@ -368,7 +368,7 @@ export default class CymaticsSketch extends BaseSketch {
         this.composer.render();
 
         // Render bloomed hand meshes on top of the cymatics output
-        if (this.leapHands.activeHandCount > 0) {
+        if (this.leapHands && this.leapHands.activeHandCount > 0) {
             this.renderer.autoClear = false;
             this._handComposer.render();
             this.renderer.autoClear = true;

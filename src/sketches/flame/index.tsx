@@ -291,7 +291,7 @@ export default class FlameSketch extends BaseSketch {
         this.renderer.render(this.scene, this.camera);
 
         // Render hand meshes on top
-        this.leapHands.renderOverlay();
+        this.leapHands?.renderOverlay();
     }
 
     public resize(width: number, height: number) {

@@ -1,13 +1,16 @@
 import { disposeComposer } from './disposeComposer';
 import { EffectComposer } from 'three-stdlib';
 
+type MockPass = { dispose: ReturnType<typeof vi.fn> };
+
 function createMockComposer(passCount: number) {
-    const passes = Array.from({ length: passCount }, () => ({ dispose: vi.fn() }));
+    const passes: MockPass[] = Array.from({ length: passCount }, () => ({ dispose: vi.fn() }));
+    const mockPasses: MockPass[] = [...passes];
     return {
-        passes: [...passes],
-        removePass(pass: unknown) {
-            const idx = this.passes.indexOf(pass);
-            if (idx >= 0) this.passes.splice(idx, 1);
+        passes: mockPasses,
+        removePass(pass: MockPass) {
+            const idx = mockPasses.indexOf(pass);
+            if (idx >= 0) mockPasses.splice(idx, 1);
         },
         dispose: vi.fn(),
         _originalPasses: passes,
