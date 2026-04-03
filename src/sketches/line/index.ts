@@ -3,6 +3,7 @@ import { RenderPass, EffectComposer } from "three-stdlib";
 import { GravityShaderPass } from "./shaders/gravity";
 import { computeStats, createParticle, createParticlePoints, IParticle, ParticleSystem } from "@/particles";
 import { Attractor } from "@/particles/attractor";
+import { computeLeapAttractorPower, LeapAttractorPowerConfig } from "@/particles/leapAttractorPower";
 import { triangleWaveApprox } from "@/math";
 import { loadSettings } from "@/settings/store";
 import { SettingDef } from "@/settings/types";
@@ -12,8 +13,11 @@ import { createAudioGroup, LineSketchAudioGroup } from "./audio";
 import { starMaterial } from "@/materials/starMaterial";
 import { sampleParticlesFromHeatmap } from "./heatmapSampler";
 
-const LEAP_ATTRACTOR_POWER_ATTACK_SPEED = 0.005;
-const LEAP_ATTRACTOR_POWER_DECAY_SPEED = 0.5;
+const LEAP_POWER_CONFIG: LeapAttractorPowerConfig = {
+    attackSpeed: 0.005,
+    decaySpeed: 0.5,
+    grabThreshold: 0,
+};
 
 const PARTICLE_SYSTEM_PARAMS = {
     GRAVITY_CONSTANT: 280,
@@ -187,15 +191,9 @@ export default class LineSketch extends BaseSketch {
                     const attractor = this.getLeapAttractor(index);
                     attractor.x = canvasPosition.x;
                     attractor.y = canvasPosition.y;
-                    const position = hand.palmPosition;
-                    if (hand.grabStrength === 0) {
-                        attractor.power *= LEAP_ATTRACTOR_POWER_DECAY_SPEED;
-                    } else {
-                        const grabComponent = Math.pow(hand.grabStrength, 1.5);
-                        const depthModulator = Math.pow(5, (-position[2] + 350) / 160);
-                        const wantedPower = grabComponent * depthModulator;
-                        attractor.power = attractor.power * (1 - LEAP_ATTRACTOR_POWER_ATTACK_SPEED) + wantedPower * LEAP_ATTRACTOR_POWER_ATTACK_SPEED;
-                    }
+                    attractor.power = computeLeapAttractorPower(
+                        attractor.power, hand.grabStrength, hand.palmPosition[2], LEAP_POWER_CONFIG,
+                    );
                 });
                 for (let i = hands.length; i < this.leapAttractors.length; i++) {
                     this.leapAttractors[i].power = 0;

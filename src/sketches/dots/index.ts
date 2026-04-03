@@ -4,6 +4,7 @@ import { EffectComposer, RenderPass } from "three-stdlib";
 import { ExplodeShaderPass } from "./shaders/explode";
 import { computeStats, createParticle, createParticlePoints, IParticle, ParticleSystem, ParticleSystemParameters } from "@/particles";
 import { Attractor } from "@/particles";
+import { computeLeapAttractorPower, LeapAttractorPowerConfig } from "@/particles/leapAttractorPower";
 import { loadSettings } from "@/settings/store";
 import { SettingDef } from "@/settings/types";
 import { BaseSketch } from "@/sketch/BaseSketch";
@@ -24,9 +25,12 @@ const params: ParticleSystemParameters = {
 const ATTRACTOR_POWER_DECAY_SPEED = 0.9;
 const ATTRACTOR_POWER_DECAY_FLOOR = 2;
 
-const LEAP_ATTRACTOR_POWER_ATTACK_SPEED = 0.005;
-const LEAP_ATTRACTOR_POWER_DECAY_SPEED = 0.5;
-const LEAP_ATTRACTOR_POWER_THRESHOLD = 0.05;
+const LEAP_POWER_CONFIG: LeapAttractorPowerConfig = {
+    attackSpeed: 0.005,
+    decaySpeed: 0.5,
+    grabThreshold: 0.1,
+    powerFloor: 0.05,
+};
 
 export default class DotsSketch extends BaseSketch {
     static id = "dots";
@@ -137,18 +141,9 @@ export default class DotsSketch extends BaseSketch {
                     const attractor = this.getLeapAttractor(index);
                     attractor.x = canvasPosition.x;
                     attractor.y = canvasPosition.y;
-                    const position = hand.palmPosition;
-                    if (hand.grabStrength < 0.1) {
-                        attractor.power *= LEAP_ATTRACTOR_POWER_DECAY_SPEED;
-                        if (attractor.power < LEAP_ATTRACTOR_POWER_THRESHOLD) {
-                            attractor.power = 0;
-                        }
-                    } else {
-                        const grabComponent = Math.pow(hand.grabStrength, 1.5);
-                        const depthModulator = Math.pow(5, (-position[2] + 350) / 160);
-                        const wantedPower = grabComponent * depthModulator;
-                        attractor.power = attractor.power * (1 - LEAP_ATTRACTOR_POWER_ATTACK_SPEED) + wantedPower * LEAP_ATTRACTOR_POWER_ATTACK_SPEED;
-                    }
+                    attractor.power = computeLeapAttractorPower(
+                        attractor.power, hand.grabStrength, hand.palmPosition[2], LEAP_POWER_CONFIG,
+                    );
                     if (index === 0) {
                         this.mouseX = canvasPosition.x;
                         this.mouseY = canvasPosition.y;
@@ -167,7 +162,7 @@ export default class DotsSketch extends BaseSketch {
             nonzeroAttractors.push(this.attractor);
         }
         for (const leapAttractor of this.leapAttractors) {
-            if (leapAttractor.power >= LEAP_ATTRACTOR_POWER_THRESHOLD) {
+            if (leapAttractor.power >= LEAP_POWER_CONFIG.powerFloor!) {
                 nonzeroAttractors.push(leapAttractor);
             }
         }
@@ -234,7 +229,7 @@ export default class DotsSketch extends BaseSketch {
         if (this.attractor.power > ATTRACTOR_POWER_DECAY_FLOOR + 1e-2) {
             return true;
         }
-        return this.leapAttractors.some((attractor) => attractor.power >= LEAP_ATTRACTOR_POWER_THRESHOLD);
+        return this.leapAttractors.some((attractor) => attractor.power >= LEAP_POWER_CONFIG.powerFloor!);
     }
 
     protected isReadyToSleep(): boolean {
