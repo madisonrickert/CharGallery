@@ -51,7 +51,7 @@ export class AudioClip {
         if (autoplay) {
             const tryPlay = () => {
                 if (options.context.state === "running" && this.element.paused) {
-                    this.element.play().catch(() => {});
+                    this.element.play()?.catch(() => {});
                 }
             };
             tryPlay();

@@ -20,18 +20,22 @@ describe('AudioClip', () => {
       expect(audioEl).toBeInTheDocument();
     });
 
-    it('sets autoplay, loop, volume from options', () => {
+    it('sets loop, volume from options', () => {
       new AudioClip({ context: ctx, srcs: ['test.mp3'], autoplay: true, loop: true, volume: 0.5 });
       const audioEl = document.querySelector('audio')!;
-      expect(audioEl.autoplay).toBe(true);
       expect(audioEl.loop).toBe(true);
       expect(audioEl.volume).toBe(0.5);
+    });
+
+    it('does not set HTML autoplay attribute', () => {
+      new AudioClip({ context: ctx, srcs: ['test.mp3'], autoplay: true });
+      const audioEl = document.querySelector('audio')!;
+      expect(audioEl.autoplay).toBe(false);
     });
 
     it('uses defaults when options not specified', () => {
       new AudioClip({ context: ctx, srcs: ['test.mp3'] });
       const audioEl = document.querySelector('audio')!;
-      expect(audioEl.autoplay).toBe(false);
       expect(audioEl.loop).toBe(false);
       expect(audioEl.volume).toBe(1);
     });

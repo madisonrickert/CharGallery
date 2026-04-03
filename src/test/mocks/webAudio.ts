@@ -51,6 +51,8 @@ export function createMockAudioContext(): AudioContext {
     sampleRate: 44100,
     currentTime: 0,
     state: 'running',
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
     resume: vi.fn(),
     suspend: vi.fn(),
     close: vi.fn(),
