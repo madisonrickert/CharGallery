@@ -92,7 +92,7 @@ export class CymaticsAudio {
         const whiteNoise = createWhiteNoise(this.audio);
         this.tracker.trackSource(whiteNoise);
         this.whiteNoiseGain = audio.createGain();
-        this.whiteNoiseGain.gain.setValueAtTime(0.1, 0);
+        this.whiteNoiseGain.gain.setValueAtTime(0, 0);
         whiteNoise.connect(this.whiteNoiseGain);
 
         this.whiteNoiseFilter = audio.createBiquadFilter();
