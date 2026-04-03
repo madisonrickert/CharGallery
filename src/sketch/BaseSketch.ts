@@ -220,6 +220,7 @@ export interface SketchConstructor {
 
     id?: string;
     settings?: SettingsDefs;
+    preserveDrawingBuffer?: boolean;
 }
 
 export interface SketchAudioContext extends AudioContext {

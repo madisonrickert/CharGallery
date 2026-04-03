@@ -33,7 +33,7 @@ export function useSketchInstance(
 
         const renderer = new THREE.WebGLRenderer({
             alpha: true,
-            preserveDrawingBuffer: true,
+            preserveDrawingBuffer: sketchClass.preserveDrawingBuffer ?? false,
             antialias: true,
         });
         renderer.setSize(container.clientWidth, container.clientHeight);

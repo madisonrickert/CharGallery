@@ -222,6 +222,7 @@ class LineStrip {
  */
 export default class WavesSketch extends BaseSketch {
     static id = "waves";
+    static preserveDrawingBuffer = true;
     static settings = {
         lineColor: { default: "#e9e9e9", category: "dev", label: "Line color", requiresRestart: true, type: "color" } satisfies SettingDef<string>,
         backgroundColor: { default: "#578fa0", category: "dev", label: "Background color", requiresRestart: true, type: "color" } satisfies SettingDef<string>,
