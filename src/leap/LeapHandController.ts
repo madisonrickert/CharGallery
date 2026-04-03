@@ -89,6 +89,9 @@ export class LeapHandController {
     public dispose(): void {
         window.removeEventListener(GLOBAL_SETTINGS_DEFS.leapBackground.event, this._handleBackgroundChanged);
         this._cleanupConnectionEvents();
+        // Stop the leapjs internal RAF loop: setting this flag causes the next
+        // onAnimationFrame iteration to exit instead of re-registering itself.
+        this._controller.loopWhileDisconnected = false;
         this._controller
             .removeListener("frame", this._handleFrame)
             .disconnect();
