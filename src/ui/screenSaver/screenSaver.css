@@ -78,3 +78,36 @@
         transform: translate(-80%, -45%) scaleX(-1) rotate(5deg);
     }
 }
+
+.screen-saver .touch-only {
+    display: none;
+}
+
+@media (pointer: coarse) {
+    .screen-saver .desktop-only {
+        display: none;
+    }
+
+    .screen-saver .touch-only {
+        display: block;
+    }
+}
+
+.screen-saver .hand-point {
+    top: 50%;
+    left: 50%;
+    max-width: 180px;
+    height: auto;
+    animation: hand-point-pulse 3s ease-in-out infinite;
+}
+
+@keyframes hand-point-pulse {
+    0%, 100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.8;
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.08);
+        opacity: 1;
+    }
+}
