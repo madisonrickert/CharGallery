@@ -25,13 +25,28 @@ export function useVolume() {
         setUserVolume(volumeEnabled ? 1 : 0);
     }, [volumeEnabled, setUserVolume]);
 
-    // Pause audio when the browser tab is hidden, resume when visible
+    // Pause audio when the browser tab is hidden or phone is locked.
+    // visibilitychange covers tab switches; pagehide/pageshow and blur/focus
+    // improve reliability on iOS lock screen.
     useEffect(() => {
+        const mute = () => setUserVolume(0);
+        const restore = () => setUserVolume(volumeEnabled ? 1 : 0);
         const handleVisibilityChange = () => {
-            setUserVolume(document.hidden ? 0 : (volumeEnabled ? 1 : 0));
+            if (document.hidden) mute(); else restore();
         };
+
         document.addEventListener("visibilitychange", handleVisibilityChange);
-        return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+        window.addEventListener("pagehide", mute);
+        window.addEventListener("pageshow", restore);
+        window.addEventListener("blur", mute);
+        window.addEventListener("focus", restore);
+        return () => {
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
+            window.removeEventListener("pagehide", mute);
+            window.removeEventListener("pageshow", restore);
+            window.removeEventListener("blur", mute);
+            window.removeEventListener("focus", restore);
+        };
     }, [volumeEnabled, setUserVolume]);
 
     return { volumeEnabled, toggleVolume };
