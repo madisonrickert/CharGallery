@@ -1,11 +1,12 @@
 import { Route, Routes, useLocation, useNavigate } from "react-router";
-import { HomePage } from "./routes/homePage/HomePage";
-import { LicensesPage } from "./routes/licensesPage/LicensesPage";
+import { HomePage } from "@/routes/homePage/HomePage";
+import { LicensesPage } from "@/routes/licensesPage/LicensesPage";
 import { SketchView } from "@/sketch/SketchView";
 import { useHotkeys } from 'react-hotkeys-hook';
-import { useThrottledNavigate } from "@/hooks/useThrottledNavigate";
+import { useThrottledNavigate } from "@/navigation/useThrottledNavigate";
+import { useEdgeSwipeNavigation } from "@/navigation/useEdgeSwipeNavigation";
 
-import { LineSketch, FlameSketch, DotsSketch, CymaticsSketch, WavesSketch } from "./sketches";
+import { LineSketch, FlameSketch, DotsSketch, CymaticsSketch, WavesSketch } from "@/sketches";
 
 const SKETCH_PATHS = ['/line', '/flame', '/dots', '/cymatics', '/waves'];
 
@@ -30,6 +31,7 @@ export const AppRoutes = () => {
     useHotkeys('x', navigateNext);
     useHotkeys('left', navigatePrev);
     useHotkeys('right', navigateNext);
+    useEdgeSwipeNavigation(navigateNext, navigatePrev);
 
     useHotkeys('1', () => throttledNavigate(SKETCH_PATHS[0]));
     useHotkeys('2', () => throttledNavigate(SKETCH_PATHS[1]));
