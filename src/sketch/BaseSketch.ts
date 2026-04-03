@@ -74,7 +74,7 @@ export type UIEventReceiver = Partial<{ [E in UIEventName]: UIEventHandler<E> }>
  * {@link SketchRenderer}. Leap Motion input arrives via the `onFrame`
  * callback passed to {@link createLeapController}.
  */
-export abstract class Sketch {
+export abstract class BaseSketch {
     static id?: string;
 
     public events?: UIEventReceiver;
@@ -216,7 +216,7 @@ export abstract class Sketch {
 }
 
 export interface SketchConstructor {
-    new (renderer: THREE.WebGLRenderer, audioContext: SketchAudioContext): Sketch;
+    new (renderer: THREE.WebGLRenderer, audioContext: SketchAudioContext): BaseSketch;
 
     id?: string;
     settings?: SettingsDefs;

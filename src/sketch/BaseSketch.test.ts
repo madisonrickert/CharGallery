@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { Sketch, SketchAudioContext } from './Sketch';
+import { BaseSketch, SketchAudioContext } from './BaseSketch';
 
 /** Concrete test subclass that records calls to the step hook. */
-class TestSketch extends Sketch {
+class TestSketch extends BaseSketch {
     initCalled = false;
     stepCalls: number[] = [];
 

@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { useSketchSettingsManager } from './useSketchSettingsManager';
-import { SketchConstructor } from '@/sketch/Sketch';
+import { SketchConstructor } from '@/sketch/BaseSketch';
 
 const makeSketchClass = (id: string, settings = {}): SketchConstructor => {
     return { id, settings } as unknown as SketchConstructor;

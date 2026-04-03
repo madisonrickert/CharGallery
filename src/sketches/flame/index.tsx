@@ -10,7 +10,7 @@ import { BoxCountVisitor, VelocityTrackerVisitor } from "./updateVisitor";
 import { map } from "@/math";
 import { loadSettings, saveSetting } from "@/settings/store";
 import { SettingDef } from "@/settings/types";
-import { Sketch } from "@/sketch/Sketch";
+import { BaseSketch } from "@/sketch/BaseSketch";
 import { DEFAULT_NAME, FlameNameInput } from "./FlameNameInput";
 import { FlamePointsMaterial } from "./flamePointsMaterial";
 import { Chord } from "./types";
@@ -132,7 +132,7 @@ function sigmoid(x: number) {
     }
 }
 
-export default class FlameSketch extends Sketch {
+export default class FlameSketch extends BaseSketch {
     static id = "flame";
     static settings = {
         name: { default: "", category: "user", label: "Name" } satisfies SettingDef<string>,

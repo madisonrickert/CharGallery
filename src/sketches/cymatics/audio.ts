@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { throttle } from "radash";
 
 import { AudioClip, createWhiteNoise, AudioNodeTracker } from "@/audio";
-import { SketchAudioContext } from "@/sketch/Sketch";
+import { SketchAudioContext } from "@/sketch/BaseSketch";
 
 function makeAudioSrcs(fileName: string) {
     return [

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-import { Sketch, UIEventName } from "@/sketch/Sketch";
+import { BaseSketch, UIEventName } from "@/sketch/BaseSketch";
 import { useSketchLifecycle } from "@/sketch/useSketchLifecycle";
 import { useSketchAnimationLoop } from "@/sketch/useSketchAnimationLoop";
 import { useSketchResize } from "@/sketch/useSketchResize";
@@ -16,7 +16,7 @@ const EVENT_LISTENER_OPTIONS: Partial<Record<UIEventName, AddEventListenerOption
  * Wires the sketch's event handlers to its canvas element.
  * Touch events use `{ passive: false }` so sketches can call `preventDefault()`.
  */
-function useSketchUIEvents(sketch: Sketch) {
+function useSketchUIEvents(sketch: BaseSketch) {
     useEffect(() => {
         const canvas = sketch.renderer.domElement;
         canvas.setAttribute("tabindex", "1");
@@ -47,7 +47,7 @@ function useSketchUIEvents(sketch: Sketch) {
  * Drives a sketch's full lifecycle: init/destroy, animation loop, resize
  * handling, and DOM event wiring. Renders the sketch's optional React overlay.
  */
-export function SketchRenderer({ sketch }: { sketch: Sketch }) {
+export function SketchRenderer({ sketch }: { sketch: BaseSketch }) {
     useSketchUIEvents(sketch);
     useSketchLifecycle(sketch);
 

@@ -14,9 +14,9 @@ vi.mock('@/sketch/SketchView', () => ({
 vi.mock('./sketches', () => ({
   LineSketch: { id: 'line', name: 'LineSketch' },
   FlameSketch: { id: 'flame', name: 'FlameSketch' },
-  Dots: { id: 'dots', name: 'Dots' },
-  Cymatics: { id: 'cymatics', name: 'Cymatics' },
-  Waves: { id: 'waves', name: 'Waves' },
+  DotsSketch: { id: 'dots', name: 'DotsSketch' },
+  CymaticsSketch: { id: 'cymatics', name: 'CymaticsSketch' },
+  WavesSketch: { id: 'waves', name: 'WavesSketch' },
 }));
 
 const mockAudioCtx = {

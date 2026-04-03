@@ -1,4 +1,4 @@
-import { SketchAudioContext } from "@/sketch/Sketch";
+import { SketchAudioContext } from "@/sketch/BaseSketch";
 import { AudioClip, AudioNodeTracker, createWhiteNoise } from "@/audio";
 import { map } from "@/math";
 

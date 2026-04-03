@@ -6,7 +6,7 @@ import { Attractor } from "@/particles/attractor";
 import { triangleWaveApprox } from "@/math";
 import { loadSettings } from "@/settings/store";
 import { SettingDef } from "@/settings/types";
-import { Sketch } from "@/sketch/Sketch";
+import { BaseSketch } from "@/sketch/BaseSketch";
 import { createAudioGroup, LineSketchAudioGroup } from "./audio";
 import { starMaterial } from "@/materials/starMaterial";
 import { sampleParticlesFromHeatmap } from "./heatmapSampler";
@@ -27,7 +27,7 @@ const PARTICLE_SYSTEM_PARAMS = {
 const MOUSE_ATTRACTOR_POWER_DECAY_SPEED = 0.9;
 const MOUSE_ATTRACTOR_POWER_DECAY_FLOOR = 2;
 
-export default class LineSketch extends Sketch {
+export default class LineSketch extends BaseSketch {
     static id = "line";
     static settings = {
         particleDensity: { default: 10, category: "dev", label: "Particle density (per px)", requiresRestart: true } satisfies SettingDef<number>,

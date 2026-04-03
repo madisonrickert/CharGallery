@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { SketchConstructor } from "@/sketch/Sketch";
+import { SketchConstructor } from "@/sketch/BaseSketch";
 import { loadSettings, saveSettings } from "@/settings/store";
 
 /**

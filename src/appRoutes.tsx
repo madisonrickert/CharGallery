@@ -5,7 +5,7 @@ import { SketchView } from "@/sketch/SketchView";
 import { useHotkeys } from 'react-hotkeys-hook';
 import { useThrottledNavigate } from "@/hooks/useThrottledNavigate";
 
-import { LineSketch, FlameSketch, Dots, Cymatics, Waves } from "./sketches";
+import { LineSketch, FlameSketch, DotsSketch, CymaticsSketch, WavesSketch } from "./sketches";
 
 const SKETCH_PATHS = ['/line', '/flame', '/dots', '/cymatics', '/waves'];
 
@@ -47,9 +47,9 @@ export const AppRoutes = () => {
         <Routes>
             <Route path="/line" element={<SketchView key="line" sketchClass={LineSketch} />} />
             <Route path="/flame" element={<SketchView key="flame" sketchClass={FlameSketch} />} />
-            <Route path="/dots" element={<SketchView key="dots" sketchClass={Dots} />} />
-            <Route path="/cymatics" element={<SketchView key="cymatics" sketchClass={Cymatics} />} />
-            <Route path="/waves" element={<SketchView key="waves" sketchClass={Waves} />} />
+            <Route path="/dots" element={<SketchView key="dots" sketchClass={DotsSketch} />} />
+            <Route path="/cymatics" element={<SketchView key="cymatics" sketchClass={CymaticsSketch} />} />
+            <Route path="/waves" element={<SketchView key="waves" sketchClass={WavesSketch} />} />
             <Route path="/licenses" element={<LicensesPage />} />
             <Route path="/" element={<HomePage />} />
         </Routes>

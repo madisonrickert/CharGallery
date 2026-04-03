@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react';
 import { useSketchLifecycle } from './useSketchLifecycle';
-import { Sketch } from '@/sketch/Sketch';
+import { BaseBaseSketch } from '@/sketch/BaseSketch';
 
 describe('useSketchLifecycle', () => {
   const makeMockSketch = () => ({
@@ -9,7 +9,7 @@ describe('useSketchLifecycle', () => {
     animate: vi.fn(),
     renderer: {} as never,
     audioContext: {} as never,
-  }) as unknown as Sketch;
+  }) as unknown as BaseSketch;
 
   it('calls sketch.init() on mount', () => {
     const sketch = makeMockSketch();

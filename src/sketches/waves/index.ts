@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { lerp, map } from "@/math";
-import { Sketch } from "@/sketch/Sketch";
+import { BaseSketch } from "@/sketch/BaseSketch";
 import { createAudioGroup, WavesSketchAudioGroup } from "./audio";
 import { SettingDef } from "@/settings/types";
 import { loadSettings } from "@/settings/store";
@@ -220,7 +220,7 @@ class LineStrip {
  * Holding down (mouse/touch) or squeezing with Leap scales animation speed (1–5×) and line opacity.
  * The color palette cycles between dark red and off-white over a 1000-frame period.
  */
-export default class Waves extends Sketch {
+export default class WavesSketch extends BaseSketch {
     static id = "waves";
     static settings = {
         lineColor: { default: "#e9e9e9", category: "dev", label: "Line color", requiresRestart: true, type: "color" } satisfies SettingDef<string>,
@@ -295,7 +295,7 @@ export default class Waves extends Sketch {
     public scene = new THREE.Scene();
 
     public init() {
-        const { lineColor, backgroundColor } = loadSettings("waves", Waves.settings);
+        const { lineColor, backgroundColor } = loadSettings("waves", WavesSketch.settings);
         this.lineMaterial.color.set(lineColor);
         this._fadeMaterial.color.set(backgroundColor);
 

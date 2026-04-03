@@ -3,7 +3,7 @@ import { MathUtils } from "three";
 import { EffectComposer, ShaderPass, RenderPass, UnrealBloomPass } from "three-stdlib";
 
 import GPUComputationRenderer, { GPUComputationRendererVariable } from "./gpuComputationRenderer";
-import { Sketch } from "@/sketch/Sketch";
+import { BaseSketch } from "@/sketch/BaseSketch";
 import { SettingDef } from "@/settings/types";
 import { loadSettings } from "@/settings/store";
 import { CymaticsAudio } from "./audio";
@@ -34,7 +34,7 @@ const IDLE_TIMEOUT_SECONDS = 10;
 
 const INTERACTION_CENTER_LERP_FACTOR = 0.01;
 
-export default class Cymatics extends Sketch {
+export default class CymaticsSketch extends BaseSketch {
     static id = "cymatics";
 
     static settings = {
@@ -160,7 +160,7 @@ export default class Cymatics extends Sketch {
         this.renderer.setClearColor(0xfcfcfc);
         this.renderer.clear();
 
-        const settings = loadSettings("cymatics", Cymatics.settings);
+        const settings = loadSettings("cymatics", CymaticsSketch.settings);
         this.verticalRes = Math.max(1, Math.min(1080, Math.round(settings.verticalResolution)));
         this.numIterations = Math.max(1, Math.min(120, Math.round(settings.iterations)));
         const screenAR = this.canvas.width / this.canvas.height;

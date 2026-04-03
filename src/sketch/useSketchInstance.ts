@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
-import { Sketch, SketchConstructor, SketchAudioContext } from "@/sketch/Sketch";
+import { BaseSketch, SketchConstructor, SketchAudioContext } from "@/sketch/BaseSketch";
 import { LeapConnectionStatus } from "@/leap/leapStatus";
 
 export interface SketchInstanceCallbacks {
@@ -22,7 +22,7 @@ export function useSketchInstance(
     restartKey: string,
     callbacks: SketchInstanceCallbacks,
 ) {
-    const [sketch, setSketch] = useState<Sketch | null>(null);
+    const [sketch, setSketch] = useState<BaseSketch | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
 
     const { setShouldShowScreenSaver, setConnectionStatus, setProtocolVersion } = callbacks;

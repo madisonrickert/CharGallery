@@ -1,10 +1,10 @@
 import { useEffect } from "react";
-import { Sketch } from "@/sketch/Sketch";
+import { BaseBaseSketch } from "@/sketch/BaseSketch";
 
 /**
  * Runs init/cleanup for the sketch.
  */
-export function useSketchLifecycle(sketch: Sketch) {
+export function useSketchLifecycle(sketch: BaseSketch) {
   useEffect(() => {
     sketch.init();
 

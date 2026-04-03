@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import classnames from "classnames";
 
-import { SketchConstructor } from "@/sketch/Sketch";
+import { SketchConstructor } from "@/sketch/BaseSketch";
 import { useAudioContext } from "@/audio/useAudioContext";
 import { useVolume } from "@/audio/useVolume";
 import { useSketchSettingsManager } from "@/settings/useSketchSettingsManager";

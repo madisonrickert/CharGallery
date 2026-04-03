@@ -6,7 +6,7 @@ import { computeStats, createParticle, createParticlePoints, IParticle, Particle
 import { Attractor } from "@/particles";
 import { loadSettings } from "@/settings/store";
 import { SettingDef } from "@/settings/types";
-import { Sketch } from "@/sketch/Sketch";
+import { BaseSketch } from "@/sketch/BaseSketch";
 import { createAudioGroup, DotSketchAudioGroup } from "./audio";
 import { starMaterial } from "@/materials/starMaterial";
 
@@ -27,7 +27,7 @@ const LEAP_ATTRACTOR_POWER_ATTACK_SPEED = 0.005;
 const LEAP_ATTRACTOR_POWER_DECAY_SPEED = 0.5;
 const LEAP_ATTRACTOR_POWER_THRESHOLD = 0.05;
 
-export default class Dots extends Sketch {
+export default class DotsSketch extends BaseSketch {
     static id = "dots";
     static settings = {
         dotSpacing: { default: 20, category: "dev", label: "Dot spacing (px)", requiresRestart: true } satisfies SettingDef<number>,
@@ -109,7 +109,7 @@ export default class Dots extends Sketch {
 
         const particles: IParticle[] = [];
         const EXTENT = 10;
-        const settings = loadSettings("dots", Dots.settings);
+        const settings = loadSettings("dots", DotsSketch.settings);
         const dotSpacing = settings.dotSpacing;
         for (let x = -EXTENT * dotSpacing; x < this.canvas.width + EXTENT * dotSpacing; x += dotSpacing) {
             for (let y = -EXTENT * dotSpacing; y < this.canvas.height + EXTENT * dotSpacing; y += dotSpacing) {
