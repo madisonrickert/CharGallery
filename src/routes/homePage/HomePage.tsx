@@ -36,10 +36,10 @@ export function HomePage() {
         <div className="homepage">
             <main className="content">
                 <section className="content-section work work-grid" id="work">
-                    {renderHighlight("Cymatics", cymaticsImg)}
                     {renderHighlight("Gravity", lineImg)}
                     {renderHighlight("You-niverse", flameImg)}
                     {renderHighlight("Fabric", dotsImg)}
+                    {renderHighlight("Cymatics", cymaticsImg)}
                     {renderHighlight("Waves", wavesImg)}
                     <div className="work-grid-item credits-block">
                         <div className="credits-content">
