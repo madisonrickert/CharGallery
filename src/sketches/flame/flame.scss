@@ -12,6 +12,7 @@
 
     @media (pointer: coarse) {
         // Fit between home button (left) and settings+volume buttons (right)
+        top: 16px;
         width: auto;
         min-width: 0;
         max-width: none;
