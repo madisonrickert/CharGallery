@@ -9,7 +9,6 @@ import { SettingDef } from "@/settings/types";
 import { Sketch } from "@/sketch/Sketch";
 import { createAudioGroup, DotSketchAudioGroup } from "./audio";
 import { starMaterial } from "@/materials/starMaterial";
-import { LeapHandController } from "@/leap/LeapHandController";
 
 const params: ParticleSystemParameters = {
     timeStep: 0.016 * 3,
@@ -38,8 +37,6 @@ export default class Dots extends Sketch {
     private leapAttractors: Attractor[] = [];
     private mouseX = 0;
     private mouseY = 0;
-    private leapHands!: LeapHandController;
-
     public events = {
         touchstart: (event: TouchEvent) => {
             // prevent emulated mouse events from occuring
@@ -132,11 +129,7 @@ export default class Dots extends Sketch {
         this.composer.addPass(this.shader);
 
         // Leap Motion setup
-        this.leapHands = new LeapHandController({
-            canvas: this.canvas,
-            renderer: this.renderer,
-            getConnectionCallback: () => this.updateLeapConnectionCallback,
-            getProtocolVersionCallback: () => this.updateLeapProtocolVersionCallback,
+        this.leapHands = this.createLeapController({
             renderMode: { type: "in-scene", scene: this.scene },
             onFrame: (hands) => {
                 hands.forEach(({ hand, index, canvasPosition }) => {
@@ -167,44 +160,33 @@ export default class Dots extends Sketch {
         });
     }
 
-    public animate(_millisElapsed: number) {
-        const currentTimeMs = performance.now();
-
-        // Check for Leap Motion interaction
-        if (this.leapHands.activeHandCount > 0) {
-            this.markInteraction(currentTimeMs);
+    protected step(): void {
+        const nonzeroAttractors: Attractor[] = [];
+        if (this.attractor.power > 0) {
+            nonzeroAttractors.push(this.attractor);
         }
-
-        if (!this.isIdle) {
-            const nonzeroAttractors: Attractor[] = [];
-            if (this.attractor.power > 0) {
-                nonzeroAttractors.push(this.attractor);
-            }
-            for (const leapAttractor of this.leapAttractors) {
-                if (leapAttractor.power >= LEAP_ATTRACTOR_POWER_THRESHOLD) {
-                    nonzeroAttractors.push(leapAttractor);
-                }
-            }
-            this.ps.stepParticles(nonzeroAttractors, this.pointCloud);
-
-            const { flatRatio, normalizedVarianceLength, groupedUpness, averageVel } = computeStats(this.ps);
-            this.audioGroup.lfo.frequency.cancelScheduledValues(this.audioContext.currentTime);
-            this.audioGroup.lfo.frequency.setTargetAtTime(flatRatio, this.audioContext.currentTime, 0.016);
-            this.audioGroup.setFrequency(120 / normalizedVarianceLength * averageVel / 100 );
-            this.audioGroup.setVolume(Math.max(groupedUpness - 0.05, 0));
-
-            this.shader.uniforms.iMouse.value = new THREE.Vector2(this.mouseX / this.canvas.width, (this.canvas.height - this.mouseY) / this.canvas.height);
-
-            this.composer.render();
-
-            if (this.attractor.power > 0) {
-                this.attractor.power =
-                    ATTRACTOR_POWER_DECAY_FLOOR +
-                    (this.attractor.power - ATTRACTOR_POWER_DECAY_FLOOR) * ATTRACTOR_POWER_DECAY_SPEED;
+        for (const leapAttractor of this.leapAttractors) {
+            if (leapAttractor.power >= LEAP_ATTRACTOR_POWER_THRESHOLD) {
+                nonzeroAttractors.push(leapAttractor);
             }
         }
+        this.ps.stepParticles(nonzeroAttractors, this.pointCloud);
 
-        this.updateIdleState(currentTimeMs);
+        const { flatRatio, normalizedVarianceLength, groupedUpness, averageVel } = computeStats(this.ps);
+        this.audioGroup.lfo.frequency.cancelScheduledValues(this.audioContext.currentTime);
+        this.audioGroup.lfo.frequency.setTargetAtTime(flatRatio, this.audioContext.currentTime, 0.016);
+        this.audioGroup.setFrequency(120 / normalizedVarianceLength * averageVel / 100 );
+        this.audioGroup.setVolume(Math.max(groupedUpness - 0.05, 0));
+
+        this.shader.uniforms.iMouse.value = new THREE.Vector2(this.mouseX / this.canvas.width, (this.canvas.height - this.mouseY) / this.canvas.height);
+
+        this.composer.render();
+
+        if (this.attractor.power > 0) {
+            this.attractor.power =
+                ATTRACTOR_POWER_DECAY_FLOOR +
+                (this.attractor.power - ATTRACTOR_POWER_DECAY_FLOOR) * ATTRACTOR_POWER_DECAY_SPEED;
+        }
     }
 
     public resize(width: number, height: number) {
@@ -218,13 +200,8 @@ export default class Dots extends Sketch {
     }
 
     public destroy() {
-        // Clean up audio resources
+        super.destroy();
         this.audioGroup.dispose();
-
-        // Clean up Leap Motion controller
-        this.leapHands.dispose();
-
-        // Clean up Three.js resources
         this.pointCloud.geometry.dispose();
         this.scene.remove(this.pointCloud);
     }

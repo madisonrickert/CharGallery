@@ -2,7 +2,6 @@ import * as THREE from "three";
 import { lerp, map } from "@/math";
 import { Sketch } from "@/sketch/Sketch";
 import { createAudioGroup, WavesSketchAudioGroup } from "./audio";
-import { LeapHandController } from "@/leap/LeapHandController";
 import { SettingDef } from "@/settings/types";
 import { loadSettings } from "@/settings/store";
 
@@ -237,7 +236,6 @@ export default class Waves extends Sketch {
     private speedFactor = 0;
     private lineMaterial = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.03 });
 
-    private leapHands!: LeapHandController;
     /** Hand wireframe color, derived from the background color in init(). */
     private _handColor = new THREE.Color();
 
@@ -329,11 +327,7 @@ export default class Waves extends Sketch {
         this.resize(this.renderer.domElement.width, this.renderer.domElement.height);
 
         // Leap Motion setup
-        this.leapHands = new LeapHandController({
-            canvas: this.canvas,
-            renderer: this.renderer,
-            getConnectionCallback: () => this.updateLeapConnectionCallback,
-            getProtocolVersionCallback: () => this.updateLeapProtocolVersionCallback,
+        this.leapHands = this.createLeapController({
             renderMode: { type: "overlay" },
             handMaterial: new THREE.MeshBasicMaterial({
                 color: this._handColor,
@@ -374,44 +368,33 @@ export default class Waves extends Sketch {
         });
     }
 
-    public animate() {
-        const currentTimeMs = performance.now();
+    protected step(): void {
+        // Interpolate animation speed (1–5) and line opacity (0.03–0.23) based on squeeze intensity
+        const targetOpacity = lerp(0.03, 0.23, this.speedFactor);
+        const opacityChangeFactor = 0.1;
+        this.lineMaterial.opacity = lerp(this.lineMaterial.opacity, targetOpacity, opacityChangeFactor);
+        this.heightMap.frame += lerp(1, 5, this.speedFactor);
 
-        // Check for Leap Motion interaction
-        if (this.leapHands.activeHandCount > 0) {
-            this.markInteraction(currentTimeMs);
+        this.heightMap.cacheFrame();
+        this.audioGroup.updateParameters();
+
+        const scale = map(Math.sin(this.heightMap.frame / 550), -1, 1, 1, 0.8);
+        this.camera.scale.set(scale, scale, 1);
+        this.lineStrips.forEach((lineStrip) => {
+            lineStrip.update();
+        });
+        // Fade buffer toward background to gradually clear hand mesh smears
+        this.renderer.autoClear = false;
+        this.renderer.render(this._fadeScene, this._fadeCamera);
+        this.renderer.autoClear = true;
+        this.renderer.render(this.scene, this.camera);
+
+        // Render hand meshes on top
+        if (this.leapHands && this.leapHands.activeHandCount > 0) {
+            this.renderer.autoClearColor = true;
+            this.leapHands.renderOverlay();
+            this.renderer.autoClearColor = false;
         }
-
-        if (!this.isIdle) {
-            // Interpolate animation speed (1–5) and line opacity (0.03–0.23) based on squeeze intensity
-            const targetOpacity = lerp(0.03, 0.23, this.speedFactor);
-            const opacityChangeFactor = 0.1;
-            this.lineMaterial.opacity = lerp(this.lineMaterial.opacity, targetOpacity, opacityChangeFactor);
-            this.heightMap.frame += lerp(1, 5, this.speedFactor);
-
-            this.heightMap.cacheFrame();
-            this.audioGroup.updateParameters();
-
-            const scale = map(Math.sin(this.heightMap.frame / 550), -1, 1, 1, 0.8);
-            this.camera.scale.set(scale, scale, 1);
-            this.lineStrips.forEach((lineStrip) => {
-                lineStrip.update();
-            });
-            // Fade buffer toward background to gradually clear hand mesh smears
-            this.renderer.autoClear = false;
-            this.renderer.render(this._fadeScene, this._fadeCamera);
-            this.renderer.autoClear = true;
-            this.renderer.render(this.scene, this.camera);
-
-            // Render hand meshes on top
-            if (this.leapHands.activeHandCount > 0) {
-                this.renderer.autoClearColor = true;
-                this.leapHands.renderOverlay();
-                this.renderer.autoClearColor = false;
-            }
-        }
-
-        this.updateIdleState(currentTimeMs);
     }
 
     public resize(width: number, height: number) {
@@ -473,13 +456,9 @@ export default class Waves extends Sketch {
     }
 
     public destroy() {
-        // Clean up audio resources (also removes the <audio> DOM element)
+        super.destroy();
         this.audioGroup.dispose();
 
-        // Clean up Leap Motion controller
-        this.leapHands.dispose();
-
-        // Clean up Three.js resources
         this.lineStrips.forEach((lineStrip) => {
             this.scene.remove(lineStrip.object);
             // Dispose geometry for each line in the strip

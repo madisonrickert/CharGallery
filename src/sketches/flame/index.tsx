@@ -14,7 +14,6 @@ import { Sketch } from "@/sketch/Sketch";
 import { DEFAULT_NAME, FlameNameInput } from "./FlameNameInput";
 import { FlamePointsMaterial } from "./flamePointsMaterial";
 import { Chord } from "./types";
-import { LeapHandController } from "@/leap/LeapHandController";
 
 import "./flame.scss";
 
@@ -176,9 +175,6 @@ export default class FlameSketch extends Sketch {
     // Mouse
     private mousePosition = new THREE.Vector2(0, 0);
 
-    // Leap Motion
-    private leapHands!: LeapHandController;
-
     // Grab-and-fling state
     private _grabbingHandCount = 0;
     private _lastGrabX = 0;
@@ -231,11 +227,7 @@ export default class FlameSketch extends Sketch {
         this.updateName(this.savedName || DEFAULT_NAME, !this.savedName);
 
         // Leap Motion setup
-        this.leapHands = new LeapHandController({
-            canvas: this.canvas,
-            renderer: this.renderer,
-            getConnectionCallback: () => this.updateLeapConnectionCallback,
-            getProtocolVersionCallback: () => this.updateLeapProtocolVersionCallback,
+        this.leapHands = this.createLeapController({
             renderMode: { type: "overlay" },
             onFrame: (hands) => {
                 // Only grabbing hands drive the sketch
@@ -284,22 +276,7 @@ export default class FlameSketch extends Sketch {
         });
     }
 
-    public animate(_millisElapsed: number) {
-        const currentTimeMs = performance.now();
-
-        // Check for Leap Motion interaction
-        if (this.leapHands.activeHandCount > 0) {
-            this.markInteraction(currentTimeMs);
-        }
-
-        if (!this.isIdle) {
-            this.animateSimulation();
-        }
-
-        this.updateIdleState(currentTimeMs);
-    }
-
-    private animateSimulation() {
+    protected step() {
         if (this.quality === "high") {
             this.animateSuperPoint();
         }
@@ -335,14 +312,12 @@ export default class FlameSketch extends Sketch {
     }
 
     public destroy() {
+        super.destroy();
         this.audioTracker.dispose();
         this.controls.dispose();
         this.geometry.dispose();
         this.material.dispose();
         this.scene.clear();
-
-        // Clean up Leap Motion controller
-        this.leapHands.dispose();
     }
 
     private animateSuperPoint() {

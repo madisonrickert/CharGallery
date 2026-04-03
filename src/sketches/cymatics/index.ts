@@ -8,8 +8,6 @@ import { SettingDef } from "@/settings/types";
 import { loadSettings } from "@/settings/store";
 import { CymaticsAudio } from "./audio";
 import { RenderCymaticsShader } from "./renderCymaticsShader";
-import { LeapHandController } from "@/leap/LeapHandController";
-
 import COMPUTE_CELL_STATE from "./computeCellState.frag";
 
 /** Compute a sane default vertical resolution based on screen size. */
@@ -62,7 +60,6 @@ export default class Cymatics extends Sketch {
 
     public slowDownAmount = 0;
 
-    private leapHands!: LeapHandController;
     private _handComposer!: EffectComposer;
 
     protected idleTimeoutSeconds = IDLE_TIMEOUT_SECONDS;
@@ -199,11 +196,7 @@ export default class Cymatics extends Sketch {
         this.audio = new CymaticsAudio(this.audioContext);
 
         // Leap Motion setup
-        this.leapHands = new LeapHandController({
-            canvas: this.canvas,
-            renderer: this.renderer,
-            getConnectionCallback: () => this.updateLeapConnectionCallback,
-            getProtocolVersionCallback: () => this.updateLeapProtocolVersionCallback,
+        this.leapHands = this.createLeapController({
             renderMode: { type: "overlay" },
             handMaterial: new THREE.MeshBasicMaterial({
                 color: new THREE.Color(235 / 255, 89 / 255, 56 / 255),
@@ -293,25 +286,7 @@ export default class Cymatics extends Sketch {
         })));
     }
 
-    public animate(_dt: number) {
-        const currentTimeMs = performance.now();
-
-        // Check for Leap Motion interaction and reset screensaver timer
-        if (this.leapHands.activeHandCount > 0) {
-            this.markInteraction(currentTimeMs);
-        }
-
-        if (!this.isIdle) {
-            this.animateSimulation();
-        }
-
-        this.updateIdleState(currentTimeMs);
-    }
-
-    /**
-     * Runs each frame that the simulation is active
-     */
-    private animateSimulation(): void {
+    protected step(): void {
         const c1Held = this.centerHeldByHandId[0] !== null;
         const c2Held = this.centerHeldByHandId[1] !== null;
         const interacting = this.mousePressed || c1Held || c2Held;
@@ -441,13 +416,9 @@ export default class Cymatics extends Sketch {
     }
 
     destroy(): void {
-        // Clean up audio resources
+        super.destroy();
         this.audio.dispose();
 
-        // Clean up Leap Motion controller
-        this.leapHands.dispose();
-
-        // Clean up hand mesh resources
         this._handComposer.dispose();
 
         // Clean up Three.js resources

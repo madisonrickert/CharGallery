@@ -9,7 +9,6 @@ import { SettingDef } from "@/settings/types";
 import { Sketch } from "@/sketch/Sketch";
 import { createAudioGroup, LineSketchAudioGroup } from "./audio";
 import { starMaterial } from "@/materials/starMaterial";
-import { LeapHandController } from "@/leap/LeapHandController";
 import { sampleParticlesFromHeatmap } from "./heatmapSampler";
 
 const LEAP_ATTRACTOR_POWER_ATTACK_SPEED = 0.005;
@@ -107,7 +106,6 @@ export default class LineSketch extends Sketch {
     public gravityFocalY = 0;
     public scene = new THREE.Scene();
     public pointCloud!: THREE.Points;
-    private leapHands!: LeapHandController;
     public composer!: EffectComposer;
     public ps!: ParticleSystem;
 
@@ -178,11 +176,7 @@ export default class LineSketch extends Sketch {
         this.composer.addPass(this.gravityShaderPass);
 
         // Set up Leap Motion controller
-        this.leapHands = new LeapHandController({
-            canvas: this.canvas,
-            renderer: this.renderer,
-            getConnectionCallback: () => this.updateLeapConnectionCallback,
-            getProtocolVersionCallback: () => this.updateLeapProtocolVersionCallback,
+        this.leapHands = this.createLeapController({
             renderMode: { type: "in-scene", scene: this.scene },
             onFrame: (hands) => {
                 hands.forEach(({ hand, index, canvasPosition }) => {
@@ -209,35 +203,21 @@ export default class LineSketch extends Sketch {
         });
     }
 
-    public animate(_millisElapsed: number) {
-        const currentTimeMs = performance.now();
-
-        // Animate all attractors
-        this.mouseAttractor.animate(_millisElapsed);
+    public animate(millisElapsed: number) {
+        // Attractor ring animation and mouse power decay must run even when idle
+        this.mouseAttractor.animate(millisElapsed);
         for (const attractor of this.leapAttractors) {
-            attractor.animate(_millisElapsed);
+            attractor.animate(millisElapsed);
         }
-
-        // Check for Leap Motion interaction and reset interaction timer
-        if (this.leapHands.activeHandCount > 0) {
-            this.markInteraction(currentTimeMs);
-        }
-
-        if (!this.isIdle) {
-            this.animateSimulation(currentTimeMs);
-        }
-
-        // --- Update attractor power ---
         if (this.mouseAttractor.power > 0) {
             this.mouseAttractor.power =
                 MOUSE_ATTRACTOR_POWER_DECAY_FLOOR +
                 (this.mouseAttractor.power - MOUSE_ATTRACTOR_POWER_DECAY_FLOOR) * MOUSE_ATTRACTOR_POWER_DECAY_SPEED;
         }
-
-        this.updateIdleState(currentTimeMs);
+        super.animate(millisElapsed);
     }
 
-    private animateSimulation(now: number = performance.now()): void {
+    protected step(now: number = performance.now()): void {
         // Guard: particles may not be initialized yet if spawn template is loading
         if (!this.ps) return;
 
@@ -294,11 +274,8 @@ export default class LineSketch extends Sketch {
     }
 
     public destroy(): void {
-        // Clean up audio resources
+        super.destroy();
         this.audioGroup.dispose();
-
-        // Detach Leap Motion controller
-        this.leapHands.dispose();
 
         // Clear scene
         this.particles.length = 0;

@@ -1,7 +1,8 @@
 import type React from "react";
 import * as THREE from "three";
-import { SettingsDefs } from "./sketchSettings";
+import { SettingsDefs } from "@/settings/types";
 import { LeapConnectionStatus } from "@/leap/leapStatus";
+import { LeapHandController, LeapHandControllerOptions } from "@/leap/LeapHandController";
 
 export type UIEventName =
     | "click"
@@ -24,15 +25,62 @@ export type UIEventHandler<E extends UIEventName = UIEventName> = (event: UIEven
 
 export type UIEventReceiver = Partial<{ [E in UIEventName]: UIEventHandler<E> }>;
 
+/**
+ * Abstract base class for all sketches in the gallery.
+ *
+ * ## Lifecycle
+ *
+ * A sketch goes through these phases, managed by {@link SketchView} and its hooks:
+ *
+ * 1. **Construction** — `new SketchClass(renderer, audioContext)`.
+ *    The renderer and shared audio context are provided by {@link useSketchInstance}.
+ *
+ * 2. **Initialization** — {@link init} is called once after mount.
+ *    Set up the scene, create audio nodes, spawn particles, and call
+ *    {@link createLeapController} to connect Leap Motion input.
+ *
+ * 3. **Animation loop** — {@link animate} is called once per frame by
+ *    `requestAnimationFrame`. The base implementation handles the idle cycle:
+ *
+ *    ```
+ *    Each frame:
+ *      → If Leap hands are active, reset the idle timer (markInteraction)
+ *      → If the sketch is NOT idle, call step()
+ *      → Update idle state and screensaver visibility
+ *    ```
+ *
+ *    Most sketches only implement {@link step}. Sketches that need per-frame
+ *    work even while idle (e.g. LineSketch's attractor decay) can override
+ *    `animate()` to add that work, then call `super.animate()`.
+ *
+ * 4. **Resize** — {@link resize} is called when the container changes size.
+ *    Update camera projections and shader uniforms here.
+ *
+ * 5. **Destruction** — {@link destroy} is called on unmount or when a
+ *    `requiresRestart` setting changes. Dispose audio nodes, Three.js
+ *    resources, and call `super.destroy()` to clean up the Leap controller.
+ *
+ * ## Idle system
+ *
+ * After {@link idleTimeoutSeconds} of no interaction (mouse, touch, or Leap),
+ * and if {@link isReadyToSleep} returns true, the sketch enters idle mode:
+ * {@link step} stops being called. The screensaver overlay appears after
+ * {@link screenSaverTimeoutSeconds}. Call {@link markInteraction} from event
+ * handlers to reset both timers.
+ *
+ * ## Input
+ *
+ * Mouse/touch events are wired from the {@link events} property by
+ * {@link SketchRenderer}. Leap Motion input arrives via the `onFrame`
+ * callback passed to {@link createLeapController}.
+ */
 export abstract class Sketch {
     static id?: string;
 
     public events?: UIEventReceiver;
     constructor(public renderer: THREE.WebGLRenderer, public audioContext: SketchAudioContext) {}
 
-    /**
-     * height / width
-     */
+    /** Canvas height / width. */
     get aspectRatio() {
         return this.renderer.domElement.height / this.renderer.domElement.width;
     }
@@ -57,26 +105,67 @@ export abstract class Sketch {
         };
     }
 
-    /**
-     * Called in componentDidMount of the Sketch component.
-     */
+    /** Leap Motion controller, created via {@link createLeapController}. */
+    protected leapHands?: LeapHandController;
+
+    /** Called once when the sketch mounts (via useSketchLifecycle). */
     abstract init(): void;
 
     /**
-     * Called once per frame to animate the sketch.
-     * @param _millisElapsed Time elapsed since the last frame in milliseconds.
+     * Called once per frame. Checks Leap interaction, gates {@link step} on
+     * `!isIdle`, and updates idle state.
+     *
+     * Subclasses may override to add per-frame work that runs regardless of
+     * idle state (e.g. attractor decay), but must call `super.animate()`.
      */
-    abstract animate(_millisElapsed: number): void;
+    public animate(_millisElapsed: number): void {
+        const currentTimeMs = performance.now();
+        if (this.leapHands && this.leapHands.activeHandCount > 0) {
+            this.markInteraction(currentTimeMs);
+        }
+        if (!this.isIdle) {
+            this.step(currentTimeMs);
+        }
+        this.updateIdleState(currentTimeMs);
+    }
 
+    /**
+     * Called every frame when the sketch is not idle. This is where the sketch's
+     * core simulation, audio feedback, and rendering should happen.
+     */
+    protected abstract step(currentTimeMs: number): void;
+
+    /** Optional React overlay rendered on top of the sketch canvas. */
     render?(): React.ReactNode;
 
     resize?(width: number, height: number): void;
 
-    destroy?(): void;
+    /**
+     * Cleans up resources when the sketch unmounts. Subclasses should call
+     * `super.destroy()` to dispose the Leap controller.
+     */
+    destroy(): void {
+        this.leapHands?.dispose();
+    }
+
+    /**
+     * Creates a {@link LeapHandController} with the sketch's canvas, renderer,
+     * and status callbacks pre-filled. Subclasses provide only the sketch-specific
+     * options (renderMode, onFrame, and optionally handMaterial).
+     */
+    protected createLeapController(
+        options: Omit<LeapHandControllerOptions, "canvas" | "renderer" | "getConnectionCallback" | "getProtocolVersionCallback">,
+    ): LeapHandController {
+        return new LeapHandController({
+            canvas: this.canvas,
+            renderer: this.renderer,
+            getConnectionCallback: () => this.updateLeapConnectionCallback,
+            getProtocolVersionCallback: () => this.updateLeapProtocolVersionCallback,
+            ...options,
+        });
+    }
 
     // --- Idle / Screensaver Tracking ---
-    // Opt-in: subclasses must call `updateIdleState()` in their `animate()` method
-    // and `markInteraction()` in their event handlers to activate this behavior.
 
     protected lastInteractionTimestampMs: number = performance.now();
     protected isIdle: boolean = false;
@@ -92,9 +181,7 @@ export abstract class Sketch {
         this.isIdle = false;
     }
 
-    /**
-     * Call once per frame (in `animate`) to update `isIdle` and the screensaver overlay.
-     */
+    /** Evaluates idle timeout and notifies the screensaver overlay. Called at the end of each frame by {@link animate}. */
     protected updateIdleState(currentTimeMs: number) {
         const secondsSinceInteraction = (currentTimeMs - this.lastInteractionTimestampMs) / 1000;
         this.isIdle = secondsSinceInteraction >= this.idleTimeoutSeconds && this.isReadyToSleep();
