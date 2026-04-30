@@ -1,5 +1,5 @@
 {
-  "name": "chargallery",
+  "name": "waveconductor",
   "version": "4.1.0",
   "author": {
     "name": "Madison Rickert",
@@ -77,8 +77,8 @@
     "vitest": "^4.1.2"
   },
   "build": {
-    "appId": "com.chargallery.app",
-    "productName": "CharGallery",
+    "appId": "com.waveconductor.app",
+    "productName": "WaveConductor",
     "directories": {
       "output": "release"
     },

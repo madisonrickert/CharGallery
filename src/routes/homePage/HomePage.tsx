@@ -43,7 +43,7 @@ export function HomePage() {
                     {renderHighlight("Waves", wavesImg)}
                     <div className="work-grid-item credits-block">
                         <div className="credits-content">
-                            <h2>CharGallery</h2>
+                            <h2>WaveConductor</h2>
                             <p className="credits-attribution">based on <a href="https://github.com/hellochar/hellochar.com">hellochar</a> by <a href="https://github.com/hellochar">Xiaohan Zhang</a></p>
                             <ul>
                                 <li><a href="https://madisonrickert.com">Madison Rickert</a></li>

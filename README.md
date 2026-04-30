@@ -1,12 +1,12 @@
-# CharGallery
+# WaveConductor
 
-[![Release](https://img.shields.io/github/v/release/madisonrickert/CharGallery)](https://github.com/madisonrickert/CharGallery/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/madisonrickert/CharGallery/release.yml)](https://github.com/madisonrickert/CharGallery/actions)
-[![Deploy](https://img.shields.io/github/actions/workflow/status/madisonrickert/CharGallery/deploy-web.yml?label=deploy)](https://madisonrickert.github.io/CharGallery/)
-[![License](https://img.shields.io/github/license/madisonrickert/CharGallery)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/madisonrickert/WaveConductor)](https://github.com/madisonrickert/WaveConductor/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/madisonrickert/WaveConductor/release.yml)](https://github.com/madisonrickert/WaveConductor/actions)
+[![Deploy](https://img.shields.io/github/actions/workflow/status/madisonrickert/WaveConductor/deploy-web.yml?label=deploy)](https://madisonrickert.github.io/WaveConductor/)
+[![License](https://img.shields.io/github/license/madisonrickert/WaveConductor)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Web-blue)]()
 
-![CharGallery](screenshot.png)
+![WaveConductor](screenshot.png)
 
 Interactive art gallery built with React, Three.js/WebGL, and Web Audio. Features generative visualizations that respond to mouse, touch, and Leap Motion hand tracking. Runs as a website or a self-contained Electron desktop app.
 
@@ -72,7 +72,7 @@ The Electron app auto-launches the Ultraleap WebSocket binary (if present in `bi
 
 Download the latest release from the [Releases](../../releases) page.
 
-**macOS:** The app is self-signed but not notarized, so Gatekeeper will show a warning on first launch. Right-click the app and choose **Open**, then click **Open** in the dialog. You only need to do this once. Alternatively, run `xattr -cr /Applications/CharGallery.app` from Terminal.
+**macOS:** The app is self-signed but not notarized, so Gatekeeper will show a warning on first launch. Right-click the app and choose **Open**, then click **Open** in the dialog. You only need to do this once. Alternatively, run `xattr -cr /Applications/WaveConductor.app` from Terminal.
 
 **Windows:** SmartScreen may show "Windows protected your PC" since the exe is not signed. Click **More info**, then **Run anyway**.
 
