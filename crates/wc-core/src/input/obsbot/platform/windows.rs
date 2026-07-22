@@ -82,6 +82,11 @@ pub(super) mod ffi {
         pub fn obsbot_set_gimbal_speed(dev: *mut ObsbotDevice, pitch: f64, pan: f64) -> i32;
         pub fn obsbot_gimbal_stop(dev: *mut ObsbotDevice) -> i32;
         pub fn obsbot_set_zoom(dev: *mut ObsbotDevice, ratio: f32) -> i32;
+        pub fn obsbot_set_exposure(
+            dev: *mut ObsbotDevice,
+            shutter_time: i32,
+            auto_enabled: bool,
+        ) -> i32;
         pub fn obsbot_set_fov(dev: *mut ObsbotDevice, fov_type: i32) -> i32;
     }
 }
@@ -372,6 +377,11 @@ impl Worker {
             WorkerCommand::SetZoom(ratio) => {
                 self.manual("set zoom", |dev| unsafe {
                     ffi::obsbot_set_zoom(dev, ratio)
+                });
+            }
+            WorkerCommand::SetExposure { shutter, auto } => {
+                self.manual("set exposure", |dev| unsafe {
+                    ffi::obsbot_set_exposure(dev, shutter, auto)
                 });
             }
             WorkerCommand::SetFov(fov) => {

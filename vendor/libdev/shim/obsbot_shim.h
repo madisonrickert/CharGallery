@@ -213,6 +213,21 @@ int32_t obsbot_gimbal_stop(obsbot_device *dev);
 int32_t obsbot_set_zoom(obsbot_device *dev, float ratio);
 
 /**
+ * Set exposure (cameraSetExposureAbsolute). Its SDK category includes the tiny
+ * series (unlike the tail-air-only cameraSetExposureModeR that take-control
+ * step 5 uses to re-assert auto exposure), so this is the manual-exposure path
+ * for the deployed Tiny 2 Lite. Manual exposure survives take-control: step 5
+ * re-asserts AE on control acquisition, then the app immediately re-sends the
+ * operator's stored exposure over it (same as gimbal/zoom/FOV re-apply).
+ * @param shutter_time  Manual DevShutterTimeType index; applied only when
+ *                      auto_enabled is false, ignored otherwise.
+ * @param auto_enabled  true restores auto exposure (shutter_time ignored);
+ *                      false applies the manual shutter index above.
+ */
+int32_t obsbot_set_exposure(obsbot_device *dev, int32_t shutter_time,
+			    bool auto_enabled);
+
+/**
  * Set the camera field of view (cameraSetFovU).
  * @param fov_type  One of OBSBOT_FOV_86 / OBSBOT_FOV_78 / OBSBOT_FOV_65.
  */

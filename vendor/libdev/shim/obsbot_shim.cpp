@@ -325,6 +325,25 @@ int32_t obsbot_set_zoom(obsbot_device *dev, float ratio)
 	}
 }
 
+int32_t obsbot_set_exposure(obsbot_device *dev, int32_t shutter_time,
+			    bool auto_enabled)
+{
+	if (dev == nullptr || !dev->dev) {
+		return OBSBOT_ERR_INVALID;
+	}
+	try {
+		/* cameraSetExposureAbsolute is category "tiny/tiny4k/tiny2/tail
+		 * air/meet/meet4k": auto_enabled=true restores AE (shutter_time
+		 * ignored), false applies the manual DevShutterTimeType index. */
+		return dev->dev->cameraSetExposureAbsolute(
+			       shutter_time, auto_enabled) == RM_RET_OK
+			       ? OBSBOT_OK
+			       : OBSBOT_ERR;
+	} catch (...) {
+		return OBSBOT_ERR_EXCEPTION;
+	}
+}
+
 int32_t obsbot_set_fov(obsbot_device *dev, int32_t fov_type)
 {
 	if (dev == nullptr || !dev->dev) {

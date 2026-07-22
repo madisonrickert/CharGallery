@@ -40,8 +40,8 @@ releases/re-takes control live.
 
 ## Manual framing controls (settings panel)
 
-The Display tab's **Camera** section (settings panel → DISPLAY) carries four
-framing controls, persisted with the `obsbot` settings:
+The Display tab's **Camera** section (settings panel → DISPLAY) carries the
+framing and exposure controls, persisted with the `obsbot` settings:
 
 - **Gimbal pitch** — −45°..45° (the device accepts −90..90; the slider is
   capped to the useful desk/kiosk range so slider travel isn't wasted on
@@ -50,6 +50,16 @@ framing controls, persisted with the `obsbot` settings:
   desk-mounted camera never usefully points backwards).
 - **Zoom** — 1.0..2.0 absolute digital zoom.
 - **Field of view** — Wide86 / Medium78 / Narrow65 preset dropdown.
+- **Auto exposure** — checkbox, default ON. Auto is the right default for a
+  kiosk; turn it off for performance lighting. An LED prop in frame makes auto
+  exposure hunt and underexpose the dancer, so locking exposure keeps the
+  dancer correctly lit and lets the bright prop blow out (the intended look).
+- **Manual shutter** — the SDK's `DevShutterTimeType` index (9 = 1/8000 …
+  45 = 1/2, a contiguous ladder; see `vendor/libdev/include/dev/dev.hpp`),
+  applied only while **Auto exposure** is off. Left = faster/darker (crisper
+  fast limbs), right = slower/brighter. The status line under the section
+  shows the human shutter fraction (e.g. `Shutter: 1/100`) so the raw slider
+  index is legible.
 
 Behavior:
 
@@ -63,13 +73,18 @@ Behavior:
   status line below the section says why (no camera detected / control
   disabled / take-control failed).
 - **Framing is re-applied on every (re)acquisition of control.** The
-  take-control sequence recenters the gimbal and resets FOV/zoom (steps 3–4
-  above), so the moment the status enters `InControl` — app start, hotplug
-  re-detect, or the take-control toggle flipping back on — the stored framing
-  is re-sent in full. An installation that restarts comes back with the
-  operator's framing, not the factory center. (Resetting the stored settings
-  to the recentered defaults was considered and rejected: it would discard
-  the operator's framing on exactly the restart that matters.)
+  take-control sequence recenters the gimbal, resets FOV/zoom (steps 3–4
+  above), and re-asserts auto exposure (step 5), so the moment the status
+  enters `InControl` — app start, hotplug re-detect, or the take-control
+  toggle flipping back on — the stored framing **and exposure** are re-sent in
+  full. Manual exposure therefore survives take-control: step 5 always asserts
+  AE first, then the stored exposure follows immediately over it
+  (`cameraSetExposureAbsolute`, whose SDK category includes the tiny series,
+  unlike the tail-air-only call step 5 uses). An installation that restarts
+  comes back with the operator's framing and locked exposure, not the factory
+  center on auto. (Resetting the stored settings to the recentered defaults
+  was considered and rejected: it would discard the operator's framing on
+  exactly the restart that matters.)
 
 A status line under the section shows the live device state (product, serial,
 firmware while in control; "No OBSBOT camera detected" otherwise).

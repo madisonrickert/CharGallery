@@ -14,7 +14,7 @@
 use bevy::prelude::*;
 use bevy_egui::egui;
 
-use super::{ObsbotControl, ObsbotStatus};
+use super::{ObsbotControl, ObsbotSettings, ObsbotStatus};
 use crate::ui::OverlayStyle;
 
 /// Row text size, matching the panel's other status rows
@@ -109,6 +109,22 @@ pub(super) fn render_status_section(world: &mut World, ui: &mut egui::Ui, style:
             );
         }
     }
+
+    // Manual-exposure readout: the reflected slider shows only the raw
+    // `DevShutterTimeType` index, so surface the human shutter fraction here
+    // whenever the operator has switched off auto exposure.
+    if let Some(settings) = world.get_resource::<ObsbotSettings>() {
+        if !settings.auto_exposure {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Shutter: {}",
+                    super::shutter_label(settings.manual_shutter)
+                ))
+                .size(ROW_SIZE)
+                .color(style.text_secondary),
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -147,6 +163,32 @@ mod tests {
             });
         }
         // Reaching here without a panic is the assertion.
+    }
+
+    /// With auto exposure off, the section adds the shutter-fraction readout
+    /// row (the reflected slider only shows the raw `DevShutterTimeType`
+    /// index). Renders inside a real egui frame without panicking.
+    #[test]
+    fn manual_exposure_renders_shutter_row() {
+        let ctx = egui::Context::default();
+        let style = OverlayStyle::default();
+        let mut world = World::new();
+        world.insert_resource(ObsbotControl {
+            status: ObsbotStatus::InControl {
+                sn: "SN12345678901X".to_owned(),
+                firmware: "6.2.7.1".to_owned(),
+                product: "Tiny 2 Lite".to_owned(),
+            },
+            ..Default::default()
+        });
+        world.insert_resource(ObsbotSettings {
+            auto_exposure: false,
+            manual_shutter: 21,
+            ..Default::default()
+        });
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            render_status_section(&mut world, ui, &style);
+        });
     }
 
     /// An absent resource (headless harness) renders nothing and must not
