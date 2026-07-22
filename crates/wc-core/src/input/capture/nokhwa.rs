@@ -373,7 +373,7 @@ mod camera_format_tests {
             fmt(1280, 720, FrameFormat::YUYV, 10),
             fmt(640, 480, FrameFormat::MJPEG, 30),
         ])
-        .unwrap();
+        .expect("a format in range");
         assert_eq!((chosen.width(), chosen.height()), (640, 480));
     }
 
@@ -385,7 +385,7 @@ mod camera_format_tests {
             fmt(640, 480, FrameFormat::YUYV, 30),
             fmt(1280, 720, FrameFormat::MJPEG, 30),
         ])
-        .unwrap();
+        .expect("a format in range");
         assert_eq!((chosen.width(), chosen.height()), (1280, 720));
     }
 
