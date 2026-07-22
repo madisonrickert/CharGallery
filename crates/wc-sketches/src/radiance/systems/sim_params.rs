@@ -14,7 +14,8 @@
 use bevy::prelude::*;
 use wc_core::audio::input::AudioAnalysis;
 use wc_core::input::body::landmark_index::{
-    LEFT_ANKLE, LEFT_HIP, LEFT_WRIST, NOSE, RIGHT_ANKLE, RIGHT_HIP, RIGHT_WRIST,
+    LEFT_ANKLE, LEFT_ELBOW, LEFT_HIP, LEFT_WRIST, NOSE, RIGHT_ANKLE, RIGHT_ELBOW, RIGHT_HIP,
+    RIGHT_WRIST,
 };
 use wc_core::input::body::selection::motion_weight;
 use wc_core::input::body::{
@@ -25,20 +26,25 @@ use crate::radiance::compute::sim_params::{
     RadianceImpulse, RadianceSimParams, RadianceSimParamsGpu, MAX_IMPULSES,
 };
 use crate::radiance::settings::RadianceSettings;
+use crate::radiance::visibility::VisibilityLatch;
 
-/// `MediaPipe` pose landmark indices baked into impulse slots, per the pinned
-/// cross-plan contract: nose, left/right wrist, left/right hip, left/right
-/// ankle. Seven of the eight slots; the eighth is headroom. Sourced from
-/// `wc_core::input::body::landmark_index` rather than re-declared literals so
-/// the two plans cannot silently drift on index assignment.
-pub const IMPULSE_LANDMARKS: [usize; 7] = [
-    NOSE,
-    LEFT_WRIST,
-    RIGHT_WRIST,
-    LEFT_HIP,
-    RIGHT_HIP,
-    LEFT_ANKLE,
-    RIGHT_ANKLE,
+/// Number of impulse source concepts per body (seven of the eight
+/// [`MAX_IMPULSES`] slots; the eighth is headroom).
+pub const IMPULSE_SOURCE_COUNT: usize = 7;
+
+/// Impulse sources: `(primary landmark, optional fallback)`. Arms fall back
+/// to the elbow when the wrist is the less-visible joint — a held fan or
+/// prop covers the hand long before the elbow, and the prop arm (the most
+/// expressive one) must keep shedding particles. Indices come from
+/// `wc_core::input::body::landmark_index` so the contract cannot drift.
+pub const IMPULSE_SOURCES: [(usize, Option<usize>); IMPULSE_SOURCE_COUNT] = [
+    (NOSE, None),
+    (LEFT_WRIST, Some(LEFT_ELBOW)),
+    (RIGHT_WRIST, Some(RIGHT_ELBOW)),
+    (LEFT_HIP, None),
+    (RIGHT_HIP, None),
+    (LEFT_ANKLE, None),
+    (RIGHT_ANKLE, None),
 ];
 
 /// Frame-time cap in seconds (matches the shared particle engine's 50 ms cap).
@@ -147,6 +153,10 @@ pub struct RadianceState {
     /// compares against these to spot a body fading *in* (see
     /// [`emission_slot_weights`]).
     pub slot_fade_prev: [f32; MAX_TRACKED_BODIES],
+    /// Per-slot, per-impulse-source Schmitt visibility latches (see
+    /// `crate::radiance::visibility`): marginal landmark visibility holds
+    /// its last gate decision instead of strobing the impulse layer.
+    pub impulse_latch: [[VisibilityLatch; IMPULSE_SOURCE_COUNT]; MAX_TRACKED_BODIES],
 }
 
 /// The neutral [`AudioAnalysis`] used when the resource is absent (headless
@@ -498,33 +508,62 @@ pub fn bake_radiance_sim(
     };
 
     // Limb impulses from the smoothed landmark velocities.
-    bake_impulses(bodies, settings.mirror, out);
+    bake_impulses(bodies, settings.mirror, &mut state.impulse_latch, out);
     // particle_count is owned by spawn (buffer size); the baker leaves it.
 }
 
 /// Fan the limb impulses across EVERY present body in slot order until the
 /// eight [`MAX_IMPULSES`] slots fill (one dancer uses at most seven, so a
-/// duo always gets at least one slot). Stale slots past the live count are
-/// zeroed so a limb dropping out of frame cannot leave a ghost impulse.
+/// duo always gets at least one slot). Each source is one of
+/// [`IMPULSE_SOURCES`] — nose, wrists (falling back to their elbow when the
+/// wrist is the less-visible joint), hips, ankles — gated through a
+/// per-slot Schmitt [`VisibilityLatch`] so a marginal landmark holds its
+/// last decision instead of strobing the impulse layer. Stale slots past the
+/// live count are zeroed so a limb dropping out of frame cannot leave a ghost
+/// impulse.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::as_conversions,
     reason = "impulse count <= MAX_IMPULSES (8); usize -> u32 is exact"
 )]
-fn bake_impulses(bodies: Option<&BodyTrackingState>, mirror: bool, out: &mut RadianceSimParamsGpu) {
+fn bake_impulses(
+    bodies: Option<&BodyTrackingState>,
+    mirror: bool,
+    latches: &mut [[VisibilityLatch; IMPULSE_SOURCE_COUNT]; MAX_TRACKED_BODIES],
+    out: &mut RadianceSimParamsGpu,
+) {
     let scale = Vec2::new(out.uv_to_world[0], out.uv_to_world[1]);
     let mut n = 0usize;
     if let Some(bodies) = bodies {
+        // Absent/empty slots close their latches so a slot's next occupant
+        // starts from the strict admission bar, not a stale open gate.
+        for (slot, entry) in bodies.bodies.iter().enumerate() {
+            if entry.as_ref().is_none_or(|b| !b.present) {
+                for latch in &mut latches[slot] {
+                    latch.reset();
+                }
+            }
+        }
         'bodies: for body in bodies.iter_bodies() {
             if !body.present {
                 continue;
             }
-            for &lm in &IMPULSE_LANDMARKS {
+            for (i, &(primary, fallback)) in IMPULSE_SOURCES.iter().enumerate() {
                 if n >= MAX_IMPULSES {
                     break 'bodies;
                 }
+                // Prefer the primary joint; an occluded wrist hands the
+                // arm's impulse to its elbow rather than silencing the arm.
+                let lm = match fallback {
+                    Some(fb)
+                        if body.landmarks[fb].visibility > body.landmarks[primary].visibility =>
+                    {
+                        fb
+                    }
+                    _ => primary,
+                };
                 let landmark = body.landmarks[lm];
-                if landmark.visibility < 0.5 {
+                if !latches[body.slot][i].step(landmark.visibility) {
                     continue;
                 }
                 let vel = mask_dir_to_world(
@@ -547,6 +586,12 @@ fn bake_impulses(bodies: Option<&BodyTrackingState>, mirror: bool, out: &mut Rad
                     _pad: [0.0; 2],
                 };
                 n += 1;
+            }
+        }
+    } else {
+        for slot in latches.iter_mut() {
+            for latch in slot.iter_mut() {
+                latch.reset();
             }
         }
     }
@@ -1000,6 +1045,55 @@ mod tests {
         let still = tracking_state(fixture_body(Vec3::ZERO));
         let (_, out) = bake(&settings, &neutral_audio(), Some(&still), 500);
         assert_eq!(out.impulse_count, 0, "resting limbs shed nothing");
+    }
+
+    /// A wrist that dips into the marginal visibility band (held fan) keeps
+    /// its impulse: the latch holds through 0.35..0.5 once opened.
+    #[test]
+    fn marginal_wrist_visibility_holds_the_impulse() {
+        let mut body = fixture_body(Vec3::new(0.8, 0.0, 0.0));
+        let mut latches = [[VisibilityLatch::default(); IMPULSE_SOURCE_COUNT]; MAX_TRACKED_BODIES];
+        // Frame 1: clearly visible — opens the latch.
+        let state = tracking_state(body.clone());
+        // The direct `bake_impulses` path skips `bake_radiance_sim`'s
+        // transform write, so seed the mask→world scale it reads.
+        let mut out = RadianceSimParamsGpu {
+            uv_to_world: [1080.0, 1080.0],
+            ..Default::default()
+        };
+        bake_impulses(Some(&state), false, &mut latches, &mut out);
+        assert_eq!(out.impulse_count, 1);
+        // Frame 2: marginal (0.42) — a plain 0.5 gate would drop it. The fan
+        // dims the whole forearm, so the elbow is no more visible than the
+        // wrist (else the fallback would carry the arm on the still elbow);
+        // this keeps the moving wrist the chosen joint so the latch hold is
+        // what's under test.
+        body.landmarks[RIGHT_WRIST].visibility = 0.42;
+        body.landmarks[RIGHT_ELBOW].visibility = 0.42;
+        let state = tracking_state(body);
+        bake_impulses(Some(&state), false, &mut latches, &mut out);
+        assert_eq!(out.impulse_count, 1, "latched gate must hold");
+    }
+
+    /// A fully occluded wrist hands the arm's impulse to the elbow instead
+    /// of silencing the arm.
+    #[test]
+    fn occluded_wrist_falls_back_to_elbow() {
+        let mut body = fixture_body(Vec3::ZERO);
+        body.landmarks[RIGHT_WRIST].visibility = 0.1; // fan covers the hand
+        body.landmarks[RIGHT_ELBOW].visibility = 0.9;
+        body.landmarks[RIGHT_ELBOW].pos = Vec3::new(0.6, 0.45, 0.0);
+        body.velocities[RIGHT_ELBOW] = Vec3::new(0.6, 0.0, 0.0); // sweeping arm
+        let mut latches = [[VisibilityLatch::default(); IMPULSE_SOURCE_COUNT]; MAX_TRACKED_BODIES];
+        let state = tracking_state(body);
+        // Seed the mask→world scale the direct path would otherwise inherit
+        // from `bake_radiance_sim`.
+        let mut out = RadianceSimParamsGpu {
+            uv_to_world: [1080.0, 1080.0],
+            ..Default::default()
+        };
+        bake_impulses(Some(&state), false, &mut latches, &mut out);
+        assert_eq!(out.impulse_count, 1, "elbow carries the arm's impulse");
     }
 
     /// Edge count clamps to the contract capacity.

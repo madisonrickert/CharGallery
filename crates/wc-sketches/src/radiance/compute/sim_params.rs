@@ -66,7 +66,7 @@ pub struct RadianceImpulse {
 }
 
 /// Maximum simultaneous limb impulses. Seven landmark slots are used today
-/// (nose, wrists, hips, ankles — see `systems::sim_params::IMPULSE_LANDMARKS`);
+/// (nose, wrists, hips, ankles — see `systems::sim_params::IMPULSE_SOURCES`);
 /// the eighth is headroom, same shape as the particle engine's
 /// `MAX_ATTRACTORS`.
 pub const MAX_IMPULSES: usize = 8;

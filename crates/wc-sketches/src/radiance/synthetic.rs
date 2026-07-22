@@ -142,8 +142,8 @@ pub fn duo_partner_fade(t: f32) -> f32 {
 }
 
 /// Approximate landmark UVs for the seven impulse landmarks (nose, wrists,
-/// hips, ankles), anchored to the pose's blobs. Order matches
-/// `radiance::systems::sim_params::IMPULSE_LANDMARKS`.
+/// hips, ankles), anchored to the pose's blobs. Order matches the primary
+/// landmarks of `radiance::systems::sim_params::IMPULSE_SOURCES`.
 #[must_use]
 pub fn dancer_landmark_uv(pose: &PhantomPose) -> [Vec2; 7] {
     let head = pose.blobs[BLOB_HEAD].center;

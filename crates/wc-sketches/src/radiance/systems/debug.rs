@@ -30,7 +30,7 @@ use wc_core::lifecycle::state::AppState;
 
 use crate::radiance::settings::RadianceSettings;
 #[cfg(debug_assertions)]
-use crate::radiance::systems::sim_params::IMPULSE_LANDMARKS;
+use crate::radiance::systems::sim_params::IMPULSE_SOURCES;
 
 /// Run condition: the synthetic-body capture toggle is set (debug builds).
 #[cfg(debug_assertions)]
@@ -56,7 +56,7 @@ fn synthetic_tracked_body(
     let h = 1.0 / 60.0;
     let mut landmarks = [BodyLandmark::default(); BODY_LANDMARK_COUNT];
     let mut velocities = [Vec3::ZERO; BODY_LANDMARK_COUNT];
-    for (i, &lm_index) in IMPULSE_LANDMARKS.iter().enumerate() {
+    for (i, &(lm_index, _fallback)) in IMPULSE_SOURCES.iter().enumerate() {
         landmarks[lm_index] = BodyLandmark {
             pos: Vec3::new(uv_now[i].x, uv_now[i].y, 0.0),
             visibility: 1.0,
@@ -441,9 +441,9 @@ mod tests {
         assert_eq!(primary.slot, 0, "synthetic dancer lives in slot 0");
         assert!((primary.confidence - 1.0).abs() < f32::EPSILON);
         assert!((primary.fade - 1.0).abs() < f32::EPSILON, "fully faded in");
-        let visible_and_moving = IMPULSE_LANDMARKS
+        let visible_and_moving = IMPULSE_SOURCES
             .iter()
-            .filter(|&&lm| {
+            .filter(|&&(lm, _)| {
                 primary.landmarks[lm].visibility > 0.0 && primary.velocities[lm] != Vec3::ZERO
             })
             .count();
