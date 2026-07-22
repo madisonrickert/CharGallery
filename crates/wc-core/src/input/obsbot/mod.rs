@@ -140,6 +140,14 @@ pub enum WorkerCommand {
     SetZoom(f32),
     /// Select a field-of-view preset.
     SetFov(FovPreset),
+    /// Set exposure: auto, or a manual shutter index (`DevShutterTimeType`).
+    SetExposure {
+        /// Manual shutter index (`DevShutterTimeType`); applied when `auto` is
+        /// `false`.
+        shutter: i32,
+        /// Whether auto exposure is enabled.
+        auto: bool,
+    },
     /// Release control (if held) and exit the worker thread.
     Shutdown,
 }
@@ -253,6 +261,37 @@ pub struct ObsbotSettings {
     )]
     #[serde(default)]
     pub fov: FovPreset,
+
+    /// Auto exposure. Default on: the take-control sequence re-asserts AE,
+    /// and auto is the right default for a kiosk. Turn off for performance
+    /// lighting (an LED prop makes AE hunt and underexpose the dancer);
+    /// `manual_shutter` then applies.
+    #[setting(
+        default = true,
+        ty = Boolean,
+        category = User,
+        section = "Camera",
+        label = "Auto exposure"
+    )]
+    #[serde(default = "default_auto_exposure")]
+    pub auto_exposure: bool,
+
+    /// Manual shutter time as the SDK's `DevShutterTimeType` index
+    /// (9 = 1/8000 … 45 = 1/2, contiguous ladder; see
+    /// `vendor/libdev/include/dev/dev.hpp`). Applied only when
+    /// `auto_exposure` is off. Left = faster/darker (crisper fast limbs),
+    /// right = slower/brighter. The status section shows the fraction.
+    #[setting(
+        default = 28_i32,
+        min = 9_i32,
+        max = 45_i32,
+        step = 1_i32,
+        category = User,
+        section = "Camera",
+        label = "Manual shutter"
+    )]
+    #[serde(default = "default_manual_shutter")]
+    pub manual_shutter: i32,
 }
 
 /// Serde fallback so a settings file saved before this field existed loads
@@ -264,6 +303,31 @@ fn default_take_control() -> bool {
 /// Serde fallback for [`ObsbotSettings::zoom`]: no digital zoom.
 fn default_zoom() -> f32 {
     1.0
+}
+
+/// Serde fallback for [`ObsbotSettings::auto_exposure`]: auto exposure on.
+fn default_auto_exposure() -> bool {
+    true
+}
+
+/// Serde fallback for [`ObsbotSettings::manual_shutter`]: index 28 (1/100).
+fn default_manual_shutter() -> i32 {
+    28
+}
+
+/// Human label for a `DevShutterTimeType` index (the ladder in
+/// `vendor/libdev/include/dev/dev.hpp`: contiguous 9..=45).
+pub(crate) fn shutter_label(index: i32) -> &'static str {
+    const LABELS: [&str; 37] = [
+        "1/8000", "1/6400", "1/5000", "1/4000", "1/3200", "1/2500", "1/2000", "1/1600", "1/1250",
+        "1/1000", "1/800", "1/640", "1/500", "1/400", "1/320", "1/240", "1/200", "1/160", "1/120",
+        "1/100", "1/80", "1/60", "1/50", "1/40", "1/30", "1/25", "1/20", "1/15", "1/12.5", "1/10",
+        "1/8", "1/6.25", "1/5", "1/4", "1/3", "1/2.5", "1/2",
+    ];
+    usize::try_from(index - 9)
+        .ok()
+        .and_then(|i| LABELS.get(i).copied())
+        .unwrap_or("?")
 }
 
 /// Bevy resource exposing the OBSBOT control status and the manual-control
@@ -533,6 +597,23 @@ mod tests {
         assert!(parsed.take_control);
     }
 
+    /// Exposure defaults: auto ON, manual shutter 1/100 (index 28) — a
+    /// pre-exposure settings file must load these without error.
+    #[test]
+    fn exposure_defaults_auto_on() {
+        let s: ObsbotSettings = toml::from_str("").expect("empty settings file loads");
+        assert!(s.auto_exposure);
+        assert_eq!(s.manual_shutter, 28);
+        assert_eq!(shutter_label(28), "1/100");
+        assert_eq!(shutter_label(9), "1/8000");
+        assert_eq!(shutter_label(45), "1/2");
+        assert_eq!(
+            shutter_label(999),
+            "?",
+            "out-of-ladder index is visible, not a panic"
+        );
+    }
+
     /// Round-trip the full settings struct (toggle + framing) through the
     /// persisted TOML form, including the enum-as-variant-name convention.
     #[test]
@@ -543,6 +624,8 @@ mod tests {
             gimbal_yaw: 33.0,
             zoom: 1.5,
             fov: FovPreset::Narrow65,
+            auto_exposure: false,
+            manual_shutter: 21,
         };
         let text = toml::to_string(&settings).expect("serialize");
         let back: ObsbotSettings = toml::from_str(&text).expect("parse back");

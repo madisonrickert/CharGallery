@@ -52,6 +52,10 @@ pub(super) struct FramingValues {
     pub zoom: f32,
     /// FOV preset.
     pub fov: FovPreset,
+    /// Auto exposure enabled.
+    pub auto_exposure: bool,
+    /// Manual shutter index (`DevShutterTimeType`), applied when auto is off.
+    pub manual_shutter: i32,
 }
 
 impl FramingValues {
@@ -62,6 +66,8 @@ impl FramingValues {
             yaw: s.gimbal_yaw,
             zoom: s.zoom,
             fov: s.fov,
+            auto_exposure: s.auto_exposure,
+            manual_shutter: s.manual_shutter,
         }
     }
 }
@@ -76,6 +82,8 @@ pub(super) struct FramingPlan {
     pub zoom: bool,
     /// Send [`WorkerCommand::SetFov`].
     pub fov: bool,
+    /// Send [`WorkerCommand::SetExposure`].
+    pub exposure: bool,
 }
 
 impl FramingPlan {
@@ -84,11 +92,12 @@ impl FramingPlan {
         gimbal: true,
         zoom: true,
         fov: true,
+        exposure: true,
     };
 
     /// Whether anything is to be sent.
     pub(super) fn any(self) -> bool {
-        self.gimbal || self.zoom || self.fov
+        self.gimbal || self.zoom || self.fov || self.exposure
     }
 }
 
@@ -131,6 +140,8 @@ pub(super) fn plan_framing_send(
         gimbal: last.pitch != current.pitch || last.yaw != current.yaw,
         zoom: last.zoom != current.zoom,
         fov: last.fov != current.fov,
+        exposure: last.auto_exposure != current.auto_exposure
+            || last.manual_shutter != current.manual_shutter,
     };
     if !plan.any() || now < next_allowed {
         return FramingPlan::default();
@@ -198,6 +209,12 @@ pub(super) fn apply_framing_settings(
     if plan.fov {
         ctl.send_command(WorkerCommand::SetFov(current.fov));
     }
+    if plan.exposure {
+        ctl.send_command(WorkerCommand::SetExposure {
+            shutter: current.manual_shutter,
+            auto: current.auto_exposure,
+        });
+    }
     state.last_sent = Some(current);
     state.next_allowed = now + FRAMING_SEND_INTERVAL;
 }
@@ -212,6 +229,8 @@ mod tests {
             yaw,
             zoom,
             fov,
+            auto_exposure: true,
+            manual_shutter: 28,
         }
     }
 
@@ -274,7 +293,8 @@ mod tests {
             FramingPlan {
                 gimbal: false,
                 zoom: true,
-                fov: false
+                fov: false,
+                exposure: false
             }
         );
 
@@ -325,6 +345,37 @@ mod tests {
         assert!(plan.gimbal && !plan.zoom && !plan.fov);
     }
 
+    /// An exposure change plans only the exposure lane; entering control
+    /// re-asserts it like every other lane.
+    #[test]
+    fn exposure_changes_plan_the_exposure_lane() {
+        let last = neutral();
+        let mut manual = neutral();
+        manual.auto_exposure = false;
+        let plan = plan_framing_send(
+            Some(last),
+            manual,
+            false,
+            Duration::from_secs(1),
+            Duration::ZERO,
+        );
+        assert!(plan.exposure && !plan.gimbal && !plan.zoom && !plan.fov);
+
+        // Baseline must share auto=false so only the shutter differs.
+        let mut base = neutral();
+        base.auto_exposure = false;
+        let mut moved = base;
+        moved.manual_shutter = 21; // 1/500
+        let plan = plan_framing_send(
+            Some(base),
+            moved,
+            false,
+            Duration::from_secs(1),
+            Duration::ZERO,
+        );
+        assert!(plan.exposure && !plan.gimbal);
+    }
+
     /// The settings→values snapshot maps every field to its command lane.
     #[test]
     #[allow(clippy::float_cmp, reason = "exact copies, no arithmetic")]
@@ -335,11 +386,15 @@ mod tests {
             gimbal_yaw: 45.0,
             zoom: 1.8,
             fov: FovPreset::Medium78,
+            auto_exposure: false,
+            manual_shutter: 21,
         };
         let v = FramingValues::from_settings(&settings);
         assert_eq!(v.pitch, -30.0);
         assert_eq!(v.yaw, 45.0);
         assert_eq!(v.zoom, 1.8);
         assert_eq!(v.fov, FovPreset::Medium78);
+        assert!(!v.auto_exposure);
+        assert_eq!(v.manual_shutter, 21);
     }
 }
