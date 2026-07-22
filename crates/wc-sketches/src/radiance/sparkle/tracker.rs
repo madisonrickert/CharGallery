@@ -20,6 +20,7 @@ use wc_core::input::body::landmark_index::{
 use wc_core::input::body::{TrackedBody, MAX_TRACKED_BODIES};
 
 use super::{MAX_MOTES_PER_BODY, MAX_SPARKLES};
+use crate::radiance::visibility::{VisibilityLatch, VIS_GATE_OPEN};
 
 /// The extremity candidates, ordered so [`PARTNER`] is a same-array index
 /// map: the appendages farthest from the centre of mass, each with a
@@ -47,8 +48,6 @@ pub const SWITCH_FLOOR: f32 = 0.2;
 /// Minimum mask-UV distance from the centre of mass (mid-hip) for a limb to
 /// sparkle: a wrist resting on the hip is not "far from the centre of mass".
 pub const MIN_COM_DIST_UV: f32 = 0.12;
-/// Landmark visibility gate (matches the limb-impulse gate).
-pub const VISIBILITY_GATE: f32 = 0.5;
 
 /// Per-body Schmitt oscillation scorer + hysteretic winner selection (one per
 /// tracked slot).
@@ -60,6 +59,8 @@ pub struct LimbOscillator {
     sign_y: [i8; 4],
     /// Decaying flips-per-second oscillation score per candidate.
     score: [f32; 4],
+    /// Per-candidate Schmitt visibility latches.
+    vis: [VisibilityLatch; 4],
     /// Currently prioritized candidate index (into [`CANDIDATE_LANDMARKS`]).
     current: Option<usize>,
 }
@@ -104,15 +105,42 @@ impl LimbOscillator {
         }
     }
 
+    /// Advance the per-candidate visibility latches (call once per frame,
+    /// before [`Self::select`]): marginal visibility holds its last gate
+    /// decision instead of strobing mote assignment.
+    pub fn step_visibility(&mut self, body: &TrackedBody) {
+        for (i, &landmark) in CANDIDATE_LANDMARKS.iter().enumerate() {
+            self.vis[i].step(body.landmarks[landmark].visibility);
+        }
+    }
+
+    /// Whether a candidate may carry motes this frame: latched-visible, and
+    /// far enough from the centre of mass.
+    #[must_use]
+    pub fn candidate_eligible(
+        &self,
+        body: &TrackedBody,
+        candidate: usize,
+        com: Option<Vec2>,
+    ) -> bool {
+        if !self.vis[candidate].is_open() {
+            return false;
+        }
+        let landmark = body.landmarks[CANDIDATE_LANDMARKS[candidate]];
+        com.is_none_or(|c| landmark.pos.truncate().distance(c) >= MIN_COM_DIST_UV)
+    }
+
     /// Re-select the prioritized candidate with switch hysteresis: the
     /// incumbent keeps the motes unless it becomes ineligible or a
     /// challenger beats it by [`SWITCH_RATIO`] (plus [`SWITCH_FLOOR`]).
     pub fn select(&mut self, body: &TrackedBody) {
         let com = body_com_uv(body);
-        let incumbent = self.current.filter(|&c| candidate_eligible(body, c, com));
+        let incumbent = self
+            .current
+            .filter(|&c| self.candidate_eligible(body, c, com));
         let mut best: Option<usize> = None;
         for i in 0..CANDIDATE_LANDMARKS.len() {
-            if !candidate_eligible(body, i, com) {
+            if !self.candidate_eligible(body, i, com) {
                 continue;
             }
             if best.is_none_or(|b| self.score[i] > self.score[b]) {
@@ -207,25 +235,14 @@ pub fn body_com_uv(body: &TrackedBody) -> Option<Vec2> {
     let left = body.landmarks[LEFT_HIP];
     let right = body.landmarks[RIGHT_HIP];
     match (
-        left.visibility >= VISIBILITY_GATE,
-        right.visibility >= VISIBILITY_GATE,
+        left.visibility >= VIS_GATE_OPEN,
+        right.visibility >= VIS_GATE_OPEN,
     ) {
         (true, true) => Some((left.pos.truncate() + right.pos.truncate()) / 2.0),
         (true, false) => Some(left.pos.truncate()),
         (false, true) => Some(right.pos.truncate()),
         (false, false) => None,
     }
-}
-
-/// Whether a candidate may carry motes this frame: visible, and far enough
-/// from the centre of mass.
-#[must_use]
-pub fn candidate_eligible(body: &TrackedBody, candidate: usize, com: Option<Vec2>) -> bool {
-    let landmark = body.landmarks[CANDIDATE_LANDMARKS[candidate]];
-    if landmark.visibility < VISIBILITY_GATE {
-        return false;
-    }
-    com.is_none_or(|c| landmark.pos.truncate().distance(c) >= MIN_COM_DIST_UV)
 }
 
 /// One Schmitt-trigger step: the sign only changes when `v` crosses the
@@ -326,6 +343,7 @@ mod tests {
             state.score(0),
             state.score(2)
         );
+        state.step_visibility(&body);
         state.select(&body);
         assert_eq!(state.current(), Some(0), "left wrist takes priority");
     }
@@ -355,11 +373,13 @@ mod tests {
         let mut state = LimbOscillator::default();
         let mut body = fixture_body();
         oscillate(&mut state, &mut body, LEFT_WRIST, 2.0, 2.0);
+        state.step_visibility(&body);
         state.select(&body);
         assert_eq!(state.current(), Some(0));
         // Nudge the right wrist just above the left's decayed score: within
         // the ratio band, the incumbent holds.
         state.score[1] = state.score[0] * 1.1;
+        state.step_visibility(&body);
         state.select(&body);
         assert_eq!(
             state.current(),
@@ -367,6 +387,7 @@ mod tests {
             "marginal challenger must not steal"
         );
         state.score[1] = state.score[0] * SWITCH_RATIO + SWITCH_FLOOR + 0.1;
+        state.step_visibility(&body);
         state.select(&body);
         assert_eq!(state.current(), Some(1), "decisive challenger takes over");
     }
@@ -378,9 +399,11 @@ mod tests {
         let mut state = LimbOscillator::default();
         let mut body = fixture_body();
         oscillate(&mut state, &mut body, LEFT_WRIST, 2.0, 2.0);
+        state.step_visibility(&body);
         state.select(&body);
         assert_eq!(state.current(), Some(0));
         body.landmarks[LEFT_WRIST].visibility = 0.0;
+        state.step_visibility(&body);
         state.select(&body);
         assert_ne!(
             state.current(),
@@ -390,6 +413,7 @@ mod tests {
         for &lm in &CANDIDATE_LANDMARKS {
             body.landmarks[lm].visibility = 0.0;
         }
+        state.step_visibility(&body);
         state.select(&body);
         assert_eq!(state.current(), None, "no visible extremity, no motes");
     }
@@ -404,11 +428,37 @@ mod tests {
         };
         let com = body_com_uv(&body);
         assert!(com.is_some(), "hips visible -> COM exists");
+        let mut osc = LimbOscillator::default();
+        osc.step_visibility(&body);
         assert!(
-            !candidate_eligible(&body, 0, com),
+            !osc.candidate_eligible(&body, 0, com),
             "wrist on the hip is not far from the centre of mass"
         );
-        assert!(candidate_eligible(&body, 1, com), "raised wrist is");
+        assert!(osc.candidate_eligible(&body, 1, com), "raised wrist is");
+    }
+
+    /// Eligibility is latched: a wrist that opened at 0.55 stays eligible
+    /// through the 0.35..0.5 marginal band and drops only below 0.35.
+    #[test]
+    fn marginal_visibility_holds_eligibility() {
+        let mut osc = LimbOscillator::default();
+        let mut body = fixture_body();
+        let wrist = CANDIDATE_LANDMARKS[0];
+        body.landmarks[wrist].visibility = 0.55;
+        osc.step_visibility(&body);
+        assert!(osc.candidate_eligible(&body, 0, None));
+        body.landmarks[wrist].visibility = 0.42;
+        osc.step_visibility(&body);
+        assert!(osc.candidate_eligible(&body, 0, None), "band holds");
+        body.landmarks[wrist].visibility = 0.30;
+        osc.step_visibility(&body);
+        assert!(!osc.candidate_eligible(&body, 0, None), "closes below 0.35");
+        body.landmarks[wrist].visibility = 0.42;
+        osc.step_visibility(&body);
+        assert!(
+            !osc.candidate_eligible(&body, 0, None),
+            "band does not reopen"
+        );
     }
 
     /// The partner map is a left↔right involution over the candidate set.

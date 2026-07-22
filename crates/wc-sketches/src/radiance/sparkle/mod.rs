@@ -60,10 +60,11 @@ use wc_core::input::body::{BodyTrackingState, MAX_TRACKED_BODIES};
 use wc_core::lifecycle::screensaver::fade::ScreensaverFade;
 
 pub use tracker::{
-    assign_motes, body_com_uv, candidate_eligible, per_body_quota, LimbOscillator, MoteTarget,
-    CANDIDATE_LANDMARKS, FLIP_HYSTERESIS_UV_S, MIN_COM_DIST_UV, PARTNER, SCORE_TAU_S, SWITCH_FLOOR,
-    SWITCH_RATIO, VISIBILITY_GATE,
+    assign_motes, body_com_uv, per_body_quota, LimbOscillator, MoteTarget, CANDIDATE_LANDMARKS,
+    FLIP_HYSTERESIS_UV_S, MIN_COM_DIST_UV, PARTNER, SCORE_TAU_S, SWITCH_FLOOR, SWITCH_RATIO,
 };
+
+use crate::radiance::visibility::VIS_GATE_OPEN;
 
 use super::render::slot_identity_colors;
 use super::settings::RadianceSettings;
@@ -287,12 +288,13 @@ fn advance_trackers(
                 continue; // fading out: motes release via fade, tracker holds
             }
             let tracker = &mut trackers[slot];
+            tracker.step_visibility(tracked);
             tracker.step_scores(tracked, dt);
             tracker.select(tracked);
             frame.winners[slot] = tracker.current();
             if let Some(current) = tracker.current() {
-                let partner = tracked.landmarks[CANDIDATE_LANDMARKS[PARTNER[current]]];
-                frame.partner_ok[slot] = partner.visibility >= VISIBILITY_GATE;
+                let com = body_com_uv(tracked);
+                frame.partner_ok[slot] = tracker.candidate_eligible(tracked, PARTNER[current], com);
             }
         }
     }
@@ -401,7 +403,7 @@ pub fn update_radiance_sparkles(
             if let (Some((slot, candidate)), Some(bodies)) = (mote.owner, body.as_deref()) {
                 if let Some(tracked) = bodies.bodies.get(slot).and_then(Option::as_ref) {
                     let landmark = tracked.landmarks[CANDIDATE_LANDMARKS[candidate]];
-                    if landmark.visibility >= VISIBILITY_GATE {
+                    if landmark.visibility >= VIS_GATE_OPEN {
                         mote.pos =
                             mask_uv_to_world(landmark.pos.truncate(), scale, settings.mirror)
                                 + mote_drift(i, elapsed);
