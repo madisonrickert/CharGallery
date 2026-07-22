@@ -97,6 +97,12 @@ pub const CURL_SCALE: f32 = 0.012;
 pub const IMPULSE_RADIUS: f32 = 140.0;
 /// Limb speed (world px/s) that maps to impulse gain 1.0.
 pub const IMPULSE_FULL_SPEED: f32 = 900.0;
+/// Hard cap on an impulse's velocity magnitude, world px/s. Gain already
+/// saturates at [`IMPULSE_FULL_SPEED`], but the velocity *vector* is passed
+/// to the kernel unscaled — a one-frame landmark teleport (motion blur, a
+/// mis-detection) would otherwise blast particles across the field. 1.5×
+/// full speed keeps every legitimate sweep untouched.
+pub const IMPULSE_MAX_SPEED: f32 = 1.5 * IMPULSE_FULL_SPEED;
 /// Smoothing time constant for the intensity/sparkle envelopes, seconds.
 pub const ENVELOPE_SMOOTH_SECS: f32 = 0.25;
 /// Time constant of the slow per-aggregate running means the band drives are
@@ -525,7 +531,8 @@ fn bake_impulses(bodies: Option<&BodyTrackingState>, mirror: bool, out: &mut Rad
                     Vec2::new(body.velocities[lm].x, body.velocities[lm].y),
                     scale,
                     mirror,
-                );
+                )
+                .clamp_length_max(IMPULSE_MAX_SPEED);
                 let gain = (vel.length() / IMPULSE_FULL_SPEED).clamp(0.0, 1.0);
                 if gain < 0.05 {
                     continue; // resting limbs shed nothing
@@ -959,6 +966,28 @@ mod tests {
         assert!(
             (out.impulses[1].gain).abs() < f32::EPSILON,
             "stale slots zeroed"
+        );
+    }
+
+    /// A one-frame landmark teleport (blur artifact) must not blast the
+    /// field: the impulse's velocity magnitude is clamped even though its
+    /// gain already saturates.
+    #[test]
+    fn bake_clamps_teleport_impulse_velocity() {
+        let settings = RadianceSettings::default();
+        // 50 UV/s is far beyond any real limb sweep (~0.1..1.0 UV/s).
+        let body = tracking_state(fixture_body(Vec3::new(50.0, 0.0, 0.0)));
+        let (_, out) = bake(&settings, &neutral_audio(), Some(&body), 500);
+        assert_eq!(out.impulse_count, 1);
+        let v = Vec2::new(out.impulses[0].velocity[0], out.impulses[0].velocity[1]);
+        assert!(
+            v.length() <= IMPULSE_MAX_SPEED + 1e-3,
+            "teleport velocity must clamp: {}",
+            v.length()
+        );
+        assert!(
+            (out.impulses[0].gain - 1.0).abs() < 1e-6,
+            "gain still saturates"
         );
     }
 
