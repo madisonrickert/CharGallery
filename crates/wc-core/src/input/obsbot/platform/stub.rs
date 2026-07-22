@@ -4,7 +4,7 @@
 //! without a C++ toolchain, the vendored `libdev` binary, or an OBSBOT
 //! plugged in. See `platform/mod.rs` for the facade contract.
 
-use super::{ObsbotStatus, WorkerCommand};
+use super::super::{ObsbotStatus, WorkerCommand};
 
 /// Facade twin of `windows::WorkerHandle`. Never constructed —
 /// [`spawn_worker`] always returns `None` — but the type must exist so
