@@ -118,6 +118,10 @@ pub mod landmark_index {
     pub const LEFT_HIP: usize = 23;
     /// Right hip.
     pub const RIGHT_HIP: usize = 24;
+    /// Left elbow.
+    pub const LEFT_ELBOW: usize = 13;
+    /// Right elbow.
+    pub const RIGHT_ELBOW: usize = 14;
     /// Left ankle.
     pub const LEFT_ANKLE: usize = 27;
     /// Right ankle.

@@ -58,6 +58,7 @@ pub mod distance_field;
 pub mod pulse;
 pub mod render;
 pub mod settings;
+pub mod visibility;
 // Extremity sparkle motes (per-body constellations riding the
 // fastest-oscillating limbs): `sparkle/mod.rs` owns the uniform/material/
 // driver, `sparkle/tracker.rs` the pure oscillation-scoring + mote-pool
