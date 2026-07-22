@@ -29,17 +29,27 @@ const MAX_CAPTURE_H: u32 = 720;
 const MIN_CAPTURE_W: u32 = 320;
 #[cfg(feature = "hand-tracking-mediapipe-camera")]
 const MIN_CAPTURE_H: u32 = 240;
-/// Resolution area we bias selection toward (640×480).
+/// Resolution area we bias selection toward (720p — the un-pin from the
+/// original 640×480; see docs/superpowers/specs/2026-07-06-outdoor-tracking
+/// A3: more pixels on a distant/dim body is worth the decode cost).
 #[cfg(feature = "hand-tracking-mediapipe-camera")]
-const TARGET_AREA: i64 = 640 * 480;
+const TARGET_AREA: i64 = 1280 * 720;
+/// Formats below this frame rate sort behind everything at or above it: the
+/// body pipeline's 30 Hz inference cadence starves on a 10 fps feed no
+/// matter how large the frame is.
+#[cfg(feature = "hand-tracking-mediapipe-camera")]
+const MIN_FULL_RATE_FPS: u32 = 25;
 
-/// Choose the cheapest usable capture format from a device's *enumerated*
+/// Choose the best usable capture format from a device's *enumerated*
 /// formats.
 ///
 /// Policy: consider only formats [`NokhwaFrameSource::next_frame`] can decode
-/// (`MJPEG`, `YUYV`, `RAWRGB`) within `320×240..=1280×720`; prefer uncompressed
-/// (no per-frame JPEG decode), then the resolution closest to 640×480, then a
-/// higher frame rate. Returns `None` when nothing usable is in range, so the
+/// (`MJPEG`, `YUYV`, `RAWRGB`) within `320×240..=1280×720`; rank full-rate
+/// formats (`>= MIN_FULL_RATE_FPS`) ahead of starved ones (a 720p@10 mode
+/// cannot feed the 30 Hz inference cadence no matter how large the frame is),
+/// then the resolution closest to 720p (resolution outranks decode cost — the
+/// un-pin from the original 640×480 bias), then cheapest decode, then the
+/// highest frame rate. Returns `None` when nothing usable is in range, so the
 /// caller keeps the format the camera already opened with — degrading
 /// gracefully rather than requesting a blind format that may not exist (a blind
 /// `Closest(640×480 MJPEG)` failed to open on `AVFoundation`).
@@ -72,9 +82,15 @@ fn choose_camera_format(
             let rank = decode_rank(f.format()).unwrap_or(u8::MAX);
             let area = i64::from(f.width()) * i64::from(f.height());
             let area_dist = (area - TARGET_AREA).abs();
-            // Cheapest decode first, then nearest to target resolution, then the
-            // highest frame rate (Reverse so larger fps sorts first).
-            (rank, area_dist, std::cmp::Reverse(f.frame_rate()))
+            // Full-rate formats first, then nearest the target resolution
+            // (resolution outranks decode cost — the un-pin), then cheapest
+            // decode, then the highest frame rate.
+            (
+                f.frame_rate() < MIN_FULL_RATE_FPS,
+                area_dist,
+                rank,
+                std::cmp::Reverse(f.frame_rate()),
+            )
         })
         .copied()
 }
@@ -342,7 +358,35 @@ mod camera_format_tests {
             fmt(1280, 720, FrameFormat::YUYV, 30),
         ];
         let chosen = choose_camera_format(&formats).expect("a format in range");
+        assert_eq!(
+            (chosen.width(), chosen.height()),
+            (1280, 720),
+            "target is now 720p — the un-pin"
+        );
+    }
+
+    /// A full-rate smaller mode always beats a starved larger one: 720p@10
+    /// cannot feed the 30 Hz inference cadence.
+    #[test]
+    fn full_rate_beats_larger_area() {
+        let chosen = choose_camera_format(&[
+            fmt(1280, 720, FrameFormat::YUYV, 10),
+            fmt(640, 480, FrameFormat::MJPEG, 30),
+        ])
+        .unwrap();
         assert_eq!((chosen.width(), chosen.height()), (640, 480));
+    }
+
+    /// Resolution now outranks decode cost: the un-pin means more pixels on
+    /// a distant body beats saving a JPEG decode.
+    #[test]
+    fn resolution_outranks_decode_cost() {
+        let chosen = choose_camera_format(&[
+            fmt(640, 480, FrameFormat::YUYV, 30),
+            fmt(1280, 720, FrameFormat::MJPEG, 30),
+        ])
+        .unwrap();
+        assert_eq!((chosen.width(), chosen.height()), (1280, 720));
     }
 
     #[test]

@@ -29,7 +29,7 @@ use objc2::{define_class, msg_send, AnyThread, DefinedClass};
 use objc2_av_foundation::{
     AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceDiscoverySession, AVCaptureDeviceInput,
     AVCaptureDevicePosition, AVCaptureDeviceTypeBuiltInWideAngleCamera,
-    AVCaptureDeviceTypeExternal, AVCaptureOutput, AVCaptureSession, AVCaptureSessionPreset640x480,
+    AVCaptureDeviceTypeExternal, AVCaptureOutput, AVCaptureSession, AVCaptureSessionPreset1280x720,
     AVCaptureVideoDataOutput, AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
 };
 use objc2_core_media::{CMSampleBuffer, CMTime, CMVideoFormatDescriptionGetDimensions};
@@ -320,9 +320,9 @@ impl AvfFrameSource {
 
         // SAFETY: fresh capture session.
         let session = unsafe { AVCaptureSession::new() };
-        // SAFETY: `AVCaptureSessionPreset640x480` is a framework constant; setting
-        // a supported preset on a not-yet-running session.
-        unsafe { session.setSessionPreset(AVCaptureSessionPreset640x480) };
+        // SAFETY: `AVCaptureSessionPreset1280x720` is a framework constant;
+        // setting a supported preset on a not-yet-running session.
+        unsafe { session.setSessionPreset(AVCaptureSessionPreset1280x720) };
 
         // SAFETY: opens the device for capture; `Err(NSError)` if it cannot.
         let input = unsafe { AVCaptureDeviceInput::deviceInputWithDevice_error(&device) }
