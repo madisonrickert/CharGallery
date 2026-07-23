@@ -72,8 +72,14 @@ impl FramingValues {
     }
 }
 
-/// Which of the three command groups to send this frame. All-false means
+/// Which of the four command groups to send this frame. All-false means
 /// "send nothing" — either nothing changed or the rate limit deferred it.
+// One flag per independent send lane (gimbal/zoom/fov/exposure), not an
+// encoded state machine — a struct of named bools reads clearer here.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent per-lane send flags, not encoded state"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct FramingPlan {
     /// Send [`WorkerCommand::SetGimbalAngle`] (pitch or yaw differ).
