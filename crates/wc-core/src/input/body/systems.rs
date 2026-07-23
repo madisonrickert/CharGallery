@@ -170,11 +170,13 @@ pub fn init_mask_texture(
 /// framing coalescer's `last_sent`.
 #[cfg(feature = "body-tracking-camera")]
 pub fn restart_worker_on_webcam_change(
-    webcam: Res<'_, crate::settings::webcam::WebcamSettings>,
+    webcam: Option<Res<'_, crate::settings::webcam::WebcamSettings>>,
     request: Option<Res<'_, BodyTrackingRequest>>,
     worker: Res<'_, BodyTrackingWorker>,
     mut last: bevy::ecs::system::Local<'_, Option<String>>,
 ) {
+    // Settings may be absent in minimal (test) worlds; nothing to track then.
+    let Some(webcam) = webcam else { return };
     // Cheap steady-state exit: same value as last applied (no allocation).
     if last.as_deref() == Some(webcam.camera.as_str()) {
         return;
@@ -196,6 +198,42 @@ pub fn restart_worker_on_webcam_change(
             selection = %webcam.camera,
             "body tracking: webcam selection changed, reopening camera"
         );
+    }
+}
+
+/// `PreUpdate` (chained before [`sync_body_tracking`], same shape as the
+/// webcam bounce): apply the operator's Max Figures setting into
+/// [`BodyTrackingConfig`] and bounce the worker so the pipeline rebuilds
+/// with the new slot cap. Value-diffed for the same reason as the webcam
+/// bounce — the settings dock rewrites the resource every frame it is open.
+pub fn restart_worker_on_max_figures_change(
+    settings: Option<Res<'_, crate::settings::body_tracking::BodyTrackingSettings>>,
+    request: Option<Res<'_, BodyTrackingRequest>>,
+    mut config: ResMut<'_, BodyTrackingConfig>,
+    worker: Res<'_, BodyTrackingWorker>,
+    mut last: bevy::ecs::system::Local<'_, Option<usize>>,
+) {
+    // Settings may be absent in minimal (test) worlds; nothing to track then.
+    let Some(settings) = settings else { return };
+    let cap = settings.max_tracked_bodies();
+    if *last == Some(cap) {
+        return;
+    }
+    let first_run = last.is_none();
+    *last = Some(cap);
+    // The config write applies on every path (including seeding) so a worker
+    // started later this frame — or after a sketch reload — sees the
+    // persisted value; only the live bounce is skipped while seeding.
+    config.max_tracked_bodies = cap;
+    if first_run || request.is_none() {
+        return;
+    }
+    let Ok(mut runtime) = worker.runtime.lock() else {
+        return;
+    };
+    if let Some(mut rt) = runtime.take() {
+        rt.worker.stop();
+        tracing::info!(max_figures = cap, "body tracking: slot cap changed, restarting worker");
     }
 }
 

@@ -65,6 +65,8 @@ use std::time::Duration;
 use bevy::prelude::*;
 use bytemuck::{Pod, Zeroable};
 
+use crate::settings::registry::RegisterSketchSettingsExt;
+
 pub mod detector;
 pub mod edges;
 pub mod envelope;
@@ -500,6 +502,16 @@ impl Plugin for BodyTrackingPlugin {
             PreUpdate,
             systems::restart_worker_on_webcam_change.before(systems::sync_body_tracking),
         );
+        // Max Figures hot-apply: the operator's slot cap rides into the
+        // pipeline at worker start, so a change bounces the worker too.
+        // Unconditional (unlike the webcam bounce) — the cap applies to
+        // injected/mock sources as much as real cameras.
+        app.register_sketch_settings::<crate::settings::body_tracking::BodyTrackingSettings>()
+            .add_systems(
+                PreUpdate,
+                systems::restart_worker_on_max_figures_change
+                    .before(systems::sync_body_tracking),
+            );
     }
 }
 

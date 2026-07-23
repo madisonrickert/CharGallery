@@ -102,7 +102,7 @@ pub(super) fn tab_for_storage_key(key: &str, sketch_keys: &[&str]) -> SettingsTa
         // The camera cluster: webcam selection, OBSBOT control, live preview.
         // Their custom dock sections (OBSBOT status, preview thumbnail) attach
         // to these storage keys and follow them here automatically.
-        "webcam" | "obsbot" | "camera_preview" => SettingsTab::Camera,
+        "webcam" | "obsbot" | "camera_preview" | "body_tracking" => SettingsTab::Camera,
         _ => SettingsTab::Display,
     }
 }

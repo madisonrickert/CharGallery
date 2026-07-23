@@ -24,6 +24,7 @@
 //!    seconds. Callers can also invoke [`persistence::save::<S>`] directly.
 
 pub mod autosave;
+pub mod body_tracking;
 pub mod commands;
 pub mod custom_section;
 pub mod def;
