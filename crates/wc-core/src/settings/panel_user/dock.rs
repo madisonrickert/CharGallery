@@ -38,6 +38,8 @@ pub(super) enum SettingsTab {
     Sketch,
     /// Hand-tracking provider, Leap, and feel.
     HandTracking,
+    /// Webcam selection, OBSBOT camera control, and the live preview.
+    Camera,
     /// Interface (overlay) and attract-mode/screensaver display.
     Display,
 }
@@ -48,9 +50,10 @@ impl SettingsTab {
     /// from the active sketch's manifest entry (see
     /// [`crate::sketch::SketchManifest::settings_binding`]) and is substituted
     /// at render time in [`super::draw_dock_header`].
-    pub(super) const ORDER: [(SettingsTab, &'static str); 3] = [
+    pub(super) const ORDER: [(SettingsTab, &'static str); 4] = [
         (SettingsTab::Sketch, "LINE"),
         (SettingsTab::HandTracking, "HAND TRACKING"),
+        (SettingsTab::Camera, "CAMERA"),
         (SettingsTab::Display, "DISPLAY"),
     ];
 }
@@ -86,8 +89,8 @@ pub(super) fn field_visible(def: &SettingDef, advanced: bool) -> bool {
 /// in — rather than hardcoding `"line" | "dots" | …` here — is what stops every
 /// newly ported sketch from having to edit this function.
 ///
-/// The map is otherwise total: any key not a sketch key and not
-/// `"hand_tracking"` — the overlay (`auto_fade`), `"screensaver"`, and any
+/// The map is otherwise total: any key not a sketch key and not one of the
+/// named routes below — the overlay (`auto_fade`), `"screensaver"`, and any
 /// future settings struct — falls to [`SettingsTab::Display`], so a newly
 /// registered struct is always reachable rather than silently hidden.
 pub(super) fn tab_for_storage_key(key: &str, sketch_keys: &[&str]) -> SettingsTab {
@@ -96,6 +99,10 @@ pub(super) fn tab_for_storage_key(key: &str, sketch_keys: &[&str]) -> SettingsTa
     }
     match key {
         "hand_tracking" => SettingsTab::HandTracking,
+        // The camera cluster: webcam selection, OBSBOT control, live preview.
+        // Their custom dock sections (OBSBOT status, preview thumbnail) attach
+        // to these storage keys and follow them here automatically.
+        "webcam" | "obsbot" | "camera_preview" => SettingsTab::Camera,
         _ => SettingsTab::Display,
     }
 }
@@ -175,6 +182,13 @@ mod tests {
             SettingsTab::Display,
             "unrecognized keys must route to Display, never disappear"
         );
+        for key in ["webcam", "obsbot", "camera_preview"] {
+            assert_eq!(
+                tab_for_storage_key(key, &sketch_keys),
+                SettingsTab::Camera,
+                "the camera cluster routes to the Camera tab"
+            );
+        }
         assert_eq!(
             tab_for_storage_key("flame", &[]),
             SettingsTab::Display,
