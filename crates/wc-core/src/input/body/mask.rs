@@ -104,7 +104,7 @@ pub struct MaskProcessor {
 }
 
 impl MaskProcessor {
-    /// Allocate the three working buffers (the only allocation this type
+    /// Allocate the five working buffers (the only allocation this type
     /// ever performs).
     #[must_use]
     pub fn new() -> Self {

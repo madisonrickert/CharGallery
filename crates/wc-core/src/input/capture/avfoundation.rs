@@ -281,7 +281,7 @@ pub struct AvfFrameSource {
 
 impl AvfFrameSource {
     /// Open `camera_index` (falling back to the system default video device when
-    /// the index is out of range), configure a 640x480 BGRA capture session, and
+    /// the index is out of range), configure a 1280x720 BGRA capture session, and
     /// start streaming frames to the delegate.
     ///
     /// # Errors
