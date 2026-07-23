@@ -38,6 +38,12 @@ Thumbs.db
 # vendored, surgeried palm_detection.onnx is committed; the raw upstream is not).
 /assets/models/hand/palm_detection_original.onnx
 
+# Local eval media (recorded clips for the body-tracking replay harness).
+# Never committed: the footage shows real people, and the clips run to
+# hundreds of MB. Only the README documenting the convention is tracked.
+/tests/eval-media/*
+!/tests/eval-media/README.md
+
 # Misc
 *.log
 
