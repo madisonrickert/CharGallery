@@ -66,11 +66,26 @@ keepawake = { workspace = true }
 # Waveconductor is native-only so no wasm target table needed here.
 leaprs = { workspace = true, optional = true }
 
+# Both real-backend platforms also get OBSBOT camera control by default
+# (decided 2026-07-23): the app takes control of an attached OBSBOT — its
+# on-device AI otherwise fights our MediaPipe tracking — and the persisted
+# "Take control" toggle in the Camera settings is the runtime off-switch.
+# Linux gets the no-op facade via wc-core's platform cfg, so the feature is
+# deliberately absent from its (nonexistent) target table rather than from
+# [features] default.
 [target.'cfg(target_os = "macos")'.dependencies]
-wc-core = { workspace = true, features = ["thermal-sensor", "thermal-sensor-macos"] }
+wc-core = { workspace = true, features = [
+    "thermal-sensor",
+    "thermal-sensor-macos",
+    "obsbot-camera-control",
+] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wc-core = { workspace = true, features = ["thermal-sensor", "thermal-sensor-windows"] }
+wc-core = { workspace = true, features = [
+    "thermal-sensor",
+    "thermal-sensor-windows",
+    "obsbot-camera-control",
+] }
 
 [target.'cfg(windows)'.build-dependencies]
 # Embeds the app icon + version metadata into the Windows exe at build time.
