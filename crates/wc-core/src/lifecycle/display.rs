@@ -1,6 +1,11 @@
 //! Applies `DisplaySettings` to the primary window: startup fullscreen,
 //! monitor selection, and cursor visibility.
 //!
+//! The monitor selection takes effect in both window modes: fullscreen via
+//! `apply_display_mode`'s every-frame mode re-derive, and windowed via
+//! `move_window_on_monitor_edit`'s one-shot centering on the resolved
+//! monitor when the selection is edited.
+//!
 //! ## There is no `MonitorAdded` / `MonitorRemoved` message in Bevy 0.19
 //!
 //! The design doc and the alpha.5 program index both describe re-asserting
@@ -56,11 +61,11 @@
 //! later frame.
 
 use bevy::prelude::*;
-use bevy::window::{CursorOptions, Monitor, PrimaryMonitor};
+use bevy::window::{CursorOptions, Monitor, MonitorSelection, PrimaryMonitor};
 
 use crate::settings::{
-    compute_display_mode, AvailableMonitors, DisplaySettings, FullscreenOverride,
-    AUTO_MONITOR_LABEL,
+    compute_display_mode, resolve_monitor_selection, AvailableMonitors, DisplaySettings,
+    FullscreenOverride, AUTO_MONITOR_LABEL,
 };
 use crate::settings::{RegisterRuntimeEnumOptionsExt, RegisterSketchSettingsExt};
 use crate::ui::buttons::SettingsPanelVisible;
@@ -70,7 +75,7 @@ use crate::ui::buttons::SettingsPanelVisible;
 /// makes the `monitor` setting render as a dropdown), initialises the
 /// session-only `FullscreenOverride` (what F11 writes; never persisted), and
 /// wires `apply_display_mode` / `sync_available_monitors` /
-/// `clear_fullscreen_override_on_settings_edit`.
+/// `clear_fullscreen_override_on_settings_edit` / `move_window_on_monitor_edit`.
 ///
 /// Registered by [`crate::lifecycle::LifecyclePlugin`].
 pub struct DisplayPlugin;
@@ -108,6 +113,7 @@ impl Plugin for DisplayPlugin {
                 // masked by a stale override for a frame.
                 clear_fullscreen_override_on_settings_edit
                     .after(crate::lifecycle::nav::handle_navigation_actions),
+                move_window_on_monitor_edit.after(clear_fullscreen_override_on_settings_edit),
                 apply_display_mode
                     .after(crate::lifecycle::nav::handle_navigation_actions)
                     .after(clear_fullscreen_override_on_settings_edit),
@@ -233,7 +239,60 @@ pub(crate) fn sync_available_monitors(
     tracing::debug!(monitors = ?available.0, "monitor topology changed; picker options refreshed");
 }
 
+/// One-shot windowed move: when the operator edits the Monitor selection
+/// while the window is not effectively fullscreen, center the window on the
+/// monitor the new selection resolves to.
+///
+/// Value-diffed through a `Local` rather than `Res::is_changed()` — the user
+/// panel writes the resource every frame the DISPLAY tab is open (see
+/// `clear_fullscreen_override_on_settings_edit`, which pioneered this guard).
+/// The first run only seeds the `Local`: a boot is not an edit, so a saved
+/// selection never yanks a freshly opened dev window across displays.
+///
+/// Moves **only** when resolution yields a concrete monitor
+/// (`MonitorSelection::Entity`): a fallback to `Current` would be a
+/// pointless recenter on the monitor the window already occupies (or a jump
+/// on an unresolvable name). Fullscreen edits are `apply_display_mode`'s
+/// job — its every-frame re-derive already retargets the fullscreen window.
+///
+/// Allocates one `String` per actual edit (never per frame).
+pub(crate) fn move_window_on_monitor_edit(
+    settings: Res<'_, DisplaySettings>,
+    fullscreen_override: Res<'_, FullscreenOverride>,
+    monitors: Query<'_, '_, (Entity, &Monitor, Has<PrimaryMonitor>)>,
+    mut windows: Query<'_, '_, &mut Window>,
+    mut previous_selection: Local<'_, Option<String>>,
+) {
+    let current = settings.monitor.as_str();
+    let edited = previous_selection
+        .as_deref()
+        .is_some_and(|previous| previous != current);
+    if previous_selection.as_deref() != Some(current) {
+        *previous_selection = Some(current.to_owned());
+    }
+    if !edited || fullscreen_override.effective_fullscreen(&settings) {
+        return;
+    }
+    let resolved = resolve_monitor_selection(
+        current,
+        monitors
+            .iter()
+            .map(|(entity, monitor, is_primary)| (entity, monitor.name.as_deref(), is_primary)),
+    );
+    let MonitorSelection::Entity(_) = resolved else {
+        return;
+    };
+    for mut window in &mut windows {
+        window.position = WindowPosition::Centered(resolved);
+    }
+    tracing::info!(monitor = %current, "monitor selection edited; centering window on it");
+}
+
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    reason = "test assertions; expect_used is denied workspace-wide for non-test code"
+)]
 mod tests {
     use bevy::prelude::*;
 
@@ -381,6 +440,103 @@ mod tests {
                 "LG TV".to_owned()
             ],
             "sentinel first, live names after"
+        );
+    }
+
+    /// Harness: `DisplayPlugin` + one windowed Window + one non-primary
+    /// monitor named "LG TV". Returns the app and the monitor entity.
+    ///
+    /// Settings persistence is isolated to a fresh temp dir FIRST —
+    /// `register_sketch_settings` loads the operator's real
+    /// `sketch-settings.toml` at plugin-build time, and a persisted
+    /// `monitor` value (e.g. the sentinel, after the live acceptance run)
+    /// would make the "edit" in these tests a no-op value-diff. Mirror
+    /// `tests/settings_plugin.rs`'s mechanism.
+    fn app_with_window_and_external_monitor() -> (App, Entity) {
+        let config_dir = tempfile::tempdir()
+            .expect("create isolated config dir")
+            .keep();
+        std::env::set_var(crate::settings::persistence::CONFIG_DIR_ENV, &config_dir);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(DisplayPlugin);
+        app.world_mut()
+            .spawn((Window::default(), CursorOptions::default()));
+        let external = app.world_mut().spawn(test_monitor("LG TV")).id();
+        (app, external)
+    }
+
+    fn window_position(app: &mut App) -> WindowPosition {
+        let mut query = app.world_mut().query::<&Window>();
+        query
+            .single(app.world())
+            .expect("harness spawns exactly one window")
+            .position
+    }
+
+    #[test]
+    fn boot_is_not_an_edit_so_the_window_does_not_move() {
+        let (mut app, _) = app_with_window_and_external_monitor();
+        app.update();
+        app.update();
+        assert_eq!(window_position(&mut app), WindowPosition::Automatic);
+    }
+
+    #[test]
+    fn editing_the_selection_while_windowed_centers_on_the_resolved_monitor() {
+        let (mut app, external) = app_with_window_and_external_monitor();
+        app.update();
+        app.world_mut()
+            .resource_mut::<crate::settings::DisplaySettings>()
+            .monitor = "LG TV".to_owned();
+        app.update();
+        assert_eq!(
+            window_position(&mut app),
+            WindowPosition::Centered(MonitorSelection::Entity(external))
+        );
+    }
+
+    #[test]
+    fn selecting_automatic_centers_on_the_external_monitor() {
+        let (mut app, external) = app_with_window_and_external_monitor();
+        app.update();
+        app.world_mut()
+            .resource_mut::<crate::settings::DisplaySettings>()
+            .monitor = crate::settings::AUTO_MONITOR_LABEL.to_owned();
+        app.update();
+        assert_eq!(
+            window_position(&mut app),
+            WindowPosition::Centered(MonitorSelection::Entity(external))
+        );
+    }
+
+    #[test]
+    fn an_unresolvable_name_edit_does_not_move_the_window() {
+        let (mut app, _) = app_with_window_and_external_monitor();
+        app.update();
+        app.world_mut()
+            .resource_mut::<crate::settings::DisplaySettings>()
+            .monitor = "Ghost Monitor".to_owned();
+        app.update();
+        assert_eq!(window_position(&mut app), WindowPosition::Automatic);
+    }
+
+    #[test]
+    fn an_edit_while_effectively_fullscreen_does_not_touch_position() {
+        let (mut app, _) = app_with_window_and_external_monitor();
+        app.update();
+        app.world_mut()
+            .resource_mut::<crate::settings::DisplaySettings>()
+            .start_fullscreen = true;
+        app.update();
+        app.world_mut()
+            .resource_mut::<crate::settings::DisplaySettings>()
+            .monitor = "LG TV".to_owned();
+        app.update();
+        assert_eq!(
+            window_position(&mut app),
+            WindowPosition::Automatic,
+            "fullscreen targeting is apply_display_mode's job; position stays untouched"
         );
     }
 }

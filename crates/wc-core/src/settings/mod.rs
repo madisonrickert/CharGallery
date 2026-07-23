@@ -41,13 +41,14 @@ pub mod webcam;
 mod panel_user;
 
 // `DisplaySettings` / `AvailableMonitors` / `FullscreenOverride` /
-// `compute_display_mode` / `AUTO_MONITOR_LABEL` are crate-internal (consumed
-// by `crate::lifecycle::display` and `crate::lifecycle::nav`, not by sketch
-// crates or the binary), hence `pub(crate)` rather than the `pub use` used
-// for the fully public settings types below.
+// `compute_display_mode` / `resolve_monitor_selection` / `AUTO_MONITOR_LABEL`
+// are crate-internal (consumed by `crate::lifecycle::display` and
+// `crate::lifecycle::nav`, not by sketch crates or the binary), hence
+// `pub(crate)` rather than the `pub use` used for the fully public settings
+// types below.
 pub(crate) use panel_user::display::{
-    compute_display_mode, AvailableMonitors, DisplaySettings, FullscreenOverride,
-    AUTO_MONITOR_LABEL,
+    compute_display_mode, resolve_monitor_selection, AvailableMonitors, DisplaySettings,
+    FullscreenOverride, AUTO_MONITOR_LABEL,
 };
 
 pub use commands::set_setting;
