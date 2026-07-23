@@ -44,7 +44,7 @@
 //! `.cargo/config.toml` instead — nothing is staged for dev/test builds; the
 //! app bundle is the one place a copy is made, by `cargo xtask bundle-mac`.
 //!
-//! LeapC resolution on non-Windows targets is unchanged: the
+//! `LeapC` resolution on non-Windows targets is unchanged: the
 //! `.cargo/config.toml` rpath stanzas + `leaprs`'s default path, as before.
 //! Linux compiles no OBSBOT shim at all; macOS does, per the OBSBOT section
 //! above.
@@ -79,7 +79,7 @@ fn main() {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     if matches!(
         std::env::var("CARGO_CFG_TARGET_OS").as_deref(),
-        Ok("windows") | Ok("macos")
+        Ok("windows" | "macos")
     ) && std::env::var_os("CARGO_FEATURE_OBSBOT_CAMERA_CONTROL").is_some()
     {
         build_obsbot_shim();
@@ -161,7 +161,7 @@ fn link_libdev(libdev_root: &std::path::Path) {
 /// Link the vendored `libdev.dylib` for the compile target's architecture.
 /// No staging, unlike Windows: the dylib's install name is
 /// `@rpath/libdev.dylib`, and the vendor-dir rpath entries in
-/// `.cargo/config.toml` (same convention as LeapC) resolve it at runtime for
+/// `.cargo/config.toml` (same convention as `LeapC`) resolve it at runtime for
 /// binaries at `target/<profile>/`, `deps/`, and `examples/` depths. The app
 /// bundle instead ships a copy at `Contents/MacOS/` resolved via
 /// `@loader_path` — see xtask bundle-mac.
