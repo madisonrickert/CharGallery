@@ -49,6 +49,11 @@ use super::{BODY_LANDMARK_COUNT, MAX_TRACKED_BODIES};
 /// same person. (Carried over from the old single-track stickiness distance.)
 pub const ASSOC_MAX_DIST: f32 = 0.25;
 
+/// Decay time constant for dead-reckoning a reserved slot's anchor, seconds:
+/// the lost person's centroid velocity is integrated with exponential decay
+/// (they were moving when occluded; they do not keep moving forever).
+pub const RECKON_DECAY_TAU: f32 = 1.0;
+
 /// [`crop_weight`] smoothstep floor: at or below this visible fraction a body
 /// is effectively fully penalized (score ≈ 0) — someone this cropped should
 /// never hold primary.
@@ -233,6 +238,17 @@ pub fn assign_slots(
         }
     }
     out
+}
+
+/// Advance a reserved slot's anchor along its last centroid velocity so a
+/// dancer crossing behind another re-binds to their own slot on the far
+/// side instead of claiming a fresh one (identity/color swap). The advance
+/// is the integral of `vel · exp(−t/τ)` and is capped at [`ASSOC_MAX_DIST`]
+/// so a bad velocity estimate can never fling the anchor across the frame.
+#[must_use]
+pub fn dead_reckoned_anchor(anchor: Vec2, vel: Vec2, elapsed_secs: f32) -> Vec2 {
+    let advance = vel * (RECKON_DECAY_TAU * (1.0 - (-elapsed_secs / RECKON_DECAY_TAU).exp()));
+    anchor + advance.clamp_length_max(ASSOC_MAX_DIST)
 }
 
 /// Primary-slot selection state: the current primary, the pending challenger
@@ -483,6 +499,28 @@ mod tests {
         assert!(spiked < 0.03, "one spike must barely register: {spiked}");
         // Negative dt / samples are clamped (defensive, never NaN).
         assert!(motion_ema_step(0.5, -1.0, -0.1) <= 0.5);
+    }
+
+    /// Dead reckoning advances along the velocity, decays (never overshoots
+    /// v·τ), and is capped at [`ASSOC_MAX_DIST`] total advance.
+    #[test]
+    fn dead_reckoned_anchor_decays_and_caps() {
+        let a = Vec2::new(0.5, 0.5);
+        // Zero velocity: identity.
+        assert_eq!(dead_reckoned_anchor(a, Vec2::ZERO, 2.0), a);
+        // Short elapsed ≈ linear advance.
+        let v = Vec2::new(0.2, 0.0);
+        let short = dead_reckoned_anchor(a, v, 0.1);
+        assert!((short.x - (0.5 + 0.02)).abs() < 0.005, "{short:?}");
+        // Long elapsed converges to v·τ, not v·t.
+        let long = dead_reckoned_anchor(a, v, 10.0);
+        assert!(
+            (long.x - (0.5 + 0.2 * RECKON_DECAY_TAU)).abs() < 1e-3,
+            "{long:?}"
+        );
+        // A hot velocity is capped at ASSOC_MAX_DIST total advance.
+        let capped = dead_reckoned_anchor(a, Vec2::new(5.0, 0.0), 10.0);
+        assert!((capped - a).length() <= ASSOC_MAX_DIST + 1e-6);
     }
 
     #[test]

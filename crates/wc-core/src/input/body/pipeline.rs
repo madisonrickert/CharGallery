@@ -59,7 +59,7 @@ use super::roi::{
     ContentRect, RoiRect, AUX_CENTER_ROW, AUX_SCALE_ROW, LANDMARK_INPUT, LANDMARK_ROWS,
     LANDMARK_VALUES,
 };
-use super::selection::{assign_slots, visible_fraction};
+use super::selection::{assign_slots, dead_reckoned_anchor, visible_fraction};
 use super::smoothing::OneEuroFilter;
 use super::transport::{BodyFramePayload, SlotFrame};
 use super::{BodyLandmark, BODY_LANDMARK_COUNT, MASK_CHANNELS, MASK_SIZE, MAX_TRACKED_BODIES};
@@ -402,6 +402,13 @@ struct SlotTrack {
     /// Last known person centre (square-norm) — the association anchor while
     /// Active or Reserved.
     anchor: Vec2,
+    /// EMA'd centroid velocity (square-norm units/s) — dead-reckons the anchor
+    /// while Reserved.
+    anchor_vel: Vec2,
+    /// Worker time of the last inference-driven anchor update.
+    anchor_at: Duration,
+    /// Worker time this occupancy was lost (entered Reserved).
+    lost_at: Duration,
     /// When this occupancy first became [`SlotPhase::Active`] (worker clock).
     /// NOT reset on a Reserved→Active re-acquisition — the occupancy
     /// continues — only on a fresh Free→Active claim. Drives the
@@ -423,6 +430,9 @@ impl SlotTrack {
             phase: SlotPhase::Free,
             roi: None,
             anchor: Vec2::ZERO,
+            anchor_vel: Vec2::ZERO,
+            anchor_at: Duration::ZERO,
+            lost_at: Duration::ZERO,
             active_since: Duration::ZERO,
             reserved_until: Duration::ZERO,
             aux_filter: AuxRoiFilter::new(),
@@ -450,6 +460,7 @@ impl SlotTrack {
         }
         self.phase = SlotPhase::Reserved;
         self.reserved_until = now + SLOT_RESERVE;
+        self.lost_at = now;
         self.roi = None;
         self.frame.present = false;
     }
@@ -847,7 +858,11 @@ impl PosePipeline {
         let mut claimable = [false; MAX_TRACKED_BODIES];
         for (i, slot) in self.slots.iter().enumerate() {
             match slot.phase {
-                SlotPhase::Active | SlotPhase::Reserved => anchors[i] = Some(slot.anchor),
+                SlotPhase::Active => anchors[i] = Some(slot.anchor),
+                SlotPhase::Reserved => {
+                    let elapsed = now.saturating_sub(slot.lost_at).as_secs_f32();
+                    anchors[i] = Some(dead_reckoned_anchor(slot.anchor, slot.anchor_vel, elapsed));
+                }
                 SlotPhase::Free => claimable[i] = i < self.max_tracked,
             }
         }
@@ -872,9 +887,17 @@ impl PosePipeline {
                         // A fresh occupancy starts its age clock here; a
                         // Reserved re-acquisition keeps the original
                         // active_since (the same person's visit continues,
-                        // and their main-side fade may be mid-flight).
+                        // and their main-side fade may be mid-flight). A new
+                        // occupant also carries no stale momentum.
                         slot.active_since = now;
+                        slot.anchor_vel = Vec2::ZERO;
                     }
+                    // Re-seat the anchor clock on either path (the EMA in
+                    // `run_slot_inference` measures against it next frame, and
+                    // a Reserved re-acquisition keeps `anchor_vel` — the EMA
+                    // corrects it — but must not diff across the reservation
+                    // gap).
+                    slot.anchor_at = now;
                     slot.phase = SlotPhase::Active;
                     slot.roi = Some(roi_from_detection(&self.person_clusters[c]));
                     slot.anchor = centres[c];
@@ -1026,7 +1049,19 @@ impl PosePipeline {
             crop_fraction,
             size,
         };
-        slot.anchor = Vec2::new(next_roi.cx, next_roi.cy);
+        let new_anchor = Vec2::new(next_roi.cx, next_roi.cy);
+        let dt = now.saturating_sub(slot.anchor_at).as_secs_f32();
+        if dt > 0.0 && dt < 1.0 {
+            // EMA matching the landmark velocity smoothing (alpha 0.5);
+            // a stale gap (round-robin skip storm) resets instead of
+            // fabricating a huge finite difference.
+            let raw = (new_anchor - slot.anchor) / dt;
+            slot.anchor_vel += (raw - slot.anchor_vel) * 0.5;
+        } else {
+            slot.anchor_vel = Vec2::ZERO;
+        }
+        slot.anchor = new_anchor;
+        slot.anchor_at = now;
         if roi_trackable(&next_roi, content) {
             slot.roi = Some(next_roi);
         } else {
@@ -1046,6 +1081,7 @@ impl PosePipeline {
                 } else {
                     YOUNG_EDGE_RESERVE
                 };
+            slot.lost_at = now;
             slot.roi = None;
         }
         Ok(())
@@ -1426,7 +1462,7 @@ fn byte(v: f32) -> u8 {
 /// outputs for the detector and landmark stages.
 #[cfg(test)]
 pub(crate) mod fixtures {
-    use super::super::roi::{LANDMARK_ROWS, LANDMARK_VALUES};
+    use super::super::roi::{AUX_CENTER_ROW, AUX_SCALE_ROW, LANDMARK_ROWS, LANDMARK_VALUES};
     use super::{Tensor, MASK_SIZE, POSE_ANCHOR_COUNT, POSE_REGRESSION_LEN};
 
     /// Anchor index of the first anchor at stride-8 grid cell (14, 14): the
@@ -1610,6 +1646,47 @@ pub(crate) mod fixtures {
                 shape: vec![1, LANDMARK_ROWS * LANDMARK_VALUES],
             },
         ]
+    }
+
+    /// Single confident person at an arbitrary detector `anchor` (0.3² box,
+    /// upright scale point) — lets a test place a returning body at a grid
+    /// cell far from [`HOT_ANCHOR`] (e.g. [`PERSON_C_ANCHOR`]).
+    pub(crate) fn one_person_detector_outputs(anchor: usize) -> Vec<Tensor> {
+        let mut boxes = vec![0.0_f32; POSE_ANCHOR_COUNT * POSE_REGRESSION_LEN];
+        let mut scores = vec![-100.0_f32; POSE_ANCHOR_COUNT];
+        set_person(&mut boxes, &mut scores, anchor, 100.0);
+        vec![
+            Tensor {
+                data: boxes,
+                shape: vec![1, POSE_ANCHOR_COUNT, POSE_REGRESSION_LEN],
+            },
+            Tensor {
+                data: scores,
+                shape: vec![1, POSE_ANCHOR_COUNT, 1],
+            },
+        ]
+    }
+
+    /// As [`confident_landmark_outputs`] but with the two aux tracking rows
+    /// (33 centre, 34 scale point) set explicitly, in crop pixels. Lets a test
+    /// march the tracking ROI sideways (offset centre) with a wide enough
+    /// centre→scale span that the carried ROI holds its size instead of
+    /// collapsing after a couple of tracking frames.
+    pub(crate) fn confident_landmark_outputs_aux(
+        cx: f32,
+        cy: f32,
+        sx: f32,
+        sy: f32,
+    ) -> Vec<Tensor> {
+        let mut outs = confident_landmark_outputs();
+        // The aux rows live in the last tensor ([1, 39·5]); rows 33/34.
+        if let Some(rows) = outs.last_mut() {
+            rows.data[AUX_CENTER_ROW * LANDMARK_VALUES] = cx;
+            rows.data[AUX_CENTER_ROW * LANDMARK_VALUES + 1] = cy;
+            rows.data[AUX_SCALE_ROW * LANDMARK_VALUES] = sx;
+            rows.data[AUX_SCALE_ROW * LANDMARK_VALUES + 1] = sy;
+        }
+        outs
     }
 
     /// Lossless small-usize → f32 for fixture math.
@@ -1939,6 +2016,109 @@ mod tests {
             p.slots[0].phase,
             SlotPhase::Reserved,
             "re-acquired occupancy keeps its original age"
+        );
+    }
+
+    /// Occlusion-crossing identity keep: a track that was moving when it was
+    /// lost re-binds to its own reserved slot even when it returns *beyond*
+    /// [`ASSOC_MAX_DIST`] of the frozen anchor — because the reservation's
+    /// association anchor is dead-reckoned along the track's last centroid
+    /// velocity ([`super::selection::dead_reckoned_anchor`]).
+    ///
+    /// Establish a rightward `anchor_vel` over several tracking frames (the
+    /// aux tracking centre marched sideways with a wide centre→scale span so
+    /// the carried ROI holds its size), lose the track while it is moving
+    /// (frozen anchor ≈ 0.57), then present the returning body a full second
+    /// later at [`PERSON_C_CENTER`] ≈ 0.875 — 0.31 away from the frozen anchor
+    /// (a fresh-slot claim without reckoning) but only ≈ 0.11 from the
+    /// reckoned anchor (≈ 0.77). The discriminator is `active_since`: a
+    /// Reserved→Active re-acquisition keeps the original age (here `ZERO`),
+    /// whereas a fresh Free→Active claim would stamp it with the return time
+    /// and light a *different* slot.
+    #[test]
+    fn reserved_anchor_dead_reckons_toward_a_moving_return() {
+        struct SharedOutputs(std::sync::Arc<std::sync::Mutex<Vec<Tensor>>>);
+        impl ModelInference for SharedOutputs {
+            fn run(
+                &mut self,
+                _input: &Tensor,
+                out: &mut Vec<Tensor>,
+            ) -> Result<(), InferenceError> {
+                out.clone_from(&self.0.lock().expect("outputs lock"));
+                Ok(())
+            }
+        }
+        use std::sync::{Arc, Mutex};
+        let ms = Duration::from_millis;
+        let det = Arc::new(Mutex::new(hot_person_detector_outputs()));
+        let lm = Arc::new(Mutex::new(confident_landmark_outputs()));
+        let mut p = PosePipeline::new(
+            Box::new(SharedOutputs(Arc::clone(&det))),
+            Box::new(SharedOutputs(Arc::clone(&lm))),
+            PoseConfig::default(),
+        );
+        let good = solid_frame();
+
+        // Acquire the track at the central anchor (≈ 0.518).
+        p.process(&good, ms(0), false, None).expect("acquire");
+        assert_eq!(p.slots[0].phase, SlotPhase::Active);
+        assert_eq!(p.slots[0].active_since, Duration::ZERO);
+
+        // March the tracking ROI steadily rightward to build `anchor_vel`.
+        // A wide centre→scale span (150 vs 0 crop px) keeps the carried ROI
+        // from collapsing, so the anchor advances a fixed step each frame.
+        *lm.lock().expect("lock") = confident_landmark_outputs_aux(150.0, 128.0, 150.0, 0.0);
+        for t in [500u64, 533, 566, 599, 632, 665] {
+            p.process(&good, ms(t), false, None).expect("track");
+        }
+        assert_eq!(p.slots[0].phase, SlotPhase::Active);
+        let frozen = p.slots[0].anchor;
+        assert!(
+            p.slots[0].anchor_vel.x > 0.15,
+            "a rightward velocity must be established: {:?}",
+            p.slots[0].anchor_vel
+        );
+
+        // Lose the track while it is moving (mature age → reserves), holding
+        // the frozen anchor and its velocity.
+        *lm.lock().expect("lock") = low_confidence_landmark_outputs();
+        p.process(&good, ms(698), false, None).expect("lose");
+        assert_eq!(
+            p.slots[0].phase,
+            SlotPhase::Reserved,
+            "mature moving track reserves on loss"
+        );
+
+        // The person re-emerges a full second later displaced far to the
+        // right but at the SAME height (grid cell (x=24, y=14) → centre
+        // ≈ (0.875, 0.518)) — beyond ASSOC_MAX_DIST of the frozen anchor,
+        // within it of the reckoned one. (PERSON_C is diagonal, so its Y
+        // offset would swamp the X gain; this anchor shares the track's row.)
+        let return_anchor = (14 * 28 + 24) * 2;
+        let return_x = 24.5 / 28.0_f32; // = PERSON_C_CENTER
+        assert!(
+            (return_x - frozen.x).abs() > super::super::selection::ASSOC_MAX_DIST,
+            "return must be un-associable without reckoning: {return_x} vs {}",
+            frozen.x
+        );
+        *det.lock().expect("lock") = one_person_detector_outputs(return_anchor);
+        *lm.lock().expect("lock") = confident_landmark_outputs();
+        p.process(&good, ms(1698), false, None).expect("return");
+
+        assert_eq!(
+            p.slots[0].phase,
+            SlotPhase::Active,
+            "dead-reckoned anchor re-binds the returning body to its own slot"
+        );
+        assert_eq!(
+            p.slots[0].active_since,
+            Duration::ZERO,
+            "re-acquisition keeps the original age — not a fresh claim"
+        );
+        assert!(p.slot_frames()[0].present, "slot 0 is the present body");
+        assert!(
+            p.slots[1..].iter().all(|s| s.phase == SlotPhase::Free),
+            "no identity/colour swap: the return did not claim a fresh slot"
         );
     }
 
