@@ -155,18 +155,19 @@ Failure semantics unchanged: a run that misses `AI_OFF`/`GESTURE_OFF`
 publishes `Failed` with the existing loud warning pointing at
 `docs/runbooks/obsbot.md`.
 
-## Open decision — SDK redistribution posture
+## Decision — SDK redistribution posture (resolved 2026-07-23)
 
 `vendor/libdev` ships no license file and `dev.hpp` carries an internal
 "not open to the public" marker; `docs/runbooks/obsbot.md` scopes use to
 local/gig hardware and says redistribution terms must be clarified with
 OBSBOT before any public release ships the SDK. Today's escape hatch is
-that feature-off builds ship no SDK bits. **Defaulting the feature on
-closes that hatch:** every bundle (including the published Promote Alpha
-zips) would embed `libdev.dylib`/`libdev.dll`. Resolution is Madison's
-call — accept for now (pre-release, own hardware), gate release bundling
-on a feature-off build, or clear terms with OBSBOT — and the runbook's
-license section must be updated to match whichever it is.
+that feature-off builds ship no SDK bits, and defaulting the feature on
+closes that hatch: every bundle (including the published Promote Alpha
+zips) embeds `libdev.dylib`/`libdev.dll`. **Madison's decision
+(2026-07-23): accepted for now** — the project is pre-release and its
+artifacts serve her own hardware. The runbook's license section is
+updated to record the acceptance and its boundary: revisit and clear
+terms with OBSBOT before any public or client-facing distribution.
 
 ## Out of scope
 

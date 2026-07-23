@@ -601,6 +601,14 @@ Expected: PASS (three new tests green, LeapC and plist tests still green).
   ```
   cargo test -p wc-core --features obsbot-camera-control obsbot_hardware_framing -- --ignored --nocapture
   ```
+- License caveat section: append the decision line (keep the existing caveat text above it):
+  ```markdown
+  **Decision 2026-07-23 (pre-release):** accepted — release artifacts may
+  embed the vendored SDK binaries while the project is pre-release and its
+  artifacts serve our own hardware (the feature is now a Windows/macOS
+  target-table default, so every bundle ships them). Revisit and clear
+  terms with OBSBOT before any public or client-facing distribution.
+  ```
 
 `docs/runbooks/kiosk.md` (lines 52-54): replace
 
