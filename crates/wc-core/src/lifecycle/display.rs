@@ -56,10 +56,11 @@
 //! later frame.
 
 use bevy::prelude::*;
-use bevy::window::{CursorOptions, Monitor};
+use bevy::window::{CursorOptions, Monitor, PrimaryMonitor};
 
 use crate::settings::{
     compute_display_mode, AvailableMonitors, DisplaySettings, FullscreenOverride,
+    AUTO_MONITOR_LABEL,
 };
 use crate::settings::{RegisterRuntimeEnumOptionsExt, RegisterSketchSettingsExt};
 use crate::ui::buttons::SettingsPanelVisible;
@@ -145,7 +146,7 @@ pub(crate) fn apply_display_mode(
     settings: Res<'_, DisplaySettings>,
     fullscreen_override: Res<'_, FullscreenOverride>,
     panel_visible: Res<'_, SettingsPanelVisible>,
-    monitors: Query<'_, '_, (Entity, &Monitor)>,
+    monitors: Query<'_, '_, (Entity, &Monitor, Has<PrimaryMonitor>)>,
     mut windows: Query<'_, '_, (&mut Window, &mut CursorOptions)>,
 ) {
     let target = compute_display_mode(
@@ -154,7 +155,7 @@ pub(crate) fn apply_display_mode(
         panel_visible.0,
         monitors
             .iter()
-            .map(|(entity, monitor)| (entity, monitor.name.as_deref())),
+            .map(|(entity, monitor, is_primary)| (entity, monitor.name.as_deref(), is_primary)),
     );
     for (mut window, mut cursor) in &mut windows {
         if window.mode != target.mode {
@@ -203,7 +204,8 @@ pub(crate) fn clear_fullscreen_override_on_settings_edit(
 }
 
 /// Refresh [`AvailableMonitors`] from the live `Monitor` set, but only on a
-/// frame where a monitor was actually added or removed.
+/// frame where a monitor was actually added or removed. The rebuilt list is
+/// sentinel-first: `AUTO_MONITOR_LABEL` always heads it, live names follow.
 ///
 /// `removed.read().count()` fully drains the `RemovedComponents` reader, so
 /// a removal is consumed exactly once and cannot re-trigger this system on a
@@ -222,6 +224,7 @@ pub(crate) fn sync_available_monitors(
         return;
     }
     available.0.clear();
+    available.0.push(AUTO_MONITOR_LABEL.to_owned());
     available
         .0
         .extend(monitors.iter().filter_map(|m| m.name.clone()));
@@ -344,6 +347,40 @@ mod tests {
             snap.iter().any(|entry| entry.options_key == options_key),
             "no registered RuntimeEnumOptionsSource reports `{options_key}`; \
              the monitor dropdown would render empty"
+        );
+    }
+
+    fn test_monitor(name: &str) -> Monitor {
+        Monitor {
+            name: Some(name.to_owned()),
+            physical_height: 1080,
+            physical_width: 1920,
+            physical_position: IVec2::ZERO,
+            refresh_rate_millihertz: Some(60_000),
+            scale_factor: 1.0,
+            video_modes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn sync_keeps_the_sentinel_at_the_head_of_the_options() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(DisplayPlugin);
+        app.world_mut().spawn(test_monitor("LG TV"));
+        app.update();
+
+        let list = &app
+            .world()
+            .resource::<crate::settings::AvailableMonitors>()
+            .0;
+        assert_eq!(
+            list.as_slice(),
+            [
+                crate::settings::AUTO_MONITOR_LABEL.to_owned(),
+                "LG TV".to_owned()
+            ],
+            "sentinel first, live names after"
         );
     }
 }

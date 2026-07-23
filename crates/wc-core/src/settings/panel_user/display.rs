@@ -109,6 +109,15 @@ pub(crate) struct DisplaySettings {
     /// fall-back-without-rewrite behaviour. The stored value (a plain `String`)
     /// and its resolution semantics are unchanged from the `ty = Text` version;
     /// only the widget differs.
+    ///
+    /// The dropdown is headed by the `AUTO_MONITOR_LABEL` sentinel: it targets
+    /// the first non-primary (external) monitor, where "primary" is the
+    /// OS-reported primary display rather than whichever monitor the app
+    /// happens to be on — see [`resolve_monitor_selection`] for the exact
+    /// caveat. Selecting any entry here also takes effect immediately in
+    /// windowed mode, not only when fullscreen: the window centers itself on
+    /// the resolved monitor (the windowed move system in
+    /// `crate::lifecycle::display`).
     #[setting(
         default = String::new(),
         ty = RuntimeEnum,
@@ -166,14 +175,31 @@ impl FullscreenOverride {
 /// see that system's doc for why). Registered as Plan 03a's options source for
 /// the `"monitors"` key (see the [`RuntimeEnumOptionsSource`] impl below and
 /// `crate::lifecycle::display::DisplayPlugin::build`), which is what populates
-/// the `monitor` field's dropdown.
+/// the `monitor` field's dropdown. The automatic sentinel (`AUTO_MONITOR_LABEL`)
+/// always heads the list, so the dropdown offers "pick for me" before any
+/// live monitor has enumerated.
 ///
-/// An empty list is a normal state, not an error: `bevy_winit` spawns its
-/// `Monitor` entities on the first event-loop iteration, which can land after
-/// `Startup`. 03a omits the key from its snapshot in that case and still
-/// renders the persisted value.
-#[derive(Resource, Default, Debug, Clone, PartialEq)]
+/// The list is never empty: [`Default`] seeds it with the sentinel alone, and
+/// `DisplayPlugin::build` inits this resource at plugin-build time, so the
+/// `"monitors"` key is always present in Plan 03a's options snapshot. ("Omits
+/// the key from its snapshot" only ever described an *absent* resource, which
+/// cannot happen here.)
+#[derive(Resource, Debug, Clone, PartialEq)]
 pub(crate) struct AvailableMonitors(pub(crate) Vec<String>);
+
+/// Sentinel entry heading the monitor dropdown (the camera picker's
+/// `AUTO_LABEL` convention): selecting it targets the first non-primary
+/// (external) monitor and falls back to the current one when none exists.
+/// Persisted verbatim as the `monitor` field's value.
+pub(crate) const AUTO_MONITOR_LABEL: &str = "Automatic (External monitor with fallback)";
+
+impl Default for AvailableMonitors {
+    /// The sentinel is always present — even before winit's first monitor
+    /// enumeration — so automatic mode never renders as "(unavailable)".
+    fn default() -> Self {
+        Self(vec![AUTO_MONITOR_LABEL.to_owned()])
+    }
+}
 
 /// Feeds the live monitor-name list to Plan 03a's runtime-enum settings
 /// widget. The `monitor` field of [`DisplaySettings`] declares
@@ -235,7 +261,7 @@ pub(crate) fn compute_display_mode<'a>(
     settings: &DisplaySettings,
     fullscreen_override: FullscreenOverride,
     settings_panel_open: bool,
-    live_monitors: impl IntoIterator<Item = (Entity, Option<&'a str>)>,
+    live_monitors: impl IntoIterator<Item = (Entity, Option<&'a str>, bool)>,
 ) -> DisplayModeTarget {
     let mode = if fullscreen_override.effective_fullscreen(settings) {
         WindowMode::BorderlessFullscreen(resolve_monitor_selection(
@@ -251,30 +277,41 @@ pub(crate) fn compute_display_mode<'a>(
     }
 }
 
-/// Resolve a persisted monitor name to a [`MonitorSelection`] against the
-/// monitors currently known to the ECS.
+/// Resolve a persisted monitor selection to a [`MonitorSelection`] against
+/// the monitors currently known to the ECS (`is_primary` = bevy_winit's
+/// `PrimaryMonitor` marker).
 ///
 /// - An empty `saved_name` (the field's default) means "no preference":
 ///   always [`MonitorSelection::Current`].
+/// - [`AUTO_MONITOR_LABEL`] means automatic: the first non-primary
+///   (external) monitor, else [`MonitorSelection::Current`]. "External" is
+///   OS-primary-relative — see the `monitor` field doc for the caveat.
 /// - A non-empty name matching a live monitor's `Some(name)` resolves to
 ///   that monitor's `Entity`.
 /// - A non-empty name with no live match — the monitor is asleep, unplugged,
-///   or winit has not enumerated any monitors yet (this can run at
-///   `Startup`, which may race `bevy_winit`'s monitor sync) — falls back to
-///   [`MonitorSelection::Current`]. The caller never rewrites `saved_name` in
-///   this case; the `&str` parameter makes that structurally true. An HDMI TV
-///   that is merely asleep must not lose its saved binding.
-fn resolve_monitor_selection<'a>(
+///   renamed by the OS (observed 2026-07-23: the same display re-enumerated
+///   as `Monitor #4225` then `Monitor #2`), or winit has not enumerated yet —
+///   falls back to [`MonitorSelection::Current`]. The caller never rewrites
+///   `saved_name`; the `&str` parameter makes that structurally true.
+pub(crate) fn resolve_monitor_selection<'a>(
     saved_name: &str,
-    live_monitors: impl IntoIterator<Item = (Entity, Option<&'a str>)>,
+    live_monitors: impl IntoIterator<Item = (Entity, Option<&'a str>, bool)>,
 ) -> MonitorSelection {
     if saved_name.is_empty() {
         return MonitorSelection::Current;
     }
+    if saved_name == AUTO_MONITOR_LABEL {
+        return live_monitors
+            .into_iter()
+            .find(|(_, _, is_primary)| !is_primary)
+            .map_or(MonitorSelection::Current, |(entity, _, _)| {
+                MonitorSelection::Entity(entity)
+            });
+    }
     live_monitors
         .into_iter()
-        .find(|(_, name)| *name == Some(saved_name))
-        .map_or(MonitorSelection::Current, |(entity, _)| {
+        .find(|(_, name, _)| *name == Some(saved_name))
+        .map_or(MonitorSelection::Current, |(entity, _, _)| {
             MonitorSelection::Entity(entity)
         })
 }
@@ -296,7 +333,7 @@ mod tests {
 
     #[test]
     fn empty_saved_name_resolves_to_current_regardless_of_live_monitors() {
-        let live = [(entity(1), Some("DELL U2720Q"))];
+        let live = [(entity(1), Some("DELL U2720Q"), true)];
         assert_eq!(
             resolve_monitor_selection("", live),
             MonitorSelection::Current
@@ -307,8 +344,8 @@ mod tests {
     fn a_saved_name_matching_a_live_monitor_resolves_to_its_entity() {
         let target = entity(2);
         let live = [
-            (entity(1), Some("Built-in Display")),
-            (target, Some("LG TV")),
+            (entity(1), Some("Built-in Display"), true),
+            (target, Some("LG TV"), false),
         ];
         assert_eq!(
             resolve_monitor_selection("LG TV", live),
@@ -322,7 +359,7 @@ mod tests {
         // `saved_name` in this case — the type signature makes that
         // structurally true: `&str` in, no mutation possible. An HDMI TV
         // that is merely asleep must not lose its saved binding.
-        let live = [(entity(1), Some("Built-in Display"))];
+        let live = [(entity(1), Some("Built-in Display"), true)];
         assert_eq!(
             resolve_monitor_selection("LG TV (asleep)", live),
             MonitorSelection::Current
@@ -334,7 +371,7 @@ mod tests {
         // Covers the Startup-vs-create_monitors race: at boot the ECS may not
         // have any Monitor entities yet. Falling back here is what makes that
         // race harmless — see the module doc on compute_display_mode.
-        let live: [(Entity, Option<&str>); 0] = [];
+        let live: [(Entity, Option<&str>, bool); 0] = [];
         assert_eq!(
             resolve_monitor_selection("LG TV", live),
             MonitorSelection::Current
@@ -343,10 +380,55 @@ mod tests {
 
     #[test]
     fn an_unnamed_live_monitor_never_matches_a_non_empty_saved_name() {
-        let live = [(entity(1), None)];
+        let live = [(entity(1), None, false)];
         assert_eq!(
             resolve_monitor_selection("LG TV", live),
             MonitorSelection::Current
+        );
+    }
+
+    // --- automatic (sentinel) arm ---
+
+    #[test]
+    fn automatic_targets_the_first_non_primary_monitor() {
+        let external = entity(2);
+        let live = [
+            (entity(1), Some("Built-in Display"), true),
+            (external, Some("LG TV"), false),
+            (entity(3), Some("Second TV"), false),
+        ];
+        assert_eq!(
+            resolve_monitor_selection(AUTO_MONITOR_LABEL, live),
+            MonitorSelection::Entity(external)
+        );
+    }
+
+    #[test]
+    fn automatic_falls_back_to_current_when_every_monitor_is_primary() {
+        // The single-display kiosk: the TV is the OS primary, and Current
+        // targets it anyway — the fallback in the sentinel's label.
+        let live = [(entity(1), Some("LG TV"), true)];
+        assert_eq!(
+            resolve_monitor_selection(AUTO_MONITOR_LABEL, live),
+            MonitorSelection::Current
+        );
+    }
+
+    #[test]
+    fn automatic_falls_back_to_current_on_an_empty_monitor_list() {
+        let live: [(Entity, Option<&str>, bool); 0] = [];
+        assert_eq!(
+            resolve_monitor_selection(AUTO_MONITOR_LABEL, live),
+            MonitorSelection::Current
+        );
+    }
+
+    #[test]
+    fn available_monitors_default_is_exactly_the_sentinel() {
+        assert_eq!(
+            AvailableMonitors::default().0,
+            vec![AUTO_MONITOR_LABEL.to_owned()],
+            "the automatic entry must be selectable before enumeration"
         );
     }
 
@@ -366,7 +448,7 @@ mod tests {
             hide_cursor: false,
             monitor: "LG TV".to_string(),
         };
-        let live = [(entity(1), Some("LG TV"))];
+        let live = [(entity(1), Some("LG TV"), false)];
         let target = compute_display_mode(&settings, NO_OVERRIDE, PANEL_CLOSED, live);
         assert_eq!(target.mode, WindowMode::Windowed);
     }
@@ -394,8 +476,8 @@ mod tests {
             monitor: "LG TV".to_string(),
         };
         let live = [
-            (entity(1), Some("Built-in Display")),
-            (target_entity, Some("LG TV")),
+            (entity(1), Some("Built-in Display"), true),
+            (target_entity, Some("LG TV"), false),
         ];
         let target = compute_display_mode(&settings, NO_OVERRIDE, PANEL_CLOSED, live);
         assert_eq!(
@@ -462,7 +544,7 @@ mod tests {
             hide_cursor: false,
             monitor: "LG TV".to_string(),
         };
-        let live = [(entity(1), Some("LG TV"))];
+        let live = [(entity(1), Some("LG TV"), true)];
         let target =
             compute_display_mode(&kiosk, FullscreenOverride(Some(false)), PANEL_CLOSED, live);
         assert_eq!(target.mode, WindowMode::Windowed);
@@ -476,7 +558,7 @@ mod tests {
             hide_cursor: false,
             monitor: "LG TV".to_string(),
         };
-        let live = [(target_entity, Some("LG TV"))];
+        let live = [(target_entity, Some("LG TV"), false)];
         let target = compute_display_mode(
             &settings,
             FullscreenOverride(Some(true)),
@@ -557,11 +639,6 @@ mod tests {
         let from_absent_fields: DisplaySettings =
             toml::from_str("").expect("an empty table is valid TOML and every field has a default");
         assert_eq!(from_absent_fields, DisplaySettings::default());
-    }
-
-    #[test]
-    fn available_monitors_defaults_empty() {
-        assert!(AvailableMonitors::default().0.is_empty());
     }
 
     /// The derive macro's `options_key` (on the `monitor` field) and the
