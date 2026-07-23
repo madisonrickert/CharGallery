@@ -173,6 +173,16 @@ pub fn decode_pose_detections_into(
         let Some(&raw_score) = raw_scores.get(i) else {
             break;
         };
+        // A literal-0.0 logit is an *uncomputed* anchor, not a detection: a
+        // trained detector emits strongly negative background logits, and
+        // sigmoid(0) = 0.5 would ride exactly on the score gate. The macOS
+        // CoreML EP miscomputes a varying subset of this model's stride-16
+        // score head (anchors ~1568..1960) to exact zeros — each one decoded
+        // here as a phantom 0.5-confidence person that then claims a tracking
+        // slot. Treat exact zero as background on every EP.
+        if raw_score == 0.0 {
+            continue;
+        }
         let score = sigmoid(raw_score.clamp(-SCORE_CLIP, SCORE_CLIP));
         if score < score_threshold {
             continue;
@@ -378,6 +388,20 @@ mod tests {
         // raw 0 → sigmoid 0.5; threshold 0.6 drops it.
         decode_pose_detections_into(&raw, &[0.0], &[anchor], 0.6, &mut out);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn decode_drops_uncomputed_zero_logits_even_at_the_gate() {
+        // sigmoid(0) = 0.5 ties the default 0.5 gate, but a literal-0.0 logit
+        // is an uncomputed anchor (the CoreML stride-16 miscompute), never a
+        // real detection — it must not decode as a phantom person. A nearby
+        // genuinely-computed logit above the gate still decodes.
+        let anchors = [Anchor { cx: 0.25, cy: 0.25 }, Anchor { cx: 0.75, cy: 0.75 }];
+        let raw = vec![0.0_f32; POSE_REGRESSION_LEN * 2];
+        let mut out = Vec::new();
+        decode_pose_detections_into(&raw, &[0.0, 0.1], &anchors, 0.5, &mut out);
+        assert_eq!(out.len(), 1, "zero logit decoded as a detection: {out:?}");
+        assert!((out[0].keypoints[0].x - 0.75).abs() < 1e-5);
     }
 
     fn det(score: f32, x: f32, y: f32, size: f32) -> PersonDetection {

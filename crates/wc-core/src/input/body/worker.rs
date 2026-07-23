@@ -107,8 +107,22 @@ pub fn load_pose_pipeline(
     model_dir: &Path,
     max_tracked: usize,
 ) -> Result<(PosePipeline, &'static str), String> {
-    let (detector, det_backend) = load_model(model_dir, POSE_DETECTION_MODEL)?;
-    let (landmark, lm_backend) = load_model(model_dir, POSE_LANDMARK_MODEL)?;
+    // The pose DETECTOR runs on the CPU EP on macOS: CoreML miscomputes a
+    // varying subset of its stride-16 score head to literal-0.0 logits
+    // (phantom 0.5-confidence people; see the zero-logit guard in
+    // `detector::decode_pose_detections_into`, which also defends the other
+    // EPs). The detector is small and runs a few times a second at most, so
+    // CPU costs ~nothing; the heavy landmark model stays accelerated.
+    #[cfg(target_os = "macos")]
+    let detector_backend = crate::settings::HandTrackingBackend::ForceCpu;
+    #[cfg(not(target_os = "macos"))]
+    let detector_backend = crate::settings::HandTrackingBackend::default();
+    let (detector, det_backend) = load_model(model_dir, POSE_DETECTION_MODEL, detector_backend)?;
+    let (landmark, lm_backend) = load_model(
+        model_dir,
+        POSE_LANDMARK_MODEL,
+        crate::settings::HandTrackingBackend::default(),
+    )?;
     let backend = combined_backend(det_backend, lm_backend);
     let config = PoseConfig {
         disable_heatmap_refine: heatmap_refine_disabled(),
@@ -136,19 +150,20 @@ fn heatmap_refine_disabled() -> bool {
 }
 
 /// Load one ONNX model as a boxed [`ModelInference`] with its backend label.
-fn load_model(dir: &Path, name: &str) -> Result<(Box<dyn ModelInference>, &'static str), String> {
+/// The body worker has no operator-facing backend lever (the hand provider's
+/// `HandTrackingBackend` setting is hand-only); callers pass `Auto` — try the
+/// platform GPU EP, purge-and-retry a poisoned `CoreML` cache once, degrade to
+/// the CPU EP rather than fail — except where an EP is known-broken for a
+/// model (see [`load_pose_pipeline`]'s detector note).
+fn load_model(
+    dir: &Path,
+    name: &str,
+    backend: crate::settings::HandTrackingBackend,
+) -> Result<(Box<dyn ModelInference>, &'static str), String> {
     let path = dir.join(name);
     let bytes = std::fs::read(&path).map_err(|e| format!("read model {}: {e}", path.display()))?;
-    // The body worker has no operator-facing backend lever (the hand provider's
-    // `HandTrackingBackend` setting is hand-only); `Auto` is the resilient
-    // default — try the platform GPU EP, purge-and-retry a poisoned CoreML
-    // cache once, and degrade this model to the CPU EP rather than fail.
-    let model = crate::input::onnx::ort::OrtInference::load(
-        &bytes,
-        crate::settings::HandTrackingBackend::default(),
-        name,
-    )
-    .map_err(|e| e.to_string())?;
+    let model = crate::input::onnx::ort::OrtInference::load(&bytes, backend, name)
+        .map_err(|e| e.to_string())?;
     let backend = model.backend();
     let boxed: Box<dyn ModelInference> = Box::new(model);
     Ok((boxed, backend))
@@ -1170,8 +1185,15 @@ mod model_tests {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/pose");
         let (_pipeline, backend) =
             load_pose_pipeline(&dir, super::super::MAX_TRACKED_BODIES).expect("pipeline builds");
+        // macOS deliberately mixes EPs: detector on CPU (CoreML miscomputes
+        // its stride-16 score head — see `load_pose_pipeline`), landmark on
+        // CoreML. A non-mixed label would mean the split silently stopped
+        // applying.
         #[cfg(target_os = "macos")]
-        assert_eq!(backend, "ort/CoreML", "CoreML must register on macOS");
+        assert_eq!(
+            backend, "ort/mixed",
+            "expected CPU detector + CoreML landmark on macOS"
+        );
         #[cfg(not(target_os = "macos"))]
         assert!(!backend.is_empty());
     }
