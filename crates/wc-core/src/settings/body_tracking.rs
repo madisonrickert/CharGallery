@@ -68,12 +68,9 @@ mod tests {
     /// (hand-edited settings files) instead of feeding them to the worker.
     #[test]
     fn max_tracked_bodies_clamps_to_slot_range() {
-        let mut s = BodyTrackingSettings::default();
-        s.max_figures = 0;
-        assert_eq!(s.max_tracked_bodies(), 1);
-        s.max_figures = 99;
-        assert_eq!(s.max_tracked_bodies(), 4);
-        s.max_figures = 2;
-        assert_eq!(s.max_tracked_bodies(), 2);
+        let clamp = |max_figures| BodyTrackingSettings { max_figures }.max_tracked_bodies();
+        assert_eq!(clamp(0), 1);
+        assert_eq!(clamp(99), 4);
+        assert_eq!(clamp(2), 2);
     }
 }

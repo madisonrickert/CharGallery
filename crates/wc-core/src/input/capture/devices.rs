@@ -3,18 +3,18 @@
 //!
 //! Three pieces, mirroring the audio-device and camera-preview precedents:
 //!
-//! - [`AvailableCameraDevices`]: the `"camera_devices"` runtime-enum options
+//! - `AvailableCameraDevices`: the `"camera_devices"` runtime-enum options
 //!   source, filled once at `Startup` from the platform backend (nokhwa off
 //!   macOS, `AVFoundation` on macOS). Camera hot-plug re-enumeration is
 //!   deliberately not wired — the deployment kiosk has a fixed camera;
 //!   relaunch to rescan.
-//! - The process-wide selection mirror ([`selected_camera`]): written on
+//! - The process-wide selection mirror (`selected_camera`): written on
 //!   settings change, read once per camera *open* by both capture seams (the
 //!   `MediaPipe` hand worker and the body worker). A worker (re)built at any
 //!   moment observes the current value at its next open — the same rationale
 //!   as the camera-preview toggle's atomic mirror, with a `Mutex` instead of
 //!   an atomic because this is open-time state, never per-frame.
-//! - [`WebcamSelectPlugin`]: registers the settings struct, the options
+//! - `WebcamSelectPlugin`: registers the settings struct, the options
 //!   source, and the two systems.
 
 use std::sync::Mutex;
