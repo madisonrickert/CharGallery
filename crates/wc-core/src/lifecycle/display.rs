@@ -225,6 +225,9 @@ pub(crate) fn sync_available_monitors(
     available
         .0
         .extend(monitors.iter().filter_map(|m| m.name.clone()));
+    // Topology-change-gated (never per-frame): field diagnostics for kiosk
+    // TVs that re-enumerate on wake and for hot-plug picker refreshes.
+    tracing::debug!(monitors = ?available.0, "monitor topology changed; picker options refreshed");
 }
 
 #[cfg(test)]
