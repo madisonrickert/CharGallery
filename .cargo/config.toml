@@ -41,13 +41,14 @@ rund = "run --package waveconductor --features bevy/dynamic_linking"
 [env]
 LEAPSDK_LIB_PATH = { value = "vendor/leapc/macos-aarch64", relative = true, force = false }
 
-# Per-target rpath / RUNPATH so the linked binary finds libLeapC at runtime
-# without DYLD_LIBRARY_PATH / LD_LIBRARY_PATH. Windows uses a different
-# mechanism (DLL must be next to the .exe at runtime) — see
-# `crates/waveconductor/build.rs` for the copy step.
+# Per-target rpath / RUNPATH so the linked binary finds libLeapC (and, on the
+# Apple targets, the OBSBOT libdev.dylib) at runtime without
+# DYLD_LIBRARY_PATH / LD_LIBRARY_PATH. Windows uses a different mechanism (DLL
+# must be next to the .exe at runtime) — see `crates/waveconductor/build.rs`
+# for the copy step.
 #
-# Two vendor-path entries per platform because binaries land at different
-# depths under `target/`:
+# Two vendor-path entries per platform per vendored library, because binaries
+# land at different depths under `target/`:
 # - `target/<profile>/<bin>`           — main binary; two `..` to repo root.
 # - `target/<profile>/examples/<bin>`  — examples;    three `..` to repo root.
 # dyld / ld searches all rpaths in order until one resolves, so listing both
@@ -59,6 +60,8 @@ rustflags = [
     "-C", "link-arg=-Wl,-rpath,@loader_path",
     "-C", "link-arg=-Wl,-rpath,@executable_path/../../vendor/leapc/macos-aarch64",
     "-C", "link-arg=-Wl,-rpath,@executable_path/../../../vendor/leapc/macos-aarch64",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../../vendor/libdev/macos/arm64-release",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../../../vendor/libdev/macos/arm64-release",
 ]
 
 [target.x86_64-apple-darwin]
@@ -67,6 +70,8 @@ rustflags = [
     "-C", "link-arg=-Wl,-rpath,@loader_path",
     "-C", "link-arg=-Wl,-rpath,@executable_path/../../vendor/leapc/macos-x86_64",
     "-C", "link-arg=-Wl,-rpath,@executable_path/../../../vendor/leapc/macos-x86_64",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../../vendor/libdev/macos/x86_64-release",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../../../vendor/libdev/macos/x86_64-release",
 ]
 
 [target.x86_64-unknown-linux-gnu]

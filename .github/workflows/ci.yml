@@ -180,7 +180,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            echo "DYLD_FALLBACK_LIBRARY_PATH=$GITHUB_WORKSPACE/vendor/leapc/${{ matrix.leap }}" >> "$GITHUB_ENV"
+            echo "DYLD_FALLBACK_LIBRARY_PATH=$GITHUB_WORKSPACE/vendor/leapc/${{ matrix.leap }}:$GITHUB_WORKSPACE/vendor/libdev/macos/arm64-release" >> "$GITHUB_ENV"
           elif [ "$RUNNER_OS" = "Windows" ]; then
             echo "$GITHUB_WORKSPACE/vendor/leapc/${{ matrix.leap }}" >> "$GITHUB_PATH"
           fi

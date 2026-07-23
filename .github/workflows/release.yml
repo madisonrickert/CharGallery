@@ -228,12 +228,12 @@ jobs:
           sudo xcode-select -s "$DD"
           RTLIB="$(DEVELOPER_DIR="$DD" xcrun clang -print-resource-dir)/lib/darwin"
           echo "clang_rt dir: $RTLIB"; ls -l "$RTLIB/libclang_rt.osx.a"
-          echo "RUSTFLAGS=${RUSTFLAGS:-} -L $RTLIB" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=${RUSTFLAGS:-} -L $RTLIB -C link-arg=-Wl,-rpath,@executable_path/../lib -C link-arg=-Wl,-rpath,@loader_path" >> "$GITHUB_ENV"
       - name: Leap runtime lib path
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            echo "DYLD_FALLBACK_LIBRARY_PATH=$GITHUB_WORKSPACE/vendor/leapc/${{ matrix.leap }}" >> "$GITHUB_ENV"
+            echo "DYLD_FALLBACK_LIBRARY_PATH=$GITHUB_WORKSPACE/vendor/leapc/${{ matrix.leap }}:$GITHUB_WORKSPACE/vendor/libdev/macos/arm64-release" >> "$GITHUB_ENV"
           elif [ "$RUNNER_OS" = "Windows" ]; then
             echo "$GITHUB_WORKSPACE/vendor/leapc/${{ matrix.leap }}" >> "$GITHUB_PATH"
           fi
@@ -317,7 +317,7 @@ jobs:
           sudo xcode-select -s "$DD"
           RTLIB="$(DEVELOPER_DIR="$DD" xcrun clang -print-resource-dir)/lib/darwin"
           echo "clang_rt dir: $RTLIB"; ls -l "$RTLIB/libclang_rt.osx.a"
-          echo "RUSTFLAGS=${RUSTFLAGS:-} -L $RTLIB" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=${RUSTFLAGS:-} -L $RTLIB -C link-arg=-Wl,-rpath,@executable_path/../lib -C link-arg=-Wl,-rpath,@loader_path" >> "$GITHUB_ENV"
 
       - name: Install WiX Toolset (Windows)
         if: runner.os == 'Windows'
