@@ -9,7 +9,10 @@ commit. Treat the contents as per-machine assets, like `.env`.
 
 - `body/` holds body-tracking eval clips (1280x720 @ ~30 fps `.mov`).
   Filenames describe the scenario the clip exercises (featured performer,
-  multiple dancers, occlusion, lights on/off, props).
+  multiple dancers, occlusion, lights on/off, props), followed by the
+  recording camera in square brackets, e.g. `[m1 mbp 720p webcam]` for the
+  M1 MacBook Pro's built-in FaceTime HD camera. Tag new clips the same way
+  so results from different cameras (e.g. the OBSBOT) stay comparable.
 
 ## Using a clip with the body replay harness
 
