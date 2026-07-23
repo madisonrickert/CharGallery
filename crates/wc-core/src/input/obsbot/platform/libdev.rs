@@ -1,4 +1,4 @@
-//! Windows OBSBOT backend: raw bindings to the vendored libdev SDK's
+//! libdev OBSBOT backend (Windows + macOS): raw bindings to the vendored SDK's
 //! extern "C" shim (`vendor/libdev/shim/obsbot_shim.h`) plus the dedicated
 //! worker thread that owns every device call.
 //!
@@ -47,7 +47,8 @@ use super::super::{product_name, take_control_outcome, ControlSteps, ObsbotStatu
 
 /// Raw extern "C" bindings to `vendor/libdev/shim/obsbot_shim.h`. Contracts
 /// (error codes, ownership, threading) are documented on the C declarations;
-/// wc-core's build.rs compiles the shim and links `libdev.lib`.
+/// wc-core's build.rs compiles the shim and links the vendored SDK binary
+/// (`libdev.lib` on Windows, `libdev.dylib` on macOS).
 pub(super) mod ffi {
     use std::os::raw::c_char;
 
@@ -490,8 +491,9 @@ mod tests {
     }
 
     /// Hardware smoke test — ignored by default because it needs a real
-    /// OBSBOT camera on USB (and `libdev.dll` + `w32-pthreads.dll` beside
-    /// the test binary, which build.rs stages). Run with:
+    /// OBSBOT camera on USB (plus the SDK runtime: on Windows `libdev.dll` +
+    /// `w32-pthreads.dll` beside the test binary, staged by build.rs; on
+    /// macOS `libdev.dylib`, resolved via the vendor rpath). Run with:
     ///
     /// ```text
     /// cargo test -p wc-core --features obsbot-camera-control \

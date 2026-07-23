@@ -26,10 +26,10 @@
 //!                                                       settings watcher
 //! ```
 //!
-//! Real device IO is **Windows-only** (the deployment target; see
-//! `platform/`): elsewhere [`platform::spawn_worker`](crate::input::obsbot::platform::spawn_worker) returns `None` and the
+//! Real device IO runs on **Windows and macOS** (the kiosk and the dev/party
+//! rig; see `platform/`): elsewhere [`platform::spawn_worker`](crate::input::obsbot::platform::spawn_worker) returns `None` and the
 //! resource reports [`ObsbotStatus::NoDevice`](crate::input::obsbot::ObsbotStatus::NoDevice) forever, which keeps CI's
-//! `--all-features` builds green on every runner without a C++ toolchain.
+//! `--all-features` builds green on Linux runners without a C++ toolchain.
 //!
 //! The systems added here run in every [`SketchActivity`] state by design —
 //! like the settings-reload listeners, they are cheap message drains
@@ -661,9 +661,9 @@ mod tests {
 
     /// The facade contract on platforms without a real backend: no worker,
     /// ever — the status stays `NoDevice` and nothing links or loads.
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     #[test]
-    fn facade_is_noop_off_windows() {
+    fn facade_is_noop_on_unsupported_platforms() {
         assert!(platform::spawn_worker(true).is_none());
     }
 }

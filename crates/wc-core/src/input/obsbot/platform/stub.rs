@@ -1,5 +1,5 @@
-//! No-op OBSBOT backend for platforms without the libdev link (everything
-//! but Windows). Exists so the `obsbot-camera-control` feature — which CI's
+//! No-op OBSBOT backend for platforms without the libdev link (today:
+//! Linux). Exists so the `obsbot-camera-control` feature — which CI's
 //! `--all-features` switches on for every runner — builds and tests green
 //! without a C++ toolchain, the vendored `libdev` binary, or an OBSBOT
 //! plugged in. See `platform/mod.rs` for the facade contract.
