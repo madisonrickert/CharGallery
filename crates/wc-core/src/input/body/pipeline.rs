@@ -475,6 +475,20 @@ impl SlotTrack {
     }
 }
 
+/// Field-diagnostics breadcrumb after a [`SlotTrack::lose`]: which slot
+/// dropped, why, and whether it reserved (ghost fade follows on the main
+/// side) or freed outright. Slot lifecycle churn — multiple figures for one
+/// person, stuck fade-tails — is invisible at the aggregate
+/// detected/left log level; these transition-only lines make it readable in
+/// a live session log.
+fn log_slot_loss(slot: &SlotTrack, idx: usize, cause: &str) {
+    if slot.phase == SlotPhase::Reserved {
+        tracing::info!(slot = idx, cause, "body slot: lost, reserved");
+    } else {
+        tracing::info!(slot = idx, cause, "body slot: lost, freed (young)");
+    }
+}
+
 /// The two-stage multi-person pose pipeline: model sessions, anchors, slot
 /// tracks, and reused scratch buffers.
 pub struct PosePipeline {
@@ -626,9 +640,12 @@ impl PosePipeline {
         // valid frame `present` (see `run_slot_inference`'s untrackable
         // branch) but must read absent from the NEXT frame unless the
         // detector re-acquires it below.
-        for slot in &mut self.slots {
+        for (idx, slot) in self.slots.iter_mut().enumerate() {
             match slot.phase {
-                SlotPhase::Reserved if now >= slot.reserved_until => slot.release(),
+                SlotPhase::Reserved if now >= slot.reserved_until => {
+                    slot.release();
+                    tracing::info!(slot = idx, "body slot: reservation expired, freed");
+                }
                 SlotPhase::Reserved => slot.frame.present = false,
                 SlotPhase::Free | SlotPhase::Active => {}
             }
@@ -734,9 +751,10 @@ impl PosePipeline {
         mut diag: PoseDiagnostics,
         frame_start: Instant,
     ) {
-        for slot in &mut self.slots {
+        for (idx, slot) in self.slots.iter_mut().enumerate() {
             if slot.phase == SlotPhase::Active {
                 slot.lose(now);
+                log_slot_loss(slot, idx, "invalid frame");
             }
         }
         diag.detector_reason = DetectorRunReason::InvalidFrame;
@@ -891,6 +909,9 @@ impl PosePipeline {
                         // occupant also carries no stale momentum.
                         slot.active_since = now;
                         slot.anchor_vel = Vec2::ZERO;
+                        tracing::info!(slot = s, "body slot: claimed (new track)");
+                    } else {
+                        tracing::info!(slot = s, "body slot: reacquired within reservation");
                     }
                     // Re-seat the anchor clock on either path (the EMA in
                     // `run_slot_inference` measures against it next frame, and
@@ -995,6 +1016,7 @@ impl PosePipeline {
         if picked.confidence < config.presence_threshold {
             // Presence collapsed: the person left this crop.
             slot.lose(now);
+            log_slot_loss(slot, slot_idx, "presence collapsed");
             return Ok(());
         }
 
@@ -1083,6 +1105,7 @@ impl PosePipeline {
                 };
             slot.lost_at = now;
             slot.roi = None;
+            log_slot_loss(slot, slot_idx, "roi collapsed");
         }
         Ok(())
     }
