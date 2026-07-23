@@ -196,6 +196,15 @@ pub fn decode_pose_detections_into(
         let cy = reg[1] / DETECTOR_SCALE + anchor.cy;
         let w = reg[2] / DETECTOR_SCALE;
         let h = reg[3] / DETECTOR_SCALE;
+        // A degenerate (non-positive-area) box breaks the weighted NMS's
+        // dedup: `Rect::iou` reads zero-area overlap as "no overlap", so
+        // several identical degenerate detections all survive as separate
+        // clusters — observed live as one edge-of-frame person emitting four
+        // same-position score-1.0 candidates, each able to claim a slot. A
+        // real person always regresses a positive box.
+        if w <= 0.0 || h <= 0.0 {
+            continue;
+        }
         let bbox = Rect {
             xmin: cx - w * 0.5,
             ymin: cy - h * 0.5,
@@ -370,6 +379,8 @@ mod tests {
     fn decode_offsets_keypoints_relative_to_the_anchor() {
         let anchor = Anchor { cx: 0.25, cy: 0.75 };
         let mut raw = vec![0.0_f32; POSE_REGRESSION_LEN];
+        raw[2] = DETECTOR_SCALE * 0.3; // positive box (degenerate boxes drop)
+        raw[3] = DETECTOR_SCALE * 0.3;
         // Keypoint 1 (full-body scale point): +0.1 in x, −0.2 in y.
         raw[6] = DETECTOR_SCALE * 0.1;
         raw[7] = -DETECTOR_SCALE * 0.2;
@@ -391,13 +402,30 @@ mod tests {
     }
 
     #[test]
+    fn decode_drops_degenerate_zero_area_boxes() {
+        // A confident detection whose regressed box has no area must not
+        // decode: zero-area boxes read as IoU 0 against everything, so the
+        // weighted NMS cannot dedup them and duplicates flood the candidate
+        // list (one person → several claimable "people").
+        let anchor = Anchor { cx: 0.5, cy: 0.5 };
+        let raw = vec![0.0_f32; POSE_REGRESSION_LEN]; // w = h = 0
+        let mut out = Vec::new();
+        decode_pose_detections_into(&raw, &[100.0], &[anchor], 0.5, &mut out);
+        assert!(out.is_empty(), "zero-area box decoded: {out:?}");
+    }
+
+    #[test]
     fn decode_drops_uncomputed_zero_logits_even_at_the_gate() {
         // sigmoid(0) = 0.5 ties the default 0.5 gate, but a literal-0.0 logit
         // is an uncomputed anchor (the CoreML stride-16 miscompute), never a
         // real detection — it must not decode as a phantom person. A nearby
         // genuinely-computed logit above the gate still decodes.
         let anchors = [Anchor { cx: 0.25, cy: 0.25 }, Anchor { cx: 0.75, cy: 0.75 }];
-        let raw = vec![0.0_f32; POSE_REGRESSION_LEN * 2];
+        let mut raw = vec![0.0_f32; POSE_REGRESSION_LEN * 2];
+        for base in [0, POSE_REGRESSION_LEN] {
+            raw[base + 2] = DETECTOR_SCALE * 0.3; // positive boxes throughout
+            raw[base + 3] = DETECTOR_SCALE * 0.3;
+        }
         let mut out = Vec::new();
         decode_pose_detections_into(&raw, &[0.0, 0.1], &anchors, 0.5, &mut out);
         assert_eq!(out.len(), 1, "zero logit decoded as a detection: {out:?}");
