@@ -278,7 +278,7 @@ pub(crate) fn compute_display_mode<'a>(
 }
 
 /// Resolve a persisted monitor selection to a [`MonitorSelection`] against
-/// the monitors currently known to the ECS (`is_primary` = bevy_winit's
+/// the monitors currently known to the ECS (`is_primary` = `bevy_winit`'s
 /// `PrimaryMonitor` marker).
 ///
 /// - An empty `saved_name` (the field's default) means "no preference":
