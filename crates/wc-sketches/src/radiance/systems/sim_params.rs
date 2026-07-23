@@ -451,6 +451,9 @@ pub fn bake_radiance_sim(
     // bass — a transient local downdraft reads as organic flicker).
     out.tongue_amp = settings.tongue_strength * (0.55 + 0.5 * state.bass_drive);
     out.tongue_freq = TONGUE_FREQ;
+    // Motion-emission bias: the kernel's rejection sampler reads it as a
+    // probability floor (1 - bias), so clamp to the unit range here.
+    out.edge_motion_bias = settings.edge_motion_bias.clamp(0.0, 1.0);
 
     // Per-slot edge ranges: `SilhouetteEdges` concatenates slots ascending,
     // so starts are the prefix sums; counts clamp so `start + count` stays
@@ -1296,6 +1299,25 @@ mod tests {
         );
         assert!((out.slot_cdf[3] - 1.0).abs() < 1e-5);
         assert_eq!(state.slot_fade_prev, [1.0, 0.5, 0.0, 0.0]);
+    }
+
+    /// The baker copies the motion-emission bias setting into the uniform,
+    /// clamped to `0..=1` (the kernel treats it as a probability floor).
+    #[test]
+    fn bake_copies_edge_motion_bias_clamped() {
+        let settings = RadianceSettings {
+            edge_motion_bias: 0.8,
+            ..RadianceSettings::default()
+        };
+        let (_, out) = bake(&settings, &neutral_audio(), None, 500);
+        assert!((out.edge_motion_bias - 0.8).abs() < 1e-6);
+
+        let wild = RadianceSettings {
+            edge_motion_bias: 7.0,
+            ..RadianceSettings::default()
+        };
+        let (_, out) = bake(&wild, &neutral_audio(), None, 500);
+        assert!((out.edge_motion_bias - 1.0).abs() < f32::EPSILON);
     }
 
     /// A beat pumps emission + buoyancy over the identical no-beat frame

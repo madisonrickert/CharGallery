@@ -6,14 +6,15 @@
 //! through a `ShaderBuffer` asset would recreate the GPU buffer — churning
 //! the bind-group cache's `BufferId` key ~30 times a second. Instead:
 //!
-//! 1. [`extract_silhouette_edges`] (`ExtractSchedule`) copies the points into
-//!    a render-world scratch (`ExtractedEdges`, capacity `MAX_EDGE_POINTS`,
-//!    refilled with `clear()` — zero steady-state allocation) ONLY when
-//!    `generation` changed.
+//! 1. [`extract_silhouette_edges`] (`ExtractSchedule`) copies the points and
+//!    their index-parallel motion weights into a render-world scratch
+//!    (`ExtractedEdges`, capacity `MAX_EDGE_POINTS`, refilled with `clear()`
+//!    — zero steady-state allocation) ONLY when `generation` changed.
 //! 2. [`upload_silhouette_edges`] (`RenderSystems::PrepareBindGroups`, before
 //!    the bind-group prepare) `write_buffer`s the scratch into the persistent
-//!    `edges_buffer` on [`super::pipeline::RadiancePipeline`] — a staged
-//!    copy, no allocation, stable `BufferId`.
+//!    `edges_buffer` + `edge_motion_buffer` on
+//!    [`super::pipeline::RadiancePipeline`] — staged copies, no allocation,
+//!    stable `BufferId`s.
 //!
 //! The kernel indexes `% edge_count` into the full-capacity buffer, so a
 //! frame where the count shrinks can never read past the live prefix's
@@ -35,6 +36,9 @@ pub struct ExtractedEdges {
     pub generation: u64,
     /// Point scratch; capacity `MAX_EDGE_POINTS`, refilled with `clear()`.
     pub points: Vec<EdgePoint>,
+    /// Per-point motion-weight scratch (`0..=1`, index-parallel with
+    /// `points`); same capacity/refill discipline.
+    pub motion: Vec<f32>,
     /// A fresh copy is waiting for [`upload_silhouette_edges`].
     pub dirty: bool,
 }
@@ -44,6 +48,7 @@ impl Default for ExtractedEdges {
         Self {
             generation: u64::MAX,
             points: Vec::with_capacity(MAX_EDGE_POINTS),
+            motion: Vec::with_capacity(MAX_EDGE_POINTS),
             dirty: false,
         }
     }
@@ -63,10 +68,17 @@ pub fn extract_silhouette_edges(
         return;
     }
     extracted.points.clear();
+    extracted.motion.clear();
     // The contract caps the source at MAX_EDGE_POINTS; truncate defensively
-    // so the scratch (and the fixed GPU buffer) can never overflow.
+    // so the scratch (and the fixed GPU buffers) can never overflow. The
+    // motion field is index-parallel with the points by the Plan B contract;
+    // the extra `min` guards the GPU copy against a short source anyway.
     let take = src.points.len().min(MAX_EDGE_POINTS);
     extracted.points.extend_from_slice(&src.points[..take]);
+    let take_motion = src.motion.len().min(take);
+    extracted
+        .motion
+        .extend_from_slice(&src.motion[..take_motion]);
     extracted.generation = src.generation;
     extracted.dirty = true;
 }
@@ -91,6 +103,13 @@ pub fn upload_silhouette_edges(
             bytemuck::cast_slice(&extracted.points),
         );
     }
+    if !extracted.motion.is_empty() {
+        render_queue.0.write_buffer(
+            &pipeline.edge_motion_buffer,
+            0,
+            bytemuck::cast_slice(&extracted.motion),
+        );
+    }
     extracted.dirty = false;
 }
 
@@ -108,6 +127,8 @@ mod tests {
         assert_eq!(e.generation, u64::MAX);
         assert!(e.points.is_empty());
         assert!(e.points.capacity() >= MAX_EDGE_POINTS);
+        assert!(e.motion.is_empty());
+        assert!(e.motion.capacity() >= MAX_EDGE_POINTS);
         assert!(!e.dirty);
     }
 }

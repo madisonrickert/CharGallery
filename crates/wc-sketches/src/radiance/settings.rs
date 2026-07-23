@@ -193,6 +193,23 @@ pub struct RadianceSettings {
     #[serde(default = "default_background_subdue")]
     pub background_subdue: f32,
 
+    /// Bias particle births toward *moving* silhouette edges: 0 = uniform
+    /// (every edge point equally likely, the pre-prop behaviour), 1 = births
+    /// crowd wherever the boundary is sweeping. A held fan or prop is part
+    /// of the segmented silhouette, so at higher bias a swept fan sheds fire
+    /// along its arc. Live-tunable at the venue.
+    #[setting(
+        default = 0.5_f32,
+        min = 0.0_f32,
+        max = 1.0_f32,
+        step = 0.05_f32,
+        label = "Motion emission bias",
+        section = "Simulation",
+        category = User
+    )]
+    #[serde(default = "default_edge_motion_bias")]
+    pub edge_motion_bias: f32,
+
     /// Per-body hue spread, in fractions of a full hue turn per slot: each
     /// tracked dancer's color identity is the palette hue rotated by
     /// `slot × spread`, so multiple dancers read as distinct-but-harmonious
@@ -554,6 +571,9 @@ fn default_ejecta_amount() -> f32 {
 fn default_background_subdue() -> f32 {
     0.5
 }
+fn default_edge_motion_bias() -> f32 {
+    0.5
+}
 fn default_hue_spread() -> f32 {
     0.13
 }
@@ -648,6 +668,10 @@ mod tests {
             (parsed.flow_strength - 40.0).abs() < 1e-6,
             "sibling default"
         );
+        assert!(
+            (parsed.edge_motion_bias - 0.5).abs() < 1e-6,
+            "sibling default"
+        );
         assert_eq!(parsed.palette, RadiancePalette::Prism, "sibling default");
         assert!(
             parsed.audio_input_device.is_empty(),
@@ -667,6 +691,7 @@ mod tests {
         assert!((d.tongue_strength - default_tongue_strength()).abs() < f32::EPSILON);
         assert!((d.ejecta_amount - default_ejecta_amount()).abs() < f32::EPSILON);
         assert!((d.background_subdue - default_background_subdue()).abs() < f32::EPSILON);
+        assert!((d.edge_motion_bias - default_edge_motion_bias()).abs() < f32::EPSILON);
         assert!((d.hue_spread - default_hue_spread()).abs() < f32::EPSILON);
         assert_eq!(d.sparkle_count, default_sparkle_count());
         assert_eq!(d.palette, default_palette());

@@ -77,7 +77,9 @@ pub const MAX_IMPULSES: usize = 8;
 /// exactly; the layout is `#[repr(C)]` so `bytemuck::bytes_of` produces the
 /// correct byte sequence. The scalar header totals 144 bytes — a 16-byte
 /// multiple — so the `impulses` array (16-byte-aligned per WGSL uniform
-/// rules, 32-byte stride) begins aligned at offset 144. Total size 400.
+/// rules, 32-byte stride) begins aligned at offset 144 and ends at 400,
+/// where the `edge_motion_bias` tail scalar + 12 pad bytes round the struct
+/// to the uniform 16-byte multiple. Total size 416.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct RadianceSimParamsGpu {
@@ -160,6 +162,17 @@ pub struct RadianceSimParamsGpu {
     pub tongue_freq: f32,
     /// Impulse slots; entries past `impulse_count` are zero-gain and ignored.
     pub impulses: [RadianceImpulse; MAX_IMPULSES],
+    /// Motion-emission bias `0..=1` (the `edge_motion_bias` setting, clamped
+    /// by the baker): 0 = uniform edge pick, 1 = respawns re-roll up to 3
+    /// times toward moving-boundary points (see the rejection sampler in
+    /// `simulate.wgsl`).
+    pub edge_motion_bias: f32,
+    /// Padding rounding the struct to a 16-byte multiple (WGSL uniform rule).
+    #[allow(
+        clippy::pub_underscore_fields,
+        reason = "GPU struct layout padding must be pub for bytemuck"
+    )]
+    pub _pad: [f32; 3],
 }
 
 const _: () = {
@@ -173,7 +186,7 @@ const _: () = {
 /// the Cymatics F2 lesson).
 ///
 /// The `paused` / `frozen_secs` pair lives on the extract copy only — it is
-/// **not** part of [`RadianceSimParamsGpu`], so the 400-byte uniform layout
+/// **not** part of [`RadianceSimParamsGpu`], so the 416-byte uniform layout
 /// and its parity tests are untouched.
 #[derive(Resource, Clone, ExtractResource)]
 pub struct RadianceSimParams {
@@ -277,17 +290,24 @@ mod tests {
         assert_eq!(std::mem::offset_of!(RadianceSimParamsGpu, tongue_amp), 136);
         assert_eq!(std::mem::offset_of!(RadianceSimParamsGpu, tongue_freq), 140);
         assert_eq!(std::mem::offset_of!(RadianceSimParamsGpu, impulses), 144);
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, edge_motion_bias),
+            400
+        );
     }
 
-    /// Locks the "header 144 bytes, total 400" claim to the real const, so a
+    /// Locks the "header 144 bytes, total 416" claim to the real const, so a
     /// change to `MAX_IMPULSES` cannot silently shift the size expectations.
     #[test]
     fn sim_params_size_tracks_max_impulses() {
         const HEADER_BYTES: usize = 144;
         const IMPULSE_STRIDE: usize = 32;
+        // edge_motion_bias + 12 pad bytes rounding the struct to the WGSL
+        // uniform 16-byte multiple.
+        const TAIL_BYTES: usize = 16;
         assert_eq!(
             std::mem::size_of::<RadianceSimParamsGpu>(),
-            HEADER_BYTES + MAX_IMPULSES * IMPULSE_STRIDE
+            HEADER_BYTES + MAX_IMPULSES * IMPULSE_STRIDE + TAIL_BYTES
         );
     }
 }

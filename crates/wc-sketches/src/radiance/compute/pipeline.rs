@@ -11,8 +11,9 @@
 //!    (see `edge_upload`).
 //! 3. `init_radiance_pipeline` (`RenderStartup`) builds the bind-group
 //!    layout, queues the compute pipeline, and allocates the persistent
-//!    uniform buffer (400 B `SimParams`) and the persistent edge storage
-//!    buffer (`MAX_EDGE_POINTS` × 16 B) once — never per frame.
+//!    uniform buffer (416 B `SimParams`) and the persistent edge storage
+//!    buffers (`MAX_EDGE_POINTS` × 16 B points + `MAX_EDGE_POINTS` × 4 B
+//!    motion weights) once — never per frame.
 //! 4. `prepare_radiance_bind_group` (`PrepareBindGroups`, after the edge
 //!    upload) writes this frame's uniforms and builds (or reuses) the single
 //!    bind group, cached in [`RadianceBindGroupCache`] keyed on the particle
@@ -57,7 +58,7 @@ use super::sim_params::{RadianceSimParams, RadianceSimParamsGpu};
 /// `assets/shaders/radiance/simulate.wgsl`.
 const WORKGROUP_SIZE: u32 = 64;
 
-/// `RadianceSimParamsGpu` byte size (400) for binding 0's `min_binding_size`.
+/// `RadianceSimParamsGpu` byte size (416) for binding 0's `min_binding_size`.
 /// The `panic!` is inside a `const`, so a zero-sized regression fails at
 /// compile time.
 const SIM_PARAMS_SIZE: NonZeroU64 =
@@ -68,6 +69,10 @@ const SIM_PARAMS_SIZE: NonZeroU64 =
 
 /// Full-capacity edge buffer size in bytes (`MAX_EDGE_POINTS` × 16).
 const EDGES_BUFFER_SIZE: u64 = (MAX_EDGE_POINTS * std::mem::size_of::<EdgePoint>()) as u64;
+
+/// Full-capacity edge-motion buffer size in bytes (`MAX_EDGE_POINTS` × 4 —
+/// one `f32` weight per edge point, index-parallel with the edge buffer).
+const EDGE_MOTION_BUFFER_SIZE: u64 = (MAX_EDGE_POINTS * std::mem::size_of::<f32>()) as u64;
 
 /// Registers extraction (+ removal companion), the edge upload, pipeline
 /// init, per-frame prepare, and the dispatch for the Radiance aura.
@@ -121,13 +126,17 @@ pub struct RadiancePipeline {
     bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     /// Handle into Bevy's [`PipelineCache`].
     pipeline_id: CachedComputePipelineId,
-    /// Persistent `UNIFORM | COPY_DST` buffer for the 400-byte sim params;
+    /// Persistent `UNIFORM | COPY_DST` buffer for the 416-byte sim params;
     /// refilled each frame via `write_buffer` (no realloc).
     sim_params_buffer: Buffer,
     /// Persistent `STORAGE | COPY_DST` buffer of `MAX_EDGE_POINTS` edge
     /// points; refilled generation-gated by `edge_upload` (stable
     /// `BufferId`, so it never churns the bind-group cache).
     pub edges_buffer: Buffer,
+    /// Persistent `STORAGE | COPY_DST` buffer of `MAX_EDGE_POINTS` per-point
+    /// motion weights (`f32`, index-parallel with `edges_buffer`); same
+    /// generation-gated refill and stable-`BufferId` discipline.
+    pub edge_motion_buffer: Buffer,
 }
 
 /// Per-frame bind group + dispatch size, consumed by `radiance_compute`.
@@ -137,7 +146,8 @@ pub struct RadiancePipeline {
 /// VRAM for the session.
 #[derive(Resource)]
 pub struct RadianceComputeBindGroup {
-    /// sim uniform (0), particle storage rw (1), edge storage ro (2).
+    /// sim uniform (0), particle storage rw (1), edge storage ro (2),
+    /// edge-motion storage ro (3).
     bind_group: BindGroup,
     /// `ceil(particle_count / WORKGROUP_SIZE)`.
     dispatch_size: u32,
@@ -197,6 +207,17 @@ fn init_radiance_pipeline(
                 },
                 count: None,
             },
+            // binding 3 — per-edge-point motion weights, read-only.
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
         ],
     );
 
@@ -210,7 +231,7 @@ fn init_radiance_pipeline(
         ..default()
     });
 
-    // Both persistent buffers allocated once; refilled via write_buffer.
+    // All persistent buffers allocated once; refilled via write_buffer.
     let sim_params_buffer = render_device.create_buffer(&BufferDescriptor {
         label: Some("radiance_sim_params_uniform"),
         size: std::mem::size_of::<RadianceSimParamsGpu>() as u64,
@@ -223,12 +244,19 @@ fn init_radiance_pipeline(
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    let edge_motion_buffer = render_device.create_buffer(&BufferDescriptor {
+        label: Some("radiance_edge_motion"),
+        size: EDGE_MOTION_BUFFER_SIZE,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
     commands.insert_resource(RadiancePipeline {
         bind_group_layout_descriptor,
         pipeline_id,
         sim_params_buffer,
         edges_buffer,
+        edge_motion_buffer,
     });
 }
 
@@ -289,6 +317,10 @@ fn prepare_radiance_bind_group(
                     BindGroupEntry {
                         binding: 2,
                         resource: pipeline.edges_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: pipeline.edge_motion_buffer.as_entire_binding(),
                     },
                 ],
             );
@@ -402,15 +434,20 @@ mod tests {
         app.update();
     }
 
-    /// Binding 0's `min_binding_size` is the exact 400-byte layout, and the
-    /// edge buffer holds the full contract capacity.
+    /// Binding 0's `min_binding_size` is the exact 416-byte layout, and the
+    /// edge + edge-motion buffers hold the full contract capacity.
     #[test]
     fn buffer_size_constants_match_contracts() {
-        assert_eq!(SIM_PARAMS_SIZE.get(), 400);
+        assert_eq!(SIM_PARAMS_SIZE.get(), 416);
         assert_eq!(
             EDGES_BUFFER_SIZE,
             (MAX_EDGE_POINTS as u64) * 16,
             "EdgePoint stride is 16 bytes by the pinned contract"
+        );
+        assert_eq!(
+            EDGE_MOTION_BUFFER_SIZE,
+            (MAX_EDGE_POINTS as u64) * 4,
+            "one f32 motion weight per edge point"
         );
     }
 

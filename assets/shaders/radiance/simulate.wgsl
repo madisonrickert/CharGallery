@@ -3,9 +3,11 @@
 // Reads SimParams from a uniform buffer at @group(0) @binding(0).
 // Reads + writes Particles in a storage buffer at @group(0) @binding(1).
 // Reads the silhouette edge list (CPU-extracted where the smoothed person
-// mask crosses 0.5) at @group(0) @binding(2). The edge buffer is allocated at
-// full MAX_EDGE_POINTS capacity; the CPU packs per-slot (start, count) ranges
-// so indexing `start + hash % count` never leaves a slot's live prefix.
+// mask crosses 0.5) at @group(0) @binding(2), and its index-parallel per-point
+// motion weights (0..1, how fast the boundary moved there) at @group(0)
+// @binding(3). The edge buffers are allocated at full MAX_EDGE_POINTS
+// capacity; the CPU packs per-slot (start, count) ranges so indexing
+// `start + hash % count` never leaves a slot's live prefix.
 //
 // Life cycle: a particle is DEAD when age >= lifespan (a zeroed buffer is all
 // dead). Each frame a dead particle rolls a hash against emission_prob; on a
@@ -83,11 +85,16 @@ struct SimParams {
     tongue_amp: f32,
     tongue_freq: f32,
     impulses: array<Impulse, MAX_IMPULSES>,
+    // Motion-emission bias 0..1: 0 = uniform edge pick, 1 = the respawn
+    // rejection sampler below accepts almost exclusively moving-boundary
+    // points. Tail scalar at byte offset 400 (the struct rounds to 416).
+    edge_motion_bias: f32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(0) @binding(1) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(2) var<storage, read> edges: array<EdgePoint>;
+@group(0) @binding(3) var<storage, read> edge_motion: array<f32>;
 
 // How strongly a particle inside an impulse radius couples to the limb
 // velocity, per second. 6.0 means a particle sitting on a limb reaches ~the
@@ -218,8 +225,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         if (slot >= 4u || params.slot_count[slot] == 0u) {
             return;
         }
-        let e_idx = params.slot_start[slot]
+        var e_idx = params.slot_start[slot]
             + (hash2(idx * 2654435769u, frame) % params.slot_count[slot]);
+        // Motion-biased pick: re-roll the hashed edge up to 3 times, accepting
+        // with probability floor + (1-floor)·weight — births crowd the moving
+        // boundary (a swept fan sheds fire along its arc) while bias 0 keeps
+        // the uniform pick. Bounded retries: worst case accepts the last roll.
+        let motion_floor = 1.0 - params.edge_motion_bias;
+        for (var k = 0u; k < 3u; k = k + 1u) {
+            let w = edge_motion[min(e_idx, params.edge_count - 1u)];
+            if (rand01(hash2(idx ^ (0xa511e9b3u + k), frame)) < motion_floor + (1.0 - motion_floor) * w) {
+                break;
+            }
+            e_idx = params.slot_start[slot]
+                + (hash2(idx * 2654435769u ^ (0x27d4eb2fu + k), frame) % params.slot_count[slot]);
+        }
         let e = edges[min(e_idx, params.edge_count - 1u)];
         let n = mask_dir_to_world(e.normal);
         var life = mix(
