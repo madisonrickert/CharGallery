@@ -187,6 +187,7 @@ fn credits_content(ui: &mut egui::Ui, style: &OverlayStyle) {
     section_header(ui, style, "CONTRIBUTORS");
     link(ui, style, "Madison Rickert", "https://madisonrickert.com");
     link(ui, style, "Rich Trapani | LoveTech", "https://lovetech.org");
+    body(ui, style, "Tiffany Keller");
 
     section_header(ui, style, "HAND TRACKING");
     // Long form from vendor/leapc/ATTRIBUTION.md, required by the Ultraleap
