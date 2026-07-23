@@ -265,6 +265,13 @@ pub use nokhwa::NokhwaFrameSource;
 ))]
 pub mod devices;
 
+/// Recorded-footage replay source (debug investigation tool; see its module
+/// doc). Needs the `image` decode dependency, which rides with the body
+/// modality; no camera backend required — replay exists precisely for runs
+/// without one.
+#[cfg(all(debug_assertions, feature = "body-tracking-mediapipe"))]
+pub mod replay;
+
 #[cfg(test)]
 #[allow(clippy::expect_used, reason = "expect is appropriate in test code")]
 mod tests {

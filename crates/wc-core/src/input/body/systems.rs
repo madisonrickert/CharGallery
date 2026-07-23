@@ -592,6 +592,19 @@ fn start_worker(
 /// camera-preview toggle can observe the frames (a single atomic check per
 /// frame while the toggle is off).
 pub fn open_camera_source(camera_index: u32) -> Result<Box<dyn FrameSource>, CaptureError> {
+    // Recorded-footage replay (debug builds): WAVECONDUCTOR_BODY_REPLAY=
+    // <dir>[@fps] short-circuits the physical camera so investigation clips
+    // run deterministically through the full detector/association stack
+    // (see capture::replay). Checked before the platform branches so replay
+    // also works in a build with no camera backend at all.
+    #[cfg(all(debug_assertions, feature = "body-tracking-mediapipe"))]
+    if let Ok(spec) = std::env::var("WAVECONDUCTOR_BODY_REPLAY") {
+        let (dir, fps) = crate::input::capture::replay::parse_spec(&spec);
+        let source = crate::input::capture::replay::ReplayFrameSource::open(&dir, fps)?;
+        return Ok(crate::input::camera_preview::PreviewTap::wrap(Box::new(
+            source,
+        )));
+    }
     #[cfg(all(feature = "body-tracking-camera", target_os = "macos"))]
     {
         // Honor the operator's webcam selection (settings dock, Camera tab):
