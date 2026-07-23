@@ -96,23 +96,54 @@ pub(crate) fn selected_camera() -> Option<String> {
     SELECTED_CAMERA.lock().ok().and_then(|slot| slot.clone())
 }
 
-/// The name automatic mode prefers when attached — parity with the
-/// Windows/nokhwa open paths, which pass `Some("OBSBOT")`: both webcam
-/// modalities target the same physical camera on the deployment.
-#[cfg(target_os = "macos")]
-const AUTO_PREFERRED: &str = "OBSBOT";
+/// The name automatic mode prefers when attached (lowercase; compared
+/// against lowercased device names): both webcam modalities target the same
+/// physical camera on the deployment.
+const AUTO_PREFERRED: &str = "obsbot";
+
+/// Substring (lowercase) marking a software capture device — "OBSBOT
+/// Virtual Camera" (OBSBOT Center), "OBS Virtual Camera". Automatic mode
+/// never binds one: a virtual camera is a driver artifact that persists,
+/// serving black frames, with no hardware attached (observed 2026-07-23:
+/// the OBSBOT name preference bound OBSBOT Center's phantom device). An
+/// explicit dropdown selection is honored verbatim, virtual or not — a
+/// virtual camera is a legitimate deliberate test rig.
+const VIRTUAL_MARKER: &str = "virtual";
 
 /// The device index to open on macOS: the operator's explicit selection
 /// resolved against the `AVFoundation` discovery order (a name's position is
-/// its index); automatic prefers an attached OBSBOT ([`AUTO_PREFERRED`]),
-/// else `fallback` — the same automatic policy as the Windows/nokhwa paths.
+/// its index); automatic runs [`automatic_index`]'s physical-first policy.
 #[cfg(target_os = "macos")]
 pub(crate) fn resolve_open_index(fallback: u32) -> u32 {
     let names = super::avfoundation::device_names();
     match selected_camera() {
         Some(name) => resolve_index_by_name(&names, Some(&name), fallback),
-        None => resolve_index_by_name(&names, Some(AUTO_PREFERRED), fallback),
+        None => automatic_index(&names, fallback),
     }
+}
+
+/// Automatic-mode device policy: a physical (non-virtual) OBSBOT first, else
+/// the first physical device of any name, else `fallback`. Pure and
+/// platform-independent for unit testing; the discovery-order names come
+/// from the platform backend.
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(
+        dead_code,
+        reason = "the automatic policy is the macOS open path; kept uncfg'd so the pure logic is unit-tested on every platform"
+    )
+)]
+fn automatic_index(names: &[String], fallback: u32) -> u32 {
+    let physical = |pick_obsbot: bool| {
+        names.iter().position(|name| {
+            let lower = name.to_lowercase();
+            !lower.contains(VIRTUAL_MARKER) && (!pick_obsbot || lower.contains(AUTO_PREFERRED))
+        })
+    };
+    physical(true)
+        .or_else(|| physical(false))
+        .and_then(|i| u32::try_from(i).ok())
+        .map_or(fallback, |i| i)
 }
 
 /// Position of the first name containing `want` (case-insensitive substring,
@@ -166,6 +197,33 @@ mod tests {
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// Automatic never binds a virtual device: the phantom "OBSBOT Virtual
+    /// Camera" is skipped for a physical OBSBOT when present, else the first
+    /// physical device of any name; only an empty roster falls back.
+    #[test]
+    fn automatic_skips_virtual_devices() {
+        // The observed 2026-07-23 roster: automatic must land on FaceTime
+        // (index 1), not OBSBOT Center's phantom at index 0.
+        let roster = names(&[
+            "OBSBOT Virtual Camera",
+            "FaceTime HD Camera",
+            "OBS Virtual Camera",
+            "Madison's iPhone Camera",
+        ]);
+        assert_eq!(automatic_index(&roster, 0), 1, "first PHYSICAL device");
+        // With the real camera attached, the physical OBSBOT wins.
+        let with_hw = names(&[
+            "OBSBOT Virtual Camera",
+            "FaceTime HD Camera",
+            "OBSBOT Tiny 2 Lite",
+        ]);
+        assert_eq!(automatic_index(&with_hw, 0), 2, "physical OBSBOT preferred");
+        // All-virtual / empty rosters keep the configured fallback.
+        let all_virtual = names(&["OBS Virtual Camera"]);
+        assert_eq!(automatic_index(&all_virtual, 7), 7);
+        assert_eq!(automatic_index(&[], 3), 3);
     }
 
     /// Case-insensitive substring match resolves to the name's position;
