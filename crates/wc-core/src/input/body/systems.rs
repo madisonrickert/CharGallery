@@ -233,7 +233,10 @@ pub fn restart_worker_on_max_figures_change(
     };
     if let Some(mut rt) = runtime.take() {
         rt.worker.stop();
-        tracing::info!(max_figures = cap, "body tracking: slot cap changed, restarting worker");
+        tracing::info!(
+            max_figures = cap,
+            "body tracking: slot cap changed, restarting worker"
+        );
     }
 }
 

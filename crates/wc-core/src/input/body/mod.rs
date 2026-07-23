@@ -509,8 +509,7 @@ impl Plugin for BodyTrackingPlugin {
         app.register_sketch_settings::<crate::settings::body_tracking::BodyTrackingSettings>()
             .add_systems(
                 PreUpdate,
-                systems::restart_worker_on_max_figures_change
-                    .before(systems::sync_body_tracking),
+                systems::restart_worker_on_max_figures_change.before(systems::sync_body_tracking),
             );
     }
 }

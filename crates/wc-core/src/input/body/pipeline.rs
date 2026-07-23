@@ -1056,7 +1056,11 @@ impl PosePipeline {
         // Debug-only presence trace (same filter as the detector trace): the
         // raw pose-presence scalar every landmark inference, pass or fail, so
         // a replay run can see whether it chatters around the 0.5 gate.
-        tracing::debug!(slot = slot_idx, conf = picked.confidence, "body lm presence");
+        tracing::debug!(
+            slot = slot_idx,
+            conf = picked.confidence,
+            "body lm presence"
+        );
         // Schmitt presence gate: a fresh (re)acquisition must clear the full
         // admission threshold; an established track holds until the lower
         // release bound (see `PoseConfig::presence_release`).
