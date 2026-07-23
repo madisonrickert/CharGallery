@@ -256,6 +256,15 @@ pub use avfoundation::AvfFrameSource;
 ))]
 pub use nokhwa::NokhwaFrameSource;
 
+/// Operator webcam selection: enumeration for the settings dropdown and the
+/// open-time selection mirror. Gated like the backends above (either camera
+/// feature, any platform — it dispatches per target internally).
+#[cfg(any(
+    feature = "hand-tracking-mediapipe-camera",
+    feature = "body-tracking-camera"
+))]
+pub mod devices;
+
 #[cfg(test)]
 #[allow(clippy::expect_used, reason = "expect is appropriate in test code")]
 mod tests {

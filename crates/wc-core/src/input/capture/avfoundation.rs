@@ -108,6 +108,42 @@ pub(super) fn select_device_index(device_count: usize, requested: u32) -> Option
     (idx < device_count).then_some(idx)
 }
 
+/// Human-readable names of the discoverable video devices, in the same
+/// discovery order `AvfFrameSource::open` indexes into — a name's position is
+/// the `camera_index` that opens it (see `devices::selected_index_or`).
+pub(super) fn device_names() -> Vec<String> {
+    // SAFETY: `AVMediaTypeVideo` is a framework-provided constant `NSString`,
+    // valid for the process lifetime once AVFoundation is loaded. `None`
+    // (framework unavailable) degrades to an empty dropdown, never an error.
+    let Some(media_video) = (unsafe { AVMediaTypeVideo }) else {
+        return Vec::new();
+    };
+    let device_types = NSArray::from_slice(&[
+        // SAFETY: framework constants, read-only.
+        unsafe { AVCaptureDeviceTypeBuiltInWideAngleCamera },
+        unsafe { AVCaptureDeviceTypeExternal },
+    ]);
+    // SAFETY: discovery over a valid device-type array + video media type,
+    // any position — the same pattern as `open`.
+    let discovery = unsafe {
+        AVCaptureDeviceDiscoverySession::discoverySessionWithDeviceTypes_mediaType_position(
+            &device_types,
+            Some(media_video),
+            AVCaptureDevicePosition::Unspecified,
+        )
+    };
+    // SAFETY: returns a retained array of the discovered devices.
+    let devices = unsafe { discovery.devices() };
+    let mut names = Vec::with_capacity(devices.len());
+    for i in 0..devices.len() {
+        let device = devices.objectAtIndex(i);
+        // SAFETY: reading a property of a valid, retained AVCaptureDevice.
+        let name = unsafe { device.localizedName() };
+        names.push(name.to_string());
+    }
+    names
+}
+
 /// Human-readable label for the negotiated capture format (dev-panel diagnostics).
 pub(super) fn format_label(width: u32, height: u32, fps: u32) -> String {
     format!("{width}x{height} BGRA @{fps}")

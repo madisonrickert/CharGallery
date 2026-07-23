@@ -123,6 +123,17 @@ fn enumerate_devices() -> Vec<(u32, String)> {
     }
 }
 
+/// Human-readable names of the enumerable capture devices, for the settings
+/// dropdown (`devices::AvailableCameraDevices`). Selection stays name-based
+/// (`match_camera_by_name`), so the `(index, name)` pairing remains internal
+/// to `open`.
+pub(super) fn device_names() -> Vec<String> {
+    enumerate_devices()
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect()
+}
+
 /// Choose the device index whose human-readable name contains `want`
 /// (case-insensitive substring), else `fallback`.
 ///

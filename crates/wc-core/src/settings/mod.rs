@@ -35,6 +35,7 @@ pub mod persistence;
 pub mod registry;
 pub mod runtime_enum;
 pub mod trait_def;
+pub mod webcam;
 
 mod panel_user;
 

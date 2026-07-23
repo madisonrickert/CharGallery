@@ -517,17 +517,25 @@ fn open_camera_source(
 ) -> Result<Box<dyn FrameSource>, CaptureError> {
     #[cfg(all(feature = "hand-tracking-mediapipe-camera", target_os = "macos"))]
     {
-        // AVFoundation opens by index; name-based selection is a Windows/nokhwa
-        // concern (multiple MSMF sources on one box).
+        // AVFoundation opens by index; the config's name preference is a
+        // Windows/nokhwa concern (multiple MSMF sources on one box). The
+        // operator's explicit webcam selection (settings dock, Camera tab)
+        // does apply: resolved to a discovery index, keeping `camera_index`
+        // when automatic or unmatched.
         let _ = camera_name;
-        let source = capture::AvfFrameSource::open(camera_index)?;
+        let index = capture::devices::selected_index_or(camera_index);
+        let source = capture::AvfFrameSource::open(index)?;
         Ok(crate::input::camera_preview::PreviewTap::wrap(Box::new(
             source,
         )))
     }
     #[cfg(all(feature = "hand-tracking-mediapipe-camera", not(target_os = "macos")))]
     {
-        let source = capture::NokhwaFrameSource::open(camera_index, camera_name)?;
+        // The operator's explicit webcam selection (settings dock, Camera
+        // tab) overrides the config's name preference.
+        let selected = capture::devices::selected_camera();
+        let source =
+            capture::NokhwaFrameSource::open(camera_index, selected.as_deref().or(camera_name))?;
         Ok(crate::input::camera_preview::PreviewTap::wrap(Box::new(
             source,
         )))

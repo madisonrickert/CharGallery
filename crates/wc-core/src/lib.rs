@@ -69,6 +69,15 @@ impl Plugin for CorePlugin {
             feature = "body-tracking-mediapipe"
         ))]
         app.add_plugins(input::camera_preview::CameraPreviewPlugin);
+        // Operator webcam selection (Camera tab dropdown): enumerates the
+        // attached cameras and mirrors the choice to the capture workers at
+        // open time. Gated on the camera *backend* features, matching
+        // input::capture's backend mod gates.
+        #[cfg(any(
+            feature = "hand-tracking-mediapipe-camera",
+            feature = "body-tracking-camera"
+        ))]
+        app.add_plugins(input::capture::devices::WebcamSelectPlugin);
         app.add_plugins(audio::AudioPlugin);
         app.add_plugins(settings::SettingsPlugin);
         // Frame-rate cap (restores GPU headroom; see the frame_limiter module

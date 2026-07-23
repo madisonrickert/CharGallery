@@ -549,19 +549,29 @@ fn start_worker(
 pub fn open_camera_source(camera_index: u32) -> Result<Box<dyn FrameSource>, CaptureError> {
     #[cfg(all(feature = "body-tracking-camera", target_os = "macos"))]
     {
-        let source = crate::input::capture::AvfFrameSource::open(camera_index)?;
+        // Honor the operator's webcam selection (settings dock, Camera tab):
+        // resolve the chosen name against the discovery order; automatic
+        // keeps the configured index unchanged.
+        let index = crate::input::capture::devices::selected_index_or(camera_index);
+        let source = crate::input::capture::AvfFrameSource::open(index)?;
         Ok(crate::input::camera_preview::PreviewTap::wrap(Box::new(
             source,
         )))
     }
     #[cfg(all(feature = "body-tracking-camera", not(target_os = "macos")))]
     {
-        // Prefer the OBSBot by name, mirroring the hand provider's default: both
-        // webcam modalities target the same physical camera on the deployment,
-        // and MSMF does not reliably place it at index 0 (a virtual camera or an
-        // RDP camera bus may be enumerated first). Falls back to `camera_index`
-        // on any box with no matching camera, so non-OBSBot hosts are unchanged.
-        let source = crate::input::capture::NokhwaFrameSource::open(camera_index, Some("OBSBOT"))?;
+        // The operator's explicit webcam selection (settings dock, Camera tab)
+        // wins; automatic prefers the OBSBot by name, mirroring the hand
+        // provider's default — both webcam modalities target the same physical
+        // camera on the deployment, and MSMF does not reliably place it at
+        // index 0 (a virtual camera or an RDP camera bus may be enumerated
+        // first). Falls back to `camera_index` on any box with no matching
+        // camera, so non-OBSBot hosts are unchanged.
+        let selected = crate::input::capture::devices::selected_camera();
+        let source = crate::input::capture::NokhwaFrameSource::open(
+            camera_index,
+            selected.as_deref().or(Some("OBSBOT")),
+        )?;
         Ok(crate::input::camera_preview::PreviewTap::wrap(Box::new(
             source,
         )))
