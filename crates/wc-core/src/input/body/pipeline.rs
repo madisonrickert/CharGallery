@@ -1107,10 +1107,15 @@ impl PosePipeline {
     /// the pooled payload (in place; no allocation).
     fn write_payload(&mut self, payload: &mut BodyFramePayload) {
         payload.edges.clear();
+        payload.edge_motion.clear();
         for (i, slot) in self.slots.iter().enumerate() {
             slot.mask.write_channel(&mut payload.mask, MASK_CHANNELS, i);
-            payload.edge_slot_counts[i] =
-                extract_edges_append(slot.mask.smoothed(), &mut payload.edges);
+            payload.edge_slot_counts[i] = extract_edges_append(
+                slot.mask.smoothed(),
+                slot.mask.motion(),
+                &mut payload.edges,
+                &mut payload.edge_motion,
+            );
         }
     }
 }
@@ -1802,6 +1807,11 @@ mod tests {
         assert_eq!(max_g, 0, "unoccupied slot 1 channel must stay dark");
         assert!(!pl.edges.is_empty(), "edges must be extracted");
         assert!(pl.edges.len() <= crate::input::body::MAX_EDGE_POINTS);
+        assert_eq!(
+            pl.edge_motion.len(),
+            pl.edges.len(),
+            "motion weights stay index-parallel with edges"
+        );
         assert_eq!(pl.edge_slot_counts[0], pl.edges.len());
         assert_eq!(pl.edge_slot_counts[1], 0);
     }
@@ -2196,6 +2206,11 @@ mod tests {
             pl.edge_slot_counts.iter().sum::<usize>(),
             pl.edges.len(),
             "counts partition the edge list"
+        );
+        assert_eq!(
+            pl.edge_motion.len(),
+            pl.edges.len(),
+            "motion weights stay index-parallel with edges"
         );
 
         // Tracking frames keep both slots without re-detecting.

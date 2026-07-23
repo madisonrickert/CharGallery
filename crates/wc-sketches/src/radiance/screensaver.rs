@@ -100,8 +100,14 @@ pub fn drive_phantom(
             // mask); slot 0 owns the whole edge list.
             rasterize_mask(&pose, data);
             extract_edges(data, &mut edges.points);
+            // Keep the per-point motion field index-parallel with `points`:
+            // the phantom carries no real edge-motion signal, so its weights
+            // are all zero (capacity is preserved — resize never reallocates).
+            let n = edges.points.len();
+            edges.motion.clear();
+            edges.motion.resize(n, 0.0);
             edges.slot_counts = [0; wc_core::input::body::MAX_TRACKED_BODIES];
-            edges.slot_counts[0] = edges.points.len();
+            edges.slot_counts[0] = n;
             edges.generation = edges.generation.wrapping_add(1);
         }
     }
@@ -210,6 +216,7 @@ mod tests {
         });
         world.insert_resource(SilhouetteEdges {
             points: Vec::with_capacity(8),
+            motion: Vec::with_capacity(8),
             slot_counts: [0; wc_core::input::body::MAX_TRACKED_BODIES],
             generation: 1,
         });

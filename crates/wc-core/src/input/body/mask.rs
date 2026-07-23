@@ -11,9 +11,10 @@
 //! boundary is stabilized hardest while confident interior/exterior pixels
 //! track the new frame almost instantly. See [`uncertainty_blend`].
 //!
-//! All three working buffers (crop, frame, blend accumulator — 256 KB of `f32`
-//! each) are allocated once in [`MaskProcessor::new`] and refilled in place:
-//! the per-frame path performs no allocation (worker-loop hot-path rule).
+//! All working buffers (crop, frame, blend accumulator, its pre-blend snapshot,
+//! and the per-texel frame-delta motion field — 256 KB of `f32` each) are
+//! allocated once in [`MaskProcessor::new`] and refilled in place: the
+//! per-frame path performs no allocation (worker-loop hot-path rule).
 
 use super::detector::sigmoid;
 use super::roi::{ContentRect, RoiRect, LANDMARK_INPUT};
@@ -90,6 +91,13 @@ pub struct MaskProcessor {
     /// Temporal-blend accumulator (previous filtered frame) — what consumers
     /// see via [`Self::smoothed`].
     ema: Vec<f32>,
+    /// Snapshot of `ema` taken immediately *before* each frame's temporal
+    /// blend, so the per-texel frame delta (the edge-motion signal) can be
+    /// computed against the newly-blended `ema` — see [`Self::motion`].
+    ema_prev: Vec<f32>,
+    /// Per-texel absolute frame delta of the smoothed mask (`|ema − ema_prev|`),
+    /// refilled each ingest — what consumers see via [`Self::motion`].
+    motion: Vec<f32>,
     /// Whether `ema` holds real history (first frame copies instead of
     /// blending, so a fresh track has no fade-in lag from the zero state).
     has_history: bool,
@@ -104,6 +112,8 @@ impl MaskProcessor {
             crop: vec![0.0; MASK_SIZE * MASK_SIZE],
             frame: vec![0.0; MASK_SIZE * MASK_SIZE],
             ema: vec![0.0; MASK_SIZE * MASK_SIZE],
+            ema_prev: vec![0.0; MASK_SIZE * MASK_SIZE],
+            motion: vec![0.0; MASK_SIZE * MASK_SIZE],
             has_history: false,
         }
     }
@@ -155,12 +165,26 @@ impl MaskProcessor {
             }
         }
         // 3. Uncertainty-weighted temporal blend (first frame copies — no
-        //    fade-in lag).
+        //    fade-in lag). Snapshot the pre-blend accumulator first so the
+        //    per-texel frame delta can be measured against the new `ema`.
+        self.ema_prev.copy_from_slice(&self.ema);
         if self.has_history {
             uncertainty_blend(&mut self.ema, &self.frame, ratio);
         } else {
             self.ema.copy_from_slice(&self.frame);
             self.has_history = true;
+        }
+        // Per-texel frame delta of the smoothed mask: the edge-motion signal
+        // (a swept prop/limb moves the boundary; a standing body does not).
+        // Per-frame, not per-second: the worker cadence is capped and steady
+        // (max_inference_hz), so the constant absorbs the rate.
+        for ((m, now), prev) in self
+            .motion
+            .iter_mut()
+            .zip(self.ema.iter())
+            .zip(self.ema_prev.iter())
+        {
+            *m = (now - prev).abs();
         }
     }
 
@@ -177,6 +201,15 @@ impl MaskProcessor {
     #[must_use]
     pub fn smoothed(&self) -> &[f32] {
         &self.ema
+    }
+
+    /// The per-texel absolute frame delta of the smoothed mask (`MASK_SIZE`²
+    /// values, `|ema − ema_prev|` from the last [`Self::ingest`]) — the
+    /// edge-motion field the extractor samples into per-point emission
+    /// weights (see `edges::EDGE_MOTION_FULL`).
+    #[must_use]
+    pub fn motion(&self) -> &[f32] {
+        &self.motion
     }
 
     /// Quantize the smoothed mask into a single-channel byte buffer (one byte
@@ -402,5 +435,25 @@ mod tests {
         p.reset();
         p.write_u8(&mut out);
         assert_eq!(out[128 * MASK_SIZE + 128], 0);
+    }
+
+    #[test]
+    fn motion_field_settles_to_zero_static_and_lights_on_change() {
+        let (content, roi) = identity_setup();
+        let lit = vec![10.0_f32; MASK_SIZE * MASK_SIZE];
+        let mut p = MaskProcessor::new();
+        // Seed, then re-ingest the identical frame: the smoothed mask already
+        // equals it, so the per-texel delta collapses to ~0 (a standing body
+        // does not move its boundary).
+        p.ingest(&lit, &roi, content, 0.7);
+        p.ingest(&lit, &roi, content, 0.7);
+        let centre = p.motion()[128 * MASK_SIZE + 128];
+        assert!(centre < 1e-4, "static centre motion={centre}");
+        // Flip the person away (confident foreground → confident background):
+        // the boundary sweeps across, so the delta lights up.
+        let empty = vec![-10.0_f32; MASK_SIZE * MASK_SIZE];
+        p.ingest(&empty, &roi, content, 0.7);
+        let moved = p.motion()[128 * MASK_SIZE + 128];
+        assert!(moved > 0.05, "changed centre motion={moved}");
     }
 }

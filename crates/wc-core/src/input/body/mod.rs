@@ -318,6 +318,9 @@ pub struct EdgePoint {
 pub struct SilhouetteEdges {
     /// Edge samples for the latest body frame, slot-ordered (see above).
     pub points: Vec<EdgePoint>,
+    /// Per-point emission weight 0..1 (see `edges::EDGE_MOTION_FULL`): how fast
+    /// the boundary was moving at this point.
+    pub motion: Vec<f32>,
     /// Per-slot edge counts partitioning `points`.
     pub slot_counts: [usize; MAX_TRACKED_BODIES],
     /// Bumped on each new body frame so consumers can skip re-upload.
@@ -328,6 +331,7 @@ impl Default for SilhouetteEdges {
     fn default() -> Self {
         Self {
             points: Vec::with_capacity(MAX_EDGE_POINTS),
+            motion: Vec::with_capacity(MAX_EDGE_POINTS),
             slot_counts: [0; MAX_TRACKED_BODIES],
             generation: 0,
         }
@@ -547,6 +551,8 @@ mod tests {
         let e = SilhouetteEdges::default();
         assert!(e.points.is_empty());
         assert_eq!(e.points.capacity(), MAX_EDGE_POINTS);
+        assert!(e.motion.is_empty());
+        assert_eq!(e.motion.capacity(), MAX_EDGE_POINTS);
         assert_eq!(e.slot_counts, [0; MAX_TRACKED_BODIES]);
         assert_eq!(e.generation, 0);
     }

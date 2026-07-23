@@ -43,6 +43,10 @@ pub struct BodyFramePayload {
     /// Slot-ordered edge points for this frame (capacity
     /// [`MAX_EDGE_POINTS`], clear-refilled).
     pub edges: Vec<EdgePoint>,
+    /// Per-point emission weight `0..1`, index-parallel with `edges` (capacity
+    /// [`MAX_EDGE_POINTS`], cleared where `edges` is). See
+    /// `edges::EDGE_MOTION_FULL`.
+    pub edge_motion: Vec<f32>,
     /// Per-slot edge counts partitioning `edges` (ascending slot order).
     pub edge_slot_counts: [usize; MAX_TRACKED_BODIES],
 }
@@ -54,6 +58,7 @@ impl BodyFramePayload {
         Self {
             mask: vec![0; MASK_BYTES],
             edges: Vec::with_capacity(MAX_EDGE_POINTS),
+            edge_motion: Vec::with_capacity(MAX_EDGE_POINTS),
             edge_slot_counts: [0; MAX_TRACKED_BODIES],
         }
     }
@@ -182,6 +187,8 @@ mod tests {
         assert_eq!(p.mask.len(), MASK_BYTES, "RGBA-interleaved mask bytes");
         assert!(p.edges.is_empty());
         assert_eq!(p.edges.capacity(), MAX_EDGE_POINTS);
+        assert!(p.edge_motion.is_empty());
+        assert_eq!(p.edge_motion.capacity(), MAX_EDGE_POINTS);
         assert_eq!(p.edge_slot_counts, [0; MAX_TRACKED_BODIES]);
     }
 

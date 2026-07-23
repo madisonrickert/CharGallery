@@ -15,14 +15,37 @@ use super::{EdgePoint, MASK_SIZE, MAX_EDGE_POINTS};
 /// Iso-level at which the mask boundary is traced.
 pub const EDGE_THRESHOLD: f32 = 0.5;
 
+/// Per-frame mask delta that maps to full edge-motion weight (1.0). The
+/// temporal blend damps boundary deltas to roughly 0.1..0.3 per frame on a
+/// sweeping limb at the default combine ratio; 0.15 puts a brisk sweep at
+/// full weight. Eye-tune at the venue alongside `edge_motion_bias`.
+pub const EDGE_MOTION_FULL: f32 = 0.15;
+
+/// Sample the per-texel motion field at a mask-UV position, mapped to a
+/// `0..1` emission weight (nearest texel; edges were extracted from the same
+/// grid, so sub-texel filtering buys nothing).
+#[must_use]
+pub fn motion_weight_at(motion: &[f32], pos: Vec2) -> f32 {
+    let x = texel_index(pos.x);
+    let y = texel_index(pos.y);
+    (motion[y * MASK_SIZE + x] / EDGE_MOTION_FULL).clamp(0.0, 1.0)
+}
+
 /// Extract silhouette edge points from a `MASK_SIZE`² smoothed mask
-/// (row-major, values in `[0, 1]`) into `out` (cleared first; capacity must
-/// be ≥ [`MAX_EDGE_POINTS`], which the pooled payload and `SilhouetteEdges`
-/// guarantee by construction). Single-mask convenience over
-/// [`extract_edges_append`].
-pub fn extract_edges(mask: &[f32], out: &mut Vec<EdgePoint>) {
+/// (row-major, values in `[0, 1]`) into `out`, sampling the parallel
+/// `MASK_SIZE`² per-texel `motion` field into `weights` (both cleared first;
+/// capacity must be ≥ [`MAX_EDGE_POINTS`], which the pooled payload and
+/// `SilhouetteEdges` guarantee by construction). `weights` stays index-parallel
+/// with `out`. Single-mask convenience over [`extract_edges_append`].
+pub fn extract_edges(
+    mask: &[f32],
+    motion: &[f32],
+    out: &mut Vec<EdgePoint>,
+    weights: &mut Vec<f32>,
+) {
     out.clear();
-    extract_edges_append(mask, out);
+    weights.clear();
+    extract_edges_append(mask, motion, out, weights);
 }
 
 /// Append one mask's edge points to `out` **without clearing it**, stopping
@@ -39,7 +62,17 @@ pub fn extract_edges(mask: &[f32], out: &mut Vec<EdgePoint>) {
 /// outside, so the outward direction is −gradient. Degenerate zero-gradient
 /// crossings are skipped rather than given a fake normal. Never allocates
 /// past the caller's [`MAX_EDGE_POINTS`] capacity (worker hot-path rule).
-pub fn extract_edges_append(mask: &[f32], out: &mut Vec<EdgePoint>) -> usize {
+///
+/// The parallel `motion` field (`MASK_SIZE`² per-texel frame deltas) is sampled
+/// at each emitted point via [`motion_weight_at`] into `weights`, which the
+/// caller must supply with the same capacity as `out`; `weights` stays
+/// index-parallel with the points this call appends.
+pub fn extract_edges_append(
+    mask: &[f32],
+    motion: &[f32],
+    out: &mut Vec<EdgePoint>,
+    weights: &mut Vec<f32>,
+) -> usize {
     let start = out.len();
     debug_assert_eq!(mask.len(), MASK_SIZE * MASK_SIZE);
     let n = MASK_SIZE;
@@ -60,6 +93,7 @@ pub fn extract_edges_append(mask: &[f32], out: &mut Vec<EdgePoint>) -> usize {
             let sample_x = if t < 0.5 { x } else { x + 1 };
             if let Some(normal) = outward_normal(mask, sample_x, y) {
                 out.push(EdgePoint { pos, normal });
+                weights.push(motion_weight_at(motion, pos));
             }
         }
     }
@@ -79,6 +113,7 @@ pub fn extract_edges_append(mask: &[f32], out: &mut Vec<EdgePoint>) -> usize {
             let sample_y = if t < 0.5 { y } else { y + 1 };
             if let Some(normal) = outward_normal(mask, x, sample_y) {
                 out.push(EdgePoint { pos, normal });
+                weights.push(motion_weight_at(motion, pos));
             }
         }
     }
@@ -118,6 +153,20 @@ fn cellf(v: usize) -> f32 {
     f32::from(u16::try_from(v).unwrap_or(u16::MAX))
 }
 
+/// Map a `0..1` mask-UV coordinate to a nearest mask texel index, clamped
+/// in-range. Mirrors the extraction loop's grid convention (`float→index` has
+/// no `From`/`TryFrom`; the `as` cast saturates so a sign/overflow is clamped
+/// away by the following `min`).
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "value is a saturating float->int cast then clamped to MASK_SIZE - 1"
+)]
+fn texel_index(uv: f32) -> usize {
+    ((uv * cellf(MASK_SIZE)) as usize).min(MASK_SIZE - 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,12 +190,19 @@ mod tests {
         u16::try_from(v).map_or(0.0, f32::from)
     }
 
+    /// A zeroed motion field for call sites that don't exercise the
+    /// edge-motion path (the extraction geometry is motion-independent).
+    fn no_motion() -> Vec<f32> {
+        vec![0.0_f32; MASK_SIZE * MASK_SIZE]
+    }
+
     #[test]
     fn circle_yields_perimeter_points_with_outward_unit_normals() {
         let centre = Vec2::new(128.0, 128.0);
         let mask = disc(centre, 60.0);
         let mut out = Vec::with_capacity(MAX_EDGE_POINTS);
-        extract_edges(&mask, &mut out);
+        let mut weights = Vec::with_capacity(MAX_EDGE_POINTS);
+        extract_edges(&mask, &no_motion(), &mut out, &mut weights);
         // A radius-60 disc crosses ~2 texels per row over ~120 rows plus the
         // same per column: ≈ 480 crossings. Wide band for discretization.
         assert!(
@@ -187,7 +243,8 @@ mod tests {
             }
         }
         let mut out = Vec::with_capacity(MAX_EDGE_POINTS);
-        extract_edges(&mask, &mut out);
+        let mut weights = Vec::with_capacity(MAX_EDGE_POINTS);
+        extract_edges(&mask, &no_motion(), &mut out, &mut weights);
         // 2 horizontal crossings × 128 rows + 2 vertical × 64 columns = 384.
         assert!(
             (350..=420).contains(&out.len()),
@@ -232,8 +289,9 @@ mod tests {
             }
         }
         let mut out = Vec::with_capacity(MAX_EDGE_POINTS);
+        let mut weights = Vec::with_capacity(MAX_EDGE_POINTS);
         let ptr = out.as_ptr();
-        extract_edges(&mask, &mut out);
+        extract_edges(&mask, &no_motion(), &mut out, &mut weights);
         assert_eq!(out.len(), MAX_EDGE_POINTS, "must clamp at capacity");
         assert_eq!(out.capacity(), MAX_EDGE_POINTS, "must never grow");
         assert_eq!(out.as_ptr(), ptr, "must never reallocate");
@@ -246,11 +304,14 @@ mod tests {
         let a = disc(Vec2::new(90.0, 128.0), 40.0);
         let b = disc(Vec2::new(180.0, 128.0), 30.0);
         let mut out = Vec::with_capacity(MAX_EDGE_POINTS);
+        let mut weights = Vec::with_capacity(MAX_EDGE_POINTS);
+        let motion = no_motion();
         let ptr = out.as_ptr();
-        let n_a = extract_edges_append(&a, &mut out);
-        let n_b = extract_edges_append(&b, &mut out);
+        let n_a = extract_edges_append(&a, &motion, &mut out, &mut weights);
+        let n_b = extract_edges_append(&b, &motion, &mut out, &mut weights);
         assert!(n_a > 0 && n_b > 0);
         assert_eq!(out.len(), n_a + n_b, "counts partition the list");
+        assert_eq!(weights.len(), out.len(), "weights stay index-parallel");
         assert_eq!(out.as_ptr(), ptr, "append never reallocates");
         // Slot 0's range centres on disc A, slot 1's on disc B.
         let mean =
@@ -261,14 +322,32 @@ mod tests {
         assert!((cb.x - 180.0 / 256.0).abs() < 0.02, "slot 1 range = disc B");
     }
 
+    /// Edge weights come from the per-texel motion field: an edge point on a
+    /// moved boundary weighs in; a static boundary weighs ~0; weights clamp
+    /// to 1.
+    #[test]
+    fn edge_motion_weight_maps_and_clamps() {
+        let mut motion = vec![0.0_f32; MASK_SIZE * MASK_SIZE];
+        // Texel (64, 128) saw a full-scale delta; (192, 128) saw none.
+        motion[128 * MASK_SIZE + 64] = EDGE_MOTION_FULL * 2.0;
+        let moving = motion_weight_at(&motion, Vec2::new(64.5 / 256.0, 128.5 / 256.0));
+        let still = motion_weight_at(&motion, Vec2::new(192.5 / 256.0, 128.5 / 256.0));
+        assert!((moving - 1.0).abs() < 1e-6, "clamps to 1: {moving}");
+        assert!(still.abs() < 1e-6, "static boundary: {still}");
+    }
+
     #[test]
     fn refill_clears_previous_points() {
         let mask_a = disc(Vec2::new(128.0, 128.0), 40.0);
         let empty = vec![0.0_f32; MASK_SIZE * MASK_SIZE];
         let mut out = Vec::with_capacity(MAX_EDGE_POINTS);
-        extract_edges(&mask_a, &mut out);
+        let mut weights = Vec::with_capacity(MAX_EDGE_POINTS);
+        let motion = no_motion();
+        extract_edges(&mask_a, &motion, &mut out, &mut weights);
         assert!(!out.is_empty());
-        extract_edges(&empty, &mut out);
+        assert_eq!(weights.len(), out.len());
+        extract_edges(&empty, &motion, &mut out, &mut weights);
         assert!(out.is_empty(), "clear-refill semantics");
+        assert!(weights.is_empty(), "weights cleared with points");
     }
 }

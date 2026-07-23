@@ -262,6 +262,8 @@ pub fn poll_body_worker(
                     // (capacity preserved)…
                     edges.points.clear();
                     edges.points.extend_from_slice(&payload.edges);
+                    edges.motion.clear();
+                    edges.motion.extend_from_slice(&payload.edge_motion);
                     edges.slot_counts = payload.edge_slot_counts;
                     edges.generation = edges.generation.wrapping_add(1);
                     // …and hand the buffer back to the worker. The recycle

@@ -95,6 +95,7 @@ pub fn ensure_body_surfaces(
     if edges.is_none() {
         commands.insert_resource(SilhouetteEdges {
             points: Vec::with_capacity(MAX_EDGE_POINTS),
+            motion: Vec::with_capacity(MAX_EDGE_POINTS),
             slot_counts: [0; MAX_TRACKED_BODIES],
             generation: 0,
         });
