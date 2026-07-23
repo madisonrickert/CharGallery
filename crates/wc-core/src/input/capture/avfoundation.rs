@@ -111,7 +111,7 @@ pub(super) fn select_device_index(device_count: usize, requested: u32) -> Option
 
 /// Human-readable names of the discoverable video devices, in the same
 /// discovery order `AvfFrameSource::open` indexes into — a name's position is
-/// the `camera_index` that opens it (see `devices::selected_index_or`).
+/// the `camera_index` that opens it (see `devices::resolve_open_index`).
 pub(super) fn device_names() -> Vec<String> {
     // SAFETY: `AVMediaTypeVideo` is a framework-provided constant `NSString`,
     // valid for the process lifetime once AVFoundation is loaded. `None`
