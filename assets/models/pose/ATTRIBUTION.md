@@ -32,6 +32,11 @@ which reproduces these exact bytes (byte-identical re-run verified).
   CoreML. No `PReLU` rejections (no slope surgery needed). Remaining rejections
   are the known not-bit-exact-fixable classes: `Resize` `half_pixel`, constant
   `Pad` without `constant_value`, 3-D `Concat`.
+- **ANE restriction (2026-07-23):** under ANE-inclusive Core ML placement this
+  model's stride-16 score head returns literal-0.0 logits for a varying anchor
+  subset (phantom 0.5-score detections). Its session is pinned to Metal-only
+  compute units (`CoremlUnits::NoNeuralEngine`); see the runbook's ANE
+  addendum. The model file itself is unchanged.
 
 ## `pose_landmark_full.onnx`
 - **Upstream:** OpenCV Zoo — `opencv/pose_estimation_mediapipe`

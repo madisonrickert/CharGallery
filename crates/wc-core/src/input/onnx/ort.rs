@@ -153,6 +153,17 @@ impl OrtInference {
         backend: HandTrackingBackend,
         model_name: &str,
     ) -> Result<Self, InferenceError> {
+        Self::load_with_units(model_bytes, backend, model_name, CoremlUnits::All)
+    }
+
+    /// [`Self::load`] with an explicit Core ML compute-units restriction (see
+    /// [`CoremlUnits`]); non-macOS targets accept and ignore it.
+    pub fn load_with_units(
+        model_bytes: &[u8],
+        backend: HandTrackingBackend,
+        model_name: &str,
+        units: CoremlUnits,
+    ) -> Result<Self, InferenceError> {
         let plan = ep_plan(backend);
         let (session, backend_label) = if plan.try_accelerated {
             load_with_ep_fallback(
@@ -164,6 +175,7 @@ impl OrtInference {
                         model_name,
                         model_bytes,
                         plan.allow_cpu_fallback,
+                        units,
                     )
                 },
                 || commit_cpu(model_bytes),
@@ -382,6 +394,28 @@ fn session_io_names(session: &Session) -> Result<(String, Vec<String>), Inferenc
     Ok((input_name, output_names))
 }
 
+/// Which Core ML compute units a model's accelerated session may use. Only
+/// meaningful on macOS; every other target ignores it.
+///
+/// `All` (the default) lets Core ML place each graph partition on the Neural
+/// Engine, GPU, or CPU as it sees fit. `NoNeuralEngine` restricts placement
+/// to the Metal GPU + CPU — for a model whose graph the ANE is known to
+/// miscompute. The pose detector is the standing example: under `All`, a
+/// varying subset of its stride-16 score head comes back as literal-0.0
+/// logits (sigmoid 0.5 = phantom people); under `NoNeuralEngine` the same
+/// clip replays with zero corrupted logits, still fully GPU-accelerated.
+/// The compiled-artifact cache is keyed by (model bytes, units) — see
+/// `model_cache_key` — so an artifact compiled for one placement can never
+/// serve the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CoremlUnits {
+    /// ANE + GPU + CPU: Core ML places partitions freely (the default).
+    #[default]
+    All,
+    /// Metal GPU + CPU only: for graphs the ANE miscomputes.
+    NoNeuralEngine,
+}
+
 /// How a [`HandTrackingBackend`] preference resolves into the two independent
 /// load-time decisions: whether to attempt the platform GPU EP at all, and
 /// whether a commit failure on that EP may rebuild on the CPU.
@@ -533,6 +567,7 @@ fn base_builder() -> Result<SessionBuilder, InferenceError> {
 fn accelerated_builder(
     model_bytes: &[u8],
     allow_cpu_fallback: bool,
+    units: CoremlUnits,
 ) -> Result<(SessionBuilder, &'static str), InferenceError> {
     let mut builder = base_builder()?;
     #[cfg(target_os = "windows")]
@@ -543,7 +578,7 @@ fn accelerated_builder(
     // every node runs on it — the graph is partitioned at commit and any
     // unsupported op still falls to the CPU. The label reflects registration, not
     // whole-graph placement (see [`OrtInference::backend`]).
-    let label = register_accelerator(&mut builder, model_bytes);
+    let label = register_accelerator(&mut builder, model_bytes, units);
     if accelerator_missing_under_force(label, allow_cpu_fallback) {
         return Err(InferenceError::Load(format!(
             "no GPU execution provider registered on this host (target accelerator: {}), \
@@ -568,8 +603,9 @@ fn accelerated_builder(
 fn commit_accelerated(
     model_bytes: &[u8],
     allow_cpu_fallback: bool,
+    units: CoremlUnits,
 ) -> Result<(Session, &'static str), InferenceError> {
-    let (mut builder, label) = accelerated_builder(model_bytes, allow_cpu_fallback)?;
+    let (mut builder, label) = accelerated_builder(model_bytes, allow_cpu_fallback, units)?;
     let session = builder.commit_from_memory(model_bytes).map_err(load_err)?;
     Ok((session, label))
 }
@@ -605,13 +641,18 @@ fn commit_accelerated_recovering_cache(
     model_name: &str,
     model_bytes: &[u8],
     allow_cpu_fallback: bool,
+    units: CoremlUnits,
 ) -> Result<(Session, &'static str), InferenceError> {
-    let (mut builder, label) = accelerated_builder(model_bytes, allow_cpu_fallback)?;
+    let (mut builder, label) = accelerated_builder(model_bytes, allow_cpu_fallback, units)?;
     match builder.commit_from_memory(model_bytes).map_err(load_err) {
         Ok(session) => Ok((session, label)),
-        Err(first_err) => {
-            retry_after_cache_purge(model_name, model_bytes, allow_cpu_fallback, first_err)
-        }
+        Err(first_err) => retry_after_cache_purge(
+            model_name,
+            model_bytes,
+            allow_cpu_fallback,
+            units,
+            first_err,
+        ),
     }
 }
 
@@ -629,9 +670,10 @@ fn retry_after_cache_purge(
     model_name: &str,
     model_bytes: &[u8],
     allow_cpu_fallback: bool,
+    units: CoremlUnits,
     first_err: InferenceError,
 ) -> Result<(Session, &'static str), InferenceError> {
-    let Some(dir) = purge_model_cache(model_bytes) else {
+    let Some(dir) = purge_model_cache(model_bytes, units) else {
         // Nothing was purged — no cache directory (caching unavailable), or the
         // computed path failed the guard. Either way a poisoned cache cannot be
         // the explanation, so do not retry: degrade (or, under ForceGpu, fail).
@@ -645,7 +687,7 @@ fn retry_after_cache_purge(
          directory and retrying the accelerated commit once (a corrupt cache entry would \
          otherwise fail identically on every launch, degrading this model to the CPU forever)"
     );
-    match commit_accelerated(model_bytes, allow_cpu_fallback) {
+    match commit_accelerated(model_bytes, allow_cpu_fallback, units) {
         Ok(loaded) => {
             tracing::warn!(
                 model = model_name,
@@ -742,16 +784,25 @@ fn configure_accelerator_session(
 /// and the compiled artifact is cached on disk per model ([`coreml_cache_dir`]) to
 /// skip recompiling every launch.
 #[cfg(target_os = "macos")]
-fn register_accelerator(builder: &mut SessionBuilder, model_bytes: &[u8]) -> &'static str {
-    let mut coreml = CoreML::default()
-        // ALL lets Core ML place each segment on ANE/GPU/CPU as it sees fit (the
-        // default, set explicitly). NeuralNetwork model format is kept deliberately
-        // — see the doc comment: MLProgram fails to compile these vendored models.
-        .with_compute_units(ComputeUnits::All);
+fn register_accelerator(
+    builder: &mut SessionBuilder,
+    model_bytes: &[u8],
+    units: CoremlUnits,
+) -> &'static str {
+    // NeuralNetwork model format is kept deliberately — see the doc comment:
+    // MLProgram fails to compile these vendored models. Compute units come from
+    // the caller: `All` lets Core ML place each segment on ANE/GPU/CPU as it
+    // sees fit; `NoNeuralEngine` (Metal GPU + CPU) is for graphs the ANE
+    // miscomputes — see [`CoremlUnits`].
+    let compute_units = match units {
+        CoremlUnits::All => ComputeUnits::All,
+        CoremlUnits::NoNeuralEngine => ComputeUnits::CPUAndGPU,
+    };
+    let mut coreml = CoreML::default().with_compute_units(compute_units);
     // Core ML compiles each model to a native artifact on first load; caching it on
     // disk avoids paying that compile every launch. A missing cache dir is
     // non-fatal — we just recompile each run.
-    if let Some(cache) = coreml_cache_dir(model_bytes) {
+    if let Some(cache) = coreml_cache_dir(model_bytes, units) {
         coreml = coreml.with_model_cache_dir(cache.display());
     }
     match coreml.register(builder) {
@@ -770,7 +821,11 @@ fn register_accelerator(builder: &mut SessionBuilder, model_bytes: &[u8]) -> &'s
 /// integrated GPUs alike. Registration fails gracefully to the CPU EP on a host
 /// with no DX12 device (e.g. a GPU-less CI runner).
 #[cfg(target_os = "windows")]
-fn register_accelerator(builder: &mut SessionBuilder, _model_bytes: &[u8]) -> &'static str {
+fn register_accelerator(
+    builder: &mut SessionBuilder,
+    _model_bytes: &[u8],
+    _units: CoremlUnits,
+) -> &'static str {
     match DirectML::default().register(builder) {
         Ok(()) => BACKEND_DIRECTML,
         Err(e) => {
@@ -783,7 +838,11 @@ fn register_accelerator(builder: &mut SessionBuilder, _model_bytes: &[u8]) -> &'
 /// No GPU execution provider for this target (e.g. Linux): the session runs on
 /// ONNX Runtime's CPU EP. `builder` is left untouched.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn register_accelerator(_builder: &mut SessionBuilder, _model_bytes: &[u8]) -> &'static str {
+fn register_accelerator(
+    _builder: &mut SessionBuilder,
+    _model_bytes: &[u8],
+    _units: CoremlUnits,
+) -> &'static str {
     BACKEND_CPU
 }
 
@@ -806,10 +865,15 @@ fn register_accelerator(_builder: &mut SessionBuilder, _model_bytes: &[u8]) -> &
 ///
 /// macOS-only: the on-disk EP artifact cache is a `CoreML` concern.
 #[cfg(target_os = "macos")]
-fn model_cache_key(model_bytes: &[u8]) -> String {
+fn model_cache_key(model_bytes: &[u8], units: CoremlUnits) -> String {
     use std::hash::{Hash as _, Hasher as _};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     model_bytes.hash(&mut hasher);
+    // Salt with the compute-units restriction: a Core ML artifact compiled for
+    // one placement (e.g. ANE-inclusive) must never be served to a session
+    // that excludes that placement — stale-artifact reuse across EP configs is
+    // exactly the class of silent breakage the per-model key exists to stop.
+    std::mem::discriminant(&units).hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
 
@@ -870,8 +934,8 @@ fn coreml_cache_root() -> Option<PathBuf> {
 /// is available, or it cannot be created; the caller then loads without a cache
 /// (recompiling the Core ML artifact each run) rather than failing.
 #[cfg(target_os = "macos")]
-fn coreml_cache_dir(model_bytes: &[u8]) -> Option<PathBuf> {
-    let dir = coreml_cache_root()?.join(model_cache_key(model_bytes));
+fn coreml_cache_dir(model_bytes: &[u8], units: CoremlUnits) -> Option<PathBuf> {
+    let dir = coreml_cache_root()?.join(model_cache_key(model_bytes, units));
     match std::fs::create_dir_all(&dir) {
         Ok(()) => Some(dir),
         Err(e) => {
@@ -913,9 +977,9 @@ fn is_purgeable_model_cache_dir(dir: &Path, root: &Path) -> bool {
 /// [`is_purgeable_model_cache_dir`] before the recursive delete. A path that fails
 /// the guard is logged and left alone.
 #[cfg(target_os = "macos")]
-fn purge_model_cache(model_bytes: &[u8]) -> Option<PathBuf> {
+fn purge_model_cache(model_bytes: &[u8], units: CoremlUnits) -> Option<PathBuf> {
     let root = coreml_cache_root()?;
-    let dir = coreml_cache_dir(model_bytes)?;
+    let dir = coreml_cache_dir(model_bytes, units)?;
     if !is_purgeable_model_cache_dir(&dir, &root) {
         tracing::warn!(
             "refusing to purge CoreML cache path {} — it is not a directory sitting directly \
@@ -1022,16 +1086,23 @@ mod tests {
         // collapsed the palm graph 30 -> 6 partitions against a 30-partition
         // cache). The cache directory must be namespaced by model content:
         // distinct bytes -> distinct key, identical bytes -> identical key.
-        let v1 = model_cache_key(b"palm-model-rev-1");
-        let v2 = model_cache_key(b"palm-model-rev-2");
+        let v1 = model_cache_key(b"palm-model-rev-1", CoremlUnits::All);
+        let v2 = model_cache_key(b"palm-model-rev-2", CoremlUnits::All);
         assert_ne!(
             v1, v2,
             "different model bytes must namespace to different cache keys"
         );
         assert_eq!(
             v1,
-            model_cache_key(b"palm-model-rev-1"),
+            model_cache_key(b"palm-model-rev-1", CoremlUnits::All),
             "the same model bytes must map to the same cache key"
+        );
+        // Same reasoning across compute-units configs: an artifact compiled
+        // ANE-inclusive must never serve a Metal-only session (or vice versa).
+        assert_ne!(
+            v1,
+            model_cache_key(b"palm-model-rev-1", CoremlUnits::NoNeuralEngine),
+            "different compute-units restrictions must namespace to different cache keys"
         );
     }
 
@@ -1136,7 +1207,8 @@ mod tests {
         );
         drop(cold);
 
-        let dir = coreml_cache_dir(&bytes).expect("the cache dir the cold load wrote");
+        let dir =
+            coreml_cache_dir(&bytes, CoremlUnits::All).expect("the cache dir the cold load wrote");
         let poisoned = poison_every_file(&dir);
         assert!(
             poisoned > 0,

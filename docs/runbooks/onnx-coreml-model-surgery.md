@@ -310,3 +310,39 @@ initializer, will read `0.0`. Anything non-zero means you changed the computatio
   `d2369f4f` (PReLU reshape + cache fixes + ort rc.12); Surgeries 0 and 1 later
   reverted by re-deriving the model from upstream + the PReLU reshape only.
 - Model provenance + SHAs: `assets/models/hand/ATTRIBUTION.md`.
+
+---
+
+## Addendum (2026-07-23): ANE silent miscompute — exact-0.0 logits
+
+A **partition-check-clean model can still compute wrong numbers on the ANE.**
+The vendored pose detector (4 partitions, no PReLU rejections) passed the
+partition check on 2026-07-13, then in production Core ML's Neural Engine
+returned literal-0.0 logits for a varying subset (~75–104 of 392) of its
+stride-16 score head — every frame, content-dependent. `sigmoid(0) = 0.5`
+ties the score gate exactly, so each zero decoded as a phantom person
+candidate and claimed a tracking slot (the 2026-07-22 "worse than the party"
+regression).
+
+**Diagnostic signature:** model outputs that are *exactly* 0.0 (or sigmoid
+outputs exactly 0.5). A trained head emits strongly negative background
+logits, never literal zeros. Grep a replay run with
+`RUST_LOG=wc_core::input::body=debug` for the `body detector zero logits`
+probe.
+
+**Elimination order that pinned it:** (1) raw-tensor zero-count trace →
+zeros confirmed inside the tensor, contiguous-ish band = one feature-map
+head; (2) cache purge → fresh compile still zeroed (NOT the stale-cache
+failure mode above); (3) `ForceCpu` → zeros gone (computation, not decode);
+(4) `ComputeUnits::CPUAndGPU` (Metal, no ANE) → zeros gone **while still
+GPU-accelerated**.
+
+**Resolution:** per-model compute-units restriction
+(`CoremlUnits::NoNeuralEngine` in `ort.rs`, threaded through
+`load_with_units`); the detector runs Metal-only, the landmark model keeps
+the ANE (correct there, and the ANE is the coolest silicon for the heavy
+model). The compiled-artifact cache key is salted with the units config so
+an artifact compiled for one placement never serves the other. Defense in
+depth: `decode_pose_detections_into` treats literal-0.0 logits as
+background on every EP (DirectML included), and drops degenerate
+zero-area boxes that would defeat weighted-NMS dedup.
