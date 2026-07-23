@@ -38,13 +38,31 @@ Removed:
 
 Kept and repurposed:
 - The chamfer **distance field** (`distance_field.rs`): promoted from
-  fragment-shader input to a **particle-sim input**, bound into the compute
-  pass. Its extraction/upload must gate on the sim being live, preserving
-  the zero-systems/zero-uploads discipline while Idle-parked.
+  fragment-shader input to a **particle-sim input**. The 2026-07-23 review
+  established there is no existing extraction seam to re-point: today the
+  field is a CPU-mutated `Assets<Image>` reaching the GPU through Bevy's
+  render-asset machinery into the pulse material, the GPU texture is
+  recreated on every mutation (~30 Hz body frames), and the radiance
+  compute bind group is cached keyed on the particle buffer id alone —
+  naively adding the texture there is exactly AGENTS.md's mechanism-3
+  stale-cache landmine (the kernel would bind the spawn-time texture
+  forever while pinning its Arc). The sim therefore receives the field via
+  a **new persistent storage-buffer upload seam shaped like
+  `edge_upload`** (stable buffer id, `write_buffer` per field generation,
+  no bind-group churn). Documented fallback if the buffer form proves
+  awkward: keep the texture binding but extend the bind-group cache key
+  with the GPU texture id, accepting a bind-group rebuild per body frame.
+  Either way the upload gates on the sim being live, preserving the
+  zero-systems/zero-uploads discipline while Idle-parked.
 - The **beat-wave clock** in `pulse.rs` (rising-edge spawn on the debounced
   beat lane into a fixed ring of aging wave slots): survives as CPU-side
   state baked into the sim uniforms (per-wave radius + strength, fixed
   `MAX_PULSES`-sized arrays, no allocation) instead of a material uniform.
+  The clock's **advance keeps the current pulse driver's `in_state` gating
+  (Idle and screensaver included)**, not the Active-only sim baker's:
+  baked radii must keep expanding through an Idle entry so a mid-wave
+  dancer exit fades out instead of freezing a bright flare ring on the
+  surviving particles for the duration of the pause bound (~2+ s).
 
 ## New particle behaviors (all in `simulate.wgsl`)
 
@@ -60,9 +78,18 @@ Kept and repurposed:
    velocity kick, scaled by the bass-weighted beat strength **and** by an
    inverse-density boost: when the ambient alive-particle estimate is low,
    the burst grows (up to a cap), so every beat marks visibly even from
-   near-empty water. Density comes from the **existing CPU-side
-   deterministic alive estimate** (the same bookkeeping that parks the
-   compute dispatch when every particle is dead) — no GPU readback, ever.
+   near-empty water. Density comes from a **new CPU-side expected-alive
+   integrator** — the 2026-07-23 adversarial review established that no
+   numeric alive estimate exists today (the pause bookkeeping is a
+   zero-emission deadline clock; births and deaths are GPU-side stochastic
+   rolls the CPU never observes). The integrator advances a deterministic
+   expected-value recurrence over the emission probabilities the CPU
+   itself bakes each frame and the kernel's fixed lifespan distribution —
+   approximate but bias-stable, which is sufficient for a clamped boost
+   factor. Two assists bound its error: emission is already implicitly
+   density-adaptive (expected births = emission probability × dead-slot
+   count), and the boost cap limits the damage of any drift. No GPU
+   readback, ever.
    The burst gets its **own Dev-gated scale constant**, deliberately not
    piggybacked on `ejecta_amount`: ejecta rides audio onsets, the burst
    rides the debounced beat lane, and sharing a knob muddies live tuning
@@ -71,11 +98,17 @@ Kept and repurposed:
    expanding radius; a particle briefly flares as the radius passes its own
    distance-from-silhouette (`|d − r| <` band, short temporal envelope).
    The wavefront is visible only where particles exist — dense plumes light
-   in body-shaped sequence, empty water stays dark. **V1 ships
-   envelope-only** and accepts occasional re-flare shimmer from mask/
-   distance jitter; the documented escalation, only if shimmer is
-   objectionable in review, is one `u32` of per-particle already-flared
-   wave bits (a particle-buffer layout change — not paid up front).
+   in body-shaped sequence, empty water stays dark. The flare envelope
+   carries an **age-decay term and suppresses flares at or beyond the
+   field's saturation shell** (`DIST_MAX_TEXELS`, ~675 px at 1080p): the
+   chamfer clamps there, so without suppression every particle past the
+   shell would flash in sync when the wave crosses it at ~1 s of age — the
+   retired contour pass hid the identical artifact behind its exponential
+   age dimming. **V1 ships envelope-only** and accepts occasional re-flare
+   shimmer from mask/distance jitter; the documented escalation, only if
+   shimmer is objectionable in review, is one `u32` of per-particle
+   already-flared wave bits (a particle-buffer layout change — not paid up
+   front).
 4. **Motion disturbance (staged last, smallest).** Fast-moving edge regions
    inject a modest local flare + push into nearby particles, layered on the
    existing `edge_motion_bias` emission weighting. This is the least-pinned
@@ -134,4 +167,10 @@ the live tuning session shows which ones Madison actually reaches for.
   density-adaptive burst).
 - Any change to audio analysis lanes, baseline emission rates, sparkle
   motes, or the screensaver's synthetic performer path beyond compiling
-  against the revised sim params.
+  against the revised sim params. Note the screensaver is *affected*
+  without being changed: its phantom performer drives the same mask/field
+  surfaces at 12 Hz, so repel + contact glow will act on the attract-mode
+  ember aura and the field upload becomes a 12 Hz cost in that
+  compute-lite mode — accepted, and worth an eye during the next soak.
+  Beat bursts, flare-waves, and the motion lane are inert there (mic
+  paused → neutral analysis; phantom motion weights are zero).

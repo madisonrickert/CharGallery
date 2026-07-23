@@ -69,8 +69,17 @@ system in `lifecycle/display.rs` also calls it) resolves:
    its binding).
 
 `compute_display_mode` and `apply_display_mode` carry the widened item type;
-fullscreen behavior is otherwise untouched (its every-frame re-derive
-already moves the fullscreen window when the resolved target changes).
+fullscreen behavior is otherwise untouched. **Known limitation (2026-07-23
+adversarial review):** bevy_winit correctly diffs a fullscreen-mode change
+whose `MonitorSelection` differs, but winit's macOS backend handles a live
+Borderless→Borderless retarget in a fallthrough arm — the window likely
+stays on the old display while winit caches the new state as applied, so
+the every-frame re-derive never retries. Entering fullscreen fresh on the
+resolved monitor works (the kiosk's set-monitor-then-fullscreen flow), and
+display power-cycles recover because macOS exits fullscreen on display
+removal. The acceptance script probes the live-retarget case explicitly;
+if confirmed broken, the workaround (exit fullscreen → retarget →
+re-enter) is follow-up scope, not part of this plan.
 
 ### Windowed move (one-shot)
 
@@ -110,7 +119,11 @@ fallback (`Current`) targets it anyway.
   spawned `Window` and `Monitor` entities — boot frame does not move the
   window; an edit to a resolvable name centers it on that monitor; an edit
   while effectively fullscreen does not touch `position`; an edit to an
-  unresolvable name does not touch `position`.
+  unresolvable name does not touch `position`. Every such harness isolates
+  settings persistence (`CONFIG_DIR_ENV` → temp dir) — the plugin loads
+  the operator's real `sketch-settings.toml` at build time, and a
+  persisted `monitor` value would silently defeat the edit-detection
+  under test on exactly the machines the gates run on.
 
 ## Out of scope
 

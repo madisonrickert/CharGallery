@@ -27,6 +27,7 @@
 - Modify: `crates/wc-core/build.rs`
 - Modify: `crates/wc-core/Cargo.toml:95-100` (feature comment) and `:227-233` (build-dep target table)
 - Modify: `.cargo/config.toml` (Apple target rustflags)
+- Modify: `.github/workflows/ci.yml` (macOS dyld fallback) and `.github/workflows/release.yml` (dyld fallback + release rpaths)
 
 **Interfaces:**
 - Consumes: `vendor/libdev/shim/obsbot_shim.cpp`, `vendor/libdev/macos/{arm64,x86_64}-release/libdev.dylib` (already vendored).
@@ -92,10 +93,17 @@ to:
     // OBSBOT libdev shim — Windows/macOS + `obsbot-camera-control` only. The
     // feature check is an env probe (not a cfg) because build scripts see
     // features via CARGO_FEATURE_*; the cfg(target_os) here refers to the
-    // *host*, which equals the target for every supported build of this
-    // project.
+    // *host*. The CARGO_CFG_TARGET_OS probe additionally guards cross builds
+    // from this host — `cargo check --target wasm32-unknown-unknown
+    // --all-features` (the web roadmap) must not compile or link the SDK,
+    // and without the probe the macOS link half would panic on the wasm
+    // arch.
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    if std::env::var_os("CARGO_FEATURE_OBSBOT_CAMERA_CONTROL").is_some() {
+    if matches!(
+        std::env::var("CARGO_CFG_TARGET_OS").as_deref(),
+        Ok("windows") | Ok("macos")
+    ) && std::env::var_os("CARGO_FEATURE_OBSBOT_CAMERA_CONTROL").is_some()
+    {
         build_obsbot_shim();
     }
 ```
@@ -198,18 +206,34 @@ In `.cargo/config.toml`, extend both Apple `rustflags` arrays (the stanza commen
     "-C", "link-arg=-Wl,-rpath,@executable_path/../../../vendor/libdev/macos/x86_64-release",
 ```
 
+- [ ] **Step 3b: Teach both CI workflows to resolve the dylib (and fix the release-rpath stripping)**
+
+The workflow-level `RUSTFLAGS: "-D warnings"` **overrides** `.cargo/config.toml`'s per-target rpath rustflags (ci.yml's own comment at line ~96 documents this), so CI test binaries resolve vendored dylibs via `DYLD_FALLBACK_LIBRARY_PATH`, not rpaths. Without this step, every wc-core-linking test binary on the macOS runner carries `LC_LOAD_DYLIB @rpath/libdev.dylib` with no way to resolve it and dies in dyld at nextest list time (the exact LeapC exit-127 mode ci.yml documents).
+
+In `.github/workflows/ci.yml` (test job, macOS branch, currently line ~183) append the libdev vendor dir:
+
+```yaml
+            echo "DYLD_FALLBACK_LIBRARY_PATH=$GITHUB_WORKSPACE/vendor/leapc/${{ matrix.leap }}:$GITHUB_WORKSPACE/vendor/libdev/macos/arm64-release" >> "$GITHUB_ENV"
+```
+
+In `.github/workflows/release.yml`, the same append at its `DYLD_FALLBACK_LIBRARY_PATH` line (currently ~236). Additionally, both mac Xcode steps export a non-empty `RUSTFLAGS` (`echo "RUSTFLAGS=${RUSTFLAGS:-} -L $RTLIB"`, lines ~231 and ~320), which strips **all** baked rpaths from those jobs' binaries — a pre-existing latent break for the bundled LeapC dylib (`@rpath/libLeapC.6.dylib` with no LC_RPATH in the shipped app) that now also affects libdev. Append the two bundle-relevant rpaths to both exports:
+
+```yaml
+          echo "RUSTFLAGS=${RUSTFLAGS:-} -L $RTLIB -C link-arg=-Wl,-rpath,@executable_path/../lib -C link-arg=-Wl,-rpath,@loader_path" >> "$GITHUB_ENV"
+```
+
 - [ ] **Step 4: Verify the link end-to-end (module is still the stub — that is expected)**
 
 Run: `cargo nextest run -p wc-core --features obsbot-camera-control`
 Expected: builds (shim compiles under clang, `-ldev` links) and all tests pass. The backend is still `stub.rs` on macOS at this point; the dylib links unreferenced, which proves search path + rpath resolution without touching device code.
 
-Run: `otool -L "$(fd -t x 'wc_core-' target/debug/deps --max-depth 1 | head -1)" | grep libdev`
-Expected: one line containing `@rpath/libdev.dylib`. (`-t x` limits fd to executables so a `wc_core-<hash>.d` dep-info file is never picked.)
+Run: `otool -L "$(fd -t x 'wc_core-' target/debug/deps --max-depth 1 --exec-batch ls -t | head -1)" | grep libdev`
+Expected: one line containing `@rpath/libdev.dylib`. (`-t x` limits fd to executables so a `wc_core-<hash>.d` dep-info file is never picked; `ls -t | head -1` picks the **newest** — `target/debug/deps` already holds several stale `wc_core-<hash>` binaries from earlier feature sets.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/wc-core/build.rs crates/wc-core/Cargo.toml .cargo/config.toml
+git add crates/wc-core/build.rs crates/wc-core/Cargo.toml .cargo/config.toml .github/workflows/ci.yml .github/workflows/release.yml
 git commit -m "build(obsbot): compile the libdev shim and link libdev.dylib on macOS"
 ```
 

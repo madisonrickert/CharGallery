@@ -97,16 +97,32 @@ availability is guaranteed).
   same way LeapC is staged and signed (the `@executable_path/../lib` rpath
   entry already anticipates a bundled dylib dir). Follow whatever
   staging/signing treatment `bundle-mac` gives LeapC verbatim.
-- `docs/runbooks/kiosk.md`: the Windows build command drops the explicit
-  `--features wc-core/obsbot-camera-control` (now a target-table default).
+- `docs/runbooks/kiosk.md`: the OBSBOT bullet's "when built with
+  `obsbot-camera-control`" phrasing becomes "by default" (there is no
+  explicit build-command line to change; the feature arrives via the
+  target table).
 - `docs/runbooks/obsbot.md`: macOS is a supported control platform; add the
   macOS hardware-smoke invocations; note OBSBOT Center coexistence on macOS
   (it holds the AVFoundation configuration lock while running — quit it for
   kiosk-representative runs; the app's control worker replaces its job).
-- CI: no new jobs. The existing `macos-15` test job's `--all-features`
-  build gains one C++ file compile and a dylib link (runners ship clang).
-  The SDK initializing on a device-less runner is the same situation
-  Windows CI has run green since the feature landed.
+- CI: no new jobs, but two workflow-env fixes ride along (found in the
+  2026-07-23 adversarial review). The workflow-level
+  `RUSTFLAGS: "-D warnings"` **overrides** `.cargo/config.toml`'s
+  per-target rpath rustflags (ci.yml documents this itself), so macOS test
+  binaries resolve vendored dylibs via `DYLD_FALLBACK_LIBRARY_PATH` — the
+  libdev vendor dir must join the LeapC entry there in **both** ci.yml and
+  release.yml, or every wc-core test binary dies in dyld at nextest list
+  time. Separately, the mac release jobs export a non-empty `RUSTFLAGS`
+  (compiler-rt `-L`), which strips **all** baked rpaths from release
+  binaries — a pre-existing latent break for the bundled LeapC dylib that
+  the port fixes by appending the two bundle rpaths
+  (`@executable_path/../lib`, `@loader_path`) to those exports.
+- Corrected claim: the SDK has never actually *initialized* on any CI
+  runner — the hardware tests are `#[ignore]`d and no test drives
+  `Startup` through the plugin. Windows CI's green history proves
+  compile + link + DLL load, and that remains the proven surface after
+  the port. Any future test that spawns the worker on a runner is
+  unprecedented on both platforms.
 
 ### 4. Risks and acceptance
 
@@ -138,6 +154,19 @@ Acceptance gate, in order:
 Failure semantics unchanged: a run that misses `AI_OFF`/`GESTURE_OFF`
 publishes `Failed` with the existing loud warning pointing at
 `docs/runbooks/obsbot.md`.
+
+## Open decision — SDK redistribution posture
+
+`vendor/libdev` ships no license file and `dev.hpp` carries an internal
+"not open to the public" marker; `docs/runbooks/obsbot.md` scopes use to
+local/gig hardware and says redistribution terms must be clarified with
+OBSBOT before any public release ships the SDK. Today's escape hatch is
+that feature-off builds ship no SDK bits. **Defaulting the feature on
+closes that hatch:** every bundle (including the published Promote Alpha
+zips) would embed `libdev.dylib`/`libdev.dll`. Resolution is Madison's
+call — accept for now (pre-release, own hardware), gate release bundling
+on a feature-off build, or clear terms with OBSBOT — and the runbook's
+license section must be updated to match whichever it is.
 
 ## Out of scope
 

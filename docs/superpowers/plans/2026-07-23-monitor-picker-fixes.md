@@ -14,7 +14,7 @@
 - Empty-string default keeps meaning `MonitorSelection::Current`; explicit-name resolution keeps exact match with fallback to `Current` and **never rewrites the saved name**.
 - The windowed move fires only on a value edit (Local value-diff, never `Res::is_changed()` — the dock marks the resource changed every frame the tab renders), only while not effectively fullscreen, and only when resolution yields `MonitorSelection::Entity`.
 - No per-frame allocation: list rebuilds stay topology-change-gated; the move system allocates one `String` only on an actual edit.
-- The uncommitted topology debug log already in `crates/wc-core/src/lifecycle/display.rs` (added during the 2026-07-23 investigation) rides along in Task 1's commit.
+- All harness tests that build `DisplayPlugin` MUST isolate settings persistence by pointing `wc_core::settings::persistence::CONFIG_DIR_ENV` (`WAVECONDUCTOR_CONFIG_DIR`) at a fresh temp dir before constructing the `App` — `register_sketch_settings` loads the operator's real `sketch-settings.toml` at plugin-build time, and a persisted `monitor`/`start_fullscreen` value on a dev or kiosk machine silently breaks the edit-detection tests. Mirror the mechanism `crates/wc-core/tests/settings_plugin.rs` already uses (`tempfile` is a wc-core dev-dependency; nextest runs one process per test, so the env write cannot race).
 - Verification: `cargo nextest run -p wc-core`, `cargo clippy --all-targets --all-features --workspace -- -D warnings`, `cargo fmt --all -- --check`.
 
 ---
@@ -204,7 +204,12 @@ check the vendored `bevy_window` source; it is the marker
 ```
 
 and its doc comment notes the sentinel heads the list. Keep the topology
-debug log line that follows (already in the working tree).
+debug log line that follows (committed as d41f312f). Also rewrite the
+now-stale paragraph of `AvailableMonitors`' rustdoc ("An empty list is a
+normal state … 03a omits the key from its snapshot in that case"): with
+the sentinel `Default`, the list is never empty, and the key is always
+present in the snapshot because `DisplayPlugin` init's the resource —
+"omits the key" only ever applied to an absent resource.
 
 (d) Add the list-order test to this file's `tests` module, with a local
 `Monitor` constructor (adjust the field list to compile against the
@@ -255,7 +260,7 @@ Expected: PASS, including the four new tests and the list-order test.
 
 ```bash
 git add crates/wc-core/src/settings/panel_user/display.rs crates/wc-core/src/lifecycle/display.rs crates/wc-core/src/settings/mod.rs
-git commit -m "feat(display): Automatic (external) monitor entry + topology debug log"
+git commit -m "feat(display): Automatic (external) monitor dropdown entry"
 ```
 
 ---
@@ -276,7 +281,18 @@ In `lifecycle/display.rs` `tests` (reusing `test_monitor` from Task 1):
 ```rust
     /// Harness: DisplayPlugin + one windowed Window + one non-primary
     /// monitor named "LG TV". Returns the app and the monitor entity.
+    ///
+    /// Settings persistence is isolated to a fresh temp dir FIRST —
+    /// `register_sketch_settings` loads the operator's real
+    /// `sketch-settings.toml` at plugin-build time, and a persisted
+    /// `monitor` value (e.g. the sentinel, after the live acceptance run)
+    /// would make the "edit" in these tests a no-op value-diff. Mirror
+    /// `tests/settings_plugin.rs`'s mechanism.
     fn app_with_window_and_external_monitor() -> (App, Entity) {
+        let config_dir = tempfile::tempdir()
+            .expect("create isolated config dir")
+            .keep();
+        std::env::set_var(crate::settings::persistence::CONFIG_DIR_ENV, &config_dir);
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.add_plugins(DisplayPlugin);
@@ -470,6 +486,7 @@ cargo clippy --all-targets --all-features --workspace -- -D warnings
 cargo nextest run --workspace --all-features
 cargo test --doc --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --document-private-items
+cargo deny check
 cargo xtask check-secrets
 ```
 
@@ -481,7 +498,8 @@ With `cargo rund` and the external monitor connected:
 3. Pick `Automatic (External monitor with fallback)`: the window centers on the external display.
 4. Toggle Start fullscreen with Automatic selected: fullscreen lands on the external display; untoggle restores windowed.
 5. (Rename robustness, best-effort:) power-cycle the external display while fullscreen-on-Automatic — after re-enumeration (any new name), fullscreen re-lands on it without touching settings.
+6. (Known-risk probe:) while fullscreen with both displays attached, pick the *other* monitor by name in the dropdown. The 2026-07-23 review found winit macOS handles a live Borderless→Borderless retarget in a fallthrough arm and caches the new state as applied — so the window may stay on the old display permanently (bevy_winit's diff never retries). Record what actually happens. If it fails: not a blocker — the kiosk's set-monitor-then-fullscreen flow is unaffected — but scope a follow-up (exit fullscreen → retarget → re-enter bounce) rather than patching inline.
 
-Expected: all five behaviors as described; the topology debug log lines
-narrate the re-enumerations when running with
-`RUST_LOG=wc_core::lifecycle::display=debug`.
+Expected: behaviors 1-5 as described (6 is a probe, either outcome is
+recorded); the topology debug log lines narrate the re-enumerations when
+running with `RUST_LOG=wc_core::lifecycle::display=debug`.
