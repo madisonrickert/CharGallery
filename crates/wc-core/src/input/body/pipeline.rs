@@ -238,6 +238,13 @@ pub struct PoseConfig {
     /// Minimum pose-presence probability from the landmark model to keep a
     /// track (matches `MediaPipe`'s default tracking confidence).
     pub presence_threshold: f32,
+    /// Presence probability below which an *established* track releases.
+    /// Strictly below [`Self::presence_threshold`]: admission and continued
+    /// tracking form a Schmitt gate (same shape as the radiance
+    /// `VisibilityLatch`). `BlazePose` presence chatters around 0.5 for
+    /// partially-framed bodies; a symmetric gate turned that chatter into
+    /// lose → re-detect → re-admission-dwell figure blinking.
+    pub presence_release: f32,
     /// Mask temporal-blend combine-with-previous ratio (see
     /// `mask::DEFAULT_MASK_EMA_ALPHA` and `mask::uncertainty_blend`);
     /// live-tunable through [`BodyLiveTuning`]. Field name kept as `mask_ema*`
@@ -261,6 +268,7 @@ impl Default for PoseConfig {
         Self {
             detector_score_threshold: 0.5,
             presence_threshold: 0.5,
+            presence_release: 0.35,
             mask_ema_alpha: DEFAULT_MASK_EMA_ALPHA,
             disable_heatmap_refine: false,
             max_tracked_bodies: MAX_TRACKED_BODIES,
@@ -847,6 +855,24 @@ impl PosePipeline {
         self.detector
             .run(&self.detector_input, &mut self.detector_outputs)?;
         let (boxes, scores) = pick_pose_detector_outputs(&self.detector_outputs)?;
+        // Debug-only zero-logit probe: a trained detector emits strongly
+        // negative background logits, never literal 0.0 — a zero run in the
+        // score tensor means part of the output was never computed/copied
+        // (sigmoid(0) = 0.5 then passes the score gate as a phantom person).
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let zeros = scores.iter().filter(|s| **s == 0.0).count();
+            if zeros > 0 {
+                let first = scores.iter().position(|s| *s == 0.0).unwrap_or(0);
+                let last = scores.iter().rposition(|s| *s == 0.0).unwrap_or(0);
+                tracing::debug!(
+                    zeros,
+                    first,
+                    last,
+                    total = scores.len(),
+                    "body detector zero logits"
+                );
+            }
+        }
         decode_pose_detections_into(
             boxes,
             scores,
@@ -861,6 +887,20 @@ impl PosePipeline {
             &mut self.person_clusters,
         );
         self.people_detected = u8::try_from(self.person_clusters.len()).unwrap_or(u8::MAX);
+        // Debug-only score trace (enable with `RUST_LOG=wc_core::input::body=debug`):
+        // one line per NMS survivor so a replay run can histogram detector
+        // confidence around `detector_score_threshold`. Silent in normal runs.
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            for (c, det) in self.person_clusters.iter().enumerate() {
+                tracing::debug!(
+                    c,
+                    score = det.score,
+                    cx = det.keypoints[0].x,
+                    cy = det.keypoints[0].y,
+                    "body detect candidate"
+                );
+            }
+        }
         Ok(())
     }
 
@@ -1013,7 +1053,19 @@ impl PosePipeline {
         fill_nhwc_unit(warp_buf, landmark_input);
         landmark.run(landmark_input, landmark_outputs)?;
         let picked = pick_pose_landmark_outputs(landmark_outputs)?;
-        if picked.confidence < config.presence_threshold {
+        // Debug-only presence trace (same filter as the detector trace): the
+        // raw pose-presence scalar every landmark inference, pass or fail, so
+        // a replay run can see whether it chatters around the 0.5 gate.
+        tracing::debug!(slot = slot_idx, conf = picked.confidence, "body lm presence");
+        // Schmitt presence gate: a fresh (re)acquisition must clear the full
+        // admission threshold; an established track holds until the lower
+        // release bound (see `PoseConfig::presence_release`).
+        let gate = if fresh_track {
+            config.presence_threshold
+        } else {
+            config.presence_release
+        };
+        if picked.confidence < gate {
             // Presence collapsed: the person left this crop.
             slot.lose(now);
             log_slot_loss(slot, slot_idx, "presence collapsed");
@@ -1619,7 +1671,7 @@ pub(crate) mod fixtures {
         confident_landmark_outputs_with_conf(0.1)
     }
 
-    fn confident_landmark_outputs_with_conf(conf: f32) -> Vec<Tensor> {
+    pub(crate) fn confident_landmark_outputs_with_conf(conf: f32) -> Vec<Tensor> {
         let mut rows = vec![0.0_f32; LANDMARK_ROWS * LANDMARK_VALUES];
         for i in 0..LANDMARK_ROWS {
             let base = i * LANDMARK_VALUES;
@@ -1992,6 +2044,95 @@ mod tests {
         assert!(
             YOUNG_EDGE_RESERVE < SLOT_RESERVE,
             "the whole point is a shorter window than the mature reservation"
+        );
+    }
+
+    /// Schmitt presence gate: an established track holds through the
+    /// hysteresis band (`presence_release ≤ conf < presence_threshold`) and
+    /// releases only below `presence_release` — `BlazePose` presence chatters
+    /// around 0.5 on partially-framed bodies, and a symmetric gate turned
+    /// every dip into a lose → re-detect → re-admission-dwell figure blink.
+    #[test]
+    fn established_track_holds_through_the_presence_release_band() {
+        struct SharedInference(std::sync::Arc<std::sync::Mutex<Vec<Tensor>>>);
+        impl ModelInference for SharedInference {
+            fn run(
+                &mut self,
+                _input: &Tensor,
+                out: &mut Vec<Tensor>,
+            ) -> Result<(), InferenceError> {
+                out.clone_from(&self.0.lock().expect("outputs lock"));
+                Ok(())
+            }
+        }
+        // The aux fixture's wide centre→scale span keeps the carried tracking
+        // ROI alive across frames (the base fixture's narrow span collapses
+        // it, which would exit through the young-edge-reserve path and mask
+        // what this test pins). Presence is the only variable.
+        let with_conf = |conf: f32| {
+            let mut outs = confident_landmark_outputs_aux(128.0, 128.0, 128.0, 0.0);
+            for t in &mut outs {
+                if t.shape == [1, 1] {
+                    t.data[0] = conf;
+                }
+            }
+            outs
+        };
+        let landmark = std::sync::Arc::new(std::sync::Mutex::new(with_conf(0.9)));
+        let mut p = PosePipeline::new(
+            Box::new(StaticInference {
+                outputs: hot_person_detector_outputs(),
+            }),
+            Box::new(SharedInference(std::sync::Arc::clone(&landmark))),
+            PoseConfig::default(),
+        );
+        let frame = solid_frame();
+        p.process(&frame, Duration::from_millis(0), false, None)
+            .expect("acquire");
+        assert_eq!(p.slots[0].phase, SlotPhase::Active);
+        // Presence dips into the band: 0.35 ≤ 0.42 < 0.5 — the track holds
+        // and keeps publishing.
+        *landmark.lock().expect("outputs lock") = with_conf(0.42);
+        p.process(&frame, Duration::from_millis(33), false, None)
+            .expect("band dip");
+        assert_eq!(
+            p.slots[0].phase,
+            SlotPhase::Active,
+            "a band dip must not release an established track"
+        );
+        assert!(p.slots[0].frame.present, "band dip still publishes");
+        // Below the release bound: genuinely lost.
+        *landmark.lock().expect("outputs lock") = with_conf(0.1);
+        p.process(&frame, Duration::from_millis(66), false, None)
+            .expect("release");
+        assert_ne!(
+            p.slots[0].phase,
+            SlotPhase::Active,
+            "below presence_release the track must lose"
+        );
+    }
+
+    /// The other half of the Schmitt contract: a fresh claim's FIRST landmark
+    /// inference still requires the full admission threshold — band-level
+    /// confidence (0.42) must not admit a new track.
+    #[test]
+    fn fresh_claim_still_requires_full_admission_confidence() {
+        let mut p = PosePipeline::new(
+            Box::new(StaticInference {
+                outputs: hot_person_detector_outputs(),
+            }),
+            Box::new(StaticInference {
+                outputs: confident_landmark_outputs_with_conf(0.42),
+            }),
+            PoseConfig::default(),
+        );
+        let frame = solid_frame();
+        p.process(&frame, Duration::from_millis(0), false, None)
+            .expect("attempt");
+        assert_ne!(
+            p.slots[0].phase,
+            SlotPhase::Active,
+            "band confidence must not clear fresh admission"
         );
     }
 
