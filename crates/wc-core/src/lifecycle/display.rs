@@ -290,8 +290,11 @@ pub(crate) fn move_window_on_monitor_edit(
 
 #[cfg(test)]
 #[allow(
+    unsafe_code,
     clippy::expect_used,
-    reason = "test assertions; expect_used is denied workspace-wide for non-test code"
+    reason = "test assertions; expect_used is denied workspace-wide for non-test code, \
+              and env::set_var is unsafe in this toolchain (Rust 1.80+); \
+              app_with_window_and_external_monitor's SAFETY comment covers the unsafe call"
 )]
 mod tests {
     use bevy::prelude::*;
@@ -456,7 +459,11 @@ mod tests {
         let config_dir = tempfile::tempdir()
             .expect("create isolated config dir")
             .keep();
-        std::env::set_var(crate::settings::persistence::CONFIG_DIR_ENV, &config_dir);
+        // SAFETY: nextest runs one process per test, so this env write cannot
+        // race a read/write from another test (mirrors settings_plugin.rs).
+        unsafe {
+            std::env::set_var(crate::settings::persistence::CONFIG_DIR_ENV, &config_dir);
+        }
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.add_plugins(DisplayPlugin);
