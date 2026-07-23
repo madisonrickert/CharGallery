@@ -107,6 +107,7 @@ fn main() {
     app.add_systems(
         Update,
         (
+            hand_providers::force_rebuild_on_webcam_change,
             hand_providers::apply_provider_choice,
             hand_providers::publish_hand_activation,
         )

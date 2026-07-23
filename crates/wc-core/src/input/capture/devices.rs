@@ -64,8 +64,15 @@ fn enumerate_camera_devices(mut list: ResMut<'_, AvailableCameraDevices>) {
 /// persisted selection is visible before the first camera open).
 fn mirror_webcam_selection(settings: Res<'_, WebcamSettings>) {
     if settings.is_changed() {
-        set_selected_camera(settings.selected());
+        refresh_mirror(&settings);
     }
+}
+
+/// Synchronously push `settings`' selection into the open-time mirror.
+/// Camera-bounce systems call this immediately before stopping a worker so
+/// the reopened camera observes the new choice regardless of system order.
+pub fn refresh_mirror(settings: &WebcamSettings) {
+    set_selected_camera(settings.selected());
 }
 
 /// The operator's explicit webcam choice, cloned out of the process-wide

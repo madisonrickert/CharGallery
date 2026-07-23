@@ -154,6 +154,32 @@ pub fn init_mask_texture(
     commands.insert_resource(MaskTexture(images.add(image)));
 }
 
+/// `PreUpdate` (chained before [`sync_body_tracking`]): bounce the worker
+/// when the operator picks a different webcam, so the new camera opens
+/// immediately — no sketch reload. Stopping here leaves the
+/// (request-present, runtime-absent) state that `sync_body_tracking`'s
+/// reconcile pass restarts, and the open-time mirror is refreshed
+/// synchronously first so the reopen can never race the `PreUpdate` mirror
+/// system. A cheap no-op (one change-detection check) on every other frame.
+#[cfg(feature = "body-tracking-camera")]
+pub fn restart_worker_on_webcam_change(
+    webcam: Res<'_, crate::settings::webcam::WebcamSettings>,
+    request: Option<Res<'_, BodyTrackingRequest>>,
+    worker: Res<'_, BodyTrackingWorker>,
+) {
+    if !webcam.is_changed() || webcam.is_added() || request.is_none() {
+        return;
+    }
+    crate::input::capture::devices::refresh_mirror(&webcam);
+    let Ok(mut runtime) = worker.runtime.lock() else {
+        return;
+    };
+    if let Some(mut rt) = runtime.take() {
+        rt.worker.stop();
+        tracing::info!("body tracking: webcam selection changed, reopening camera");
+    }
+}
+
 /// `PreUpdate`: reconcile the worker with the request — start on insertion,
 /// stop on removal (join + clear published state), and mirror
 /// `idle_throttle` into the shared tuning cell every frame (one Relaxed

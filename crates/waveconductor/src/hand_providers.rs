@@ -82,6 +82,12 @@ pub struct HandProviderControl {
     /// no device attaches within the grace period. Resolved *before* `watch`
     /// each frame — a Leap demote may itself arm the `MediaPipe` watch.
     leap_watch: AutoLeapWatch,
+    /// One-shot: the webcam selection changed, so the registry must rebuild
+    /// even though the provider dropdown did not move (the camera is chosen
+    /// at provider start). Set by [`force_rebuild_on_webcam_change`];
+    /// cleared only when a rebuild actually runs, so a change deferred by
+    /// the Radiance camera-contention guard still lands on exit.
+    force_rebuild: bool,
 }
 
 /// What `WAVECONDUCTOR_HAND_PROVIDER` resolved to (a launch default — see
@@ -189,6 +195,7 @@ pub fn install_hand_tracking_providers(
         last_applied: settings.provider,
         watch,
         leap_watch,
+        force_rebuild: false,
     });
 }
 
@@ -257,7 +264,7 @@ pub fn apply_provider_choice(
     // immediately discard) a real MediaPipe provider on the exact frame a grace
     // deadline and a dropdown move coincide.
     let choice = settings.provider;
-    if choice == control.last_applied {
+    if choice == control.last_applied && !control.force_rebuild {
         // The Leap watch resolves before the MediaPipe watch: a Leap demote may
         // itself register MediaPipe optimistically and arm the camera watch,
         // which the block below then polls (same frame: harmless — a freshly
@@ -368,6 +375,25 @@ pub fn apply_provider_choice(
     control.leap_watch = arm_leap_watch(&built, time.elapsed());
     *registry = built.registry;
     control.last_applied = choice;
+    control.force_rebuild = false;
+}
+
+/// `Update`, chained before [`apply_provider_choice`]: a webcam-selection
+/// change forces one registry rebuild so the hand camera reopens on the new
+/// device (the camera is chosen at provider start; the settings-dock preview
+/// taps the tracking worker, so it follows). The open-time mirror is
+/// refreshed synchronously here so the rebuilt provider can never race the
+/// `PreUpdate` mirror system. The Radiance camera-contention deferral
+/// applies unchanged: the flag persists until a rebuild actually runs.
+#[cfg(feature = "hand-tracking-gestures")]
+pub fn force_rebuild_on_webcam_change(
+    webcam: Res<'_, wc_core::settings::webcam::WebcamSettings>,
+    mut control: ResMut<'_, HandProviderControl>,
+) {
+    if webcam.is_changed() && !webcam.is_added() {
+        webcam.refresh_mirror();
+        control.force_rebuild = true;
+    }
 }
 
 /// Publish the coarse [`HandTrackingActivation`](wc_core::input::activation::HandTrackingActivation) cue the settings panel reads.
@@ -712,6 +738,7 @@ mod tests {
             last_applied: HandProviderChoice::Auto,
             watch: AutoMediaPipeWatch::Idle,
             leap_watch: AutoLeapWatch::Idle,
+            force_rebuild: false,
         };
 
         // Pending Leap watch → Settling, even though the Leap stub reports a
@@ -728,6 +755,7 @@ mod tests {
             leap_watch: AutoLeapWatch::Pending {
                 deadline: Duration::from_secs(3),
             },
+            force_rebuild: false,
         };
         assert_eq!(run(reg, pending), HandTrackingActivation::Settling);
 
@@ -772,6 +800,7 @@ mod tests {
                 last_applied: HandProviderChoice::Auto,
                 watch: AutoMediaPipeWatch::Pending,
                 leap_watch: AutoLeapWatch::Idle,
+                force_rebuild: false,
             },
         );
         app.update();
@@ -821,6 +850,7 @@ mod tests {
                 last_applied: HandProviderChoice::Auto,
                 watch: AutoMediaPipeWatch::Idle,
                 leap_watch: AutoLeapWatch::Idle,
+                force_rebuild: false,
             },
         );
         // `provider` already matches last_applied (both Auto).
@@ -870,6 +900,7 @@ mod tests {
                 last_applied: HandProviderChoice::Auto,
                 watch: AutoMediaPipeWatch::Idle,
                 leap_watch: AutoLeapWatch::Idle,
+                force_rebuild: false,
             },
         );
         app.add_plugins(bevy::state::app::StatesPlugin);
@@ -912,6 +943,7 @@ mod tests {
                 last_applied: HandProviderChoice::Auto,
                 watch: AutoMediaPipeWatch::Idle,
                 leap_watch: AutoLeapWatch::Idle,
+                force_rebuild: false,
             },
         );
         app.add_plugins(bevy::state::app::StatesPlugin);
@@ -958,6 +990,7 @@ mod tests {
                 leap_watch: AutoLeapWatch::Pending {
                     deadline: Duration::ZERO,
                 },
+                force_rebuild: false,
             },
         );
         app.update();
@@ -987,6 +1020,7 @@ mod tests {
                 last_applied: HandProviderChoice::Auto,
                 watch: AutoMediaPipeWatch::Idle,
                 leap_watch: AutoLeapWatch::Pending { deadline },
+                force_rebuild: false,
             },
         );
         app.update();
@@ -1023,6 +1057,7 @@ mod tests {
                 leap_watch: AutoLeapWatch::Pending {
                     deadline: Duration::ZERO, // already expired vs. unticked Time
                 },
+                force_rebuild: false,
             },
         );
         // Operator flips the dropdown to Off on the same frame the deadline
@@ -1065,6 +1100,7 @@ mod tests {
                 leap_watch: AutoLeapWatch::Pending {
                     deadline: Duration::from_hours(1),
                 },
+                force_rebuild: false,
             },
         );
         app.update();
@@ -1096,6 +1132,7 @@ mod tests {
                 leap_watch: AutoLeapWatch::Pending {
                     deadline: Duration::ZERO, // already expired
                 },
+                force_rebuild: false,
             },
         );
         app.update();

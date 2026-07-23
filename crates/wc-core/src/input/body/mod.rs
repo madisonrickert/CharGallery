@@ -492,6 +492,14 @@ impl Plugin for BodyTrackingPlugin {
                     .chain()
                     .in_set(bevy::input::InputSystems),
             );
+        // Webcam-selection hot-apply: bounce the worker so the new camera
+        // opens without a sketch reload. Real cameras only — injected/mock
+        // sources have no device to switch.
+        #[cfg(feature = "body-tracking-camera")]
+        app.add_systems(
+            PreUpdate,
+            systems::restart_worker_on_webcam_change.before(systems::sync_body_tracking),
+        );
     }
 }
 

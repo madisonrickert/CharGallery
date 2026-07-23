@@ -25,30 +25,47 @@ pub const AUTO_LABEL: &str = "Automatic";
 pub struct WebcamSettings {
     /// Capture device by name. "Automatic" prefers an OBSBOT (both webcam
     /// modalities target one physical camera on the deployment), falling
-    /// back to the default device. Applies when a camera next opens: the
-    /// reload badge covers the body seam; the hand seam picks it up on its
-    /// next provider rebuild or app launch.
+    /// back to the default device. Applies immediately: the camera-bounce
+    /// systems reopen the running tracker(s) on the new device, and the
+    /// settings-dock preview follows because it taps the tracking worker.
     #[setting(
-        default = String::new(),
+        default = AUTO_LABEL.to_string(),
         ty = RuntimeEnum,
         options_key = "camera_devices",
         category = User,
         section = "Camera",
-        label = "Webcam",
-        requires_restart
+        label = "Webcam"
     )]
-    #[serde(default)]
+    #[serde(default = "default_camera")]
     pub camera: String,
 }
 
 impl WebcamSettings {
     /// The operator's explicit camera choice: `None` when automatic (the
-    /// [`AUTO_LABEL`] entry, or the empty pre-selector default).
+    /// [`AUTO_LABEL`] entry, or an empty value from an older settings file).
     #[must_use]
     pub fn selected(&self) -> Option<&str> {
         let name = self.camera.trim();
         (!name.is_empty() && name != AUTO_LABEL).then_some(name)
     }
+
+    /// Push this selection into the capture layer's open-time mirror (no-op
+    /// when no camera backend is compiled). Camera-bounce systems call this
+    /// immediately before stopping a worker, so the reopen can never race
+    /// the `PreUpdate` mirror pass.
+    pub fn refresh_mirror(&self) {
+        #[cfg(any(
+            feature = "hand-tracking-mediapipe-camera",
+            feature = "body-tracking-camera"
+        ))]
+        crate::input::capture::devices::refresh_mirror(self);
+    }
+}
+
+/// Serde fallback: the [`AUTO_LABEL`] entry, matching the setting default so
+/// the dropdown reads "Automatic" rather than blank.
+fn default_camera() -> String {
+    AUTO_LABEL.to_string()
 }
 
 #[cfg(test)]
@@ -61,7 +78,10 @@ mod tests {
     #[test]
     fn selected_treats_empty_and_auto_as_automatic() {
         let mut s = WebcamSettings::default();
+        assert_eq!(s.camera, AUTO_LABEL, "default reads Automatic, not blank");
         assert_eq!(s.selected(), None, "default is automatic");
+        s.camera = String::new();
+        assert_eq!(s.selected(), None, "legacy empty value is automatic");
         s.camera = "  ".to_string();
         assert_eq!(s.selected(), None, "whitespace is automatic");
         s.camera = AUTO_LABEL.to_string();
