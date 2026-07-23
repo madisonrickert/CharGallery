@@ -385,15 +385,31 @@ pub fn apply_provider_choice(
 /// refreshed synchronously here so the rebuilt provider can never race the
 /// `PreUpdate` mirror system. The Radiance camera-contention deferral
 /// applies unchanged: the flag persists until a rebuild actually runs.
+///
+/// Gated on a VALUE diff (`last`), never on `is_changed()`: the settings
+/// dock writes the resource through its reflected field handle every frame
+/// it is open, so the change tick fires continuously — tick gating would
+/// rebuild the registry every frame (the body seam's twin of this bug put
+/// its worker in a restart loop; observed 2026-07-23).
 #[cfg(feature = "hand-tracking-gestures")]
 pub fn force_rebuild_on_webcam_change(
     webcam: Res<'_, wc_core::settings::webcam::WebcamSettings>,
     mut control: ResMut<'_, HandProviderControl>,
+    mut last: Local<'_, Option<String>>,
 ) {
-    if webcam.is_changed() && !webcam.is_added() {
-        webcam.refresh_mirror();
-        control.force_rebuild = true;
+    // Cheap steady-state exit: same value as last applied (no allocation).
+    if last.as_deref() == Some(webcam.camera.as_str()) {
+        return;
     }
+    let first_run = last.is_none();
+    *last = Some(webcam.camera.clone());
+    if first_run {
+        // Seeding (startup / persisted load): the initial registry build
+        // already opened with this selection via the mirror.
+        return;
+    }
+    webcam.refresh_mirror();
+    control.force_rebuild = true;
 }
 
 /// Publish the coarse [`HandTrackingActivation`](wc_core::input::activation::HandTrackingActivation) cue the settings panel reads.

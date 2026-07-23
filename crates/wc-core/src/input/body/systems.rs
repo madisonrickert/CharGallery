@@ -160,14 +160,30 @@ pub fn init_mask_texture(
 /// (request-present, runtime-absent) state that `sync_body_tracking`'s
 /// reconcile pass restarts, and the open-time mirror is refreshed
 /// synchronously first so the reopen can never race the `PreUpdate` mirror
-/// system. A cheap no-op (one change-detection check) on every other frame.
+/// system.
+///
+/// Gated on a VALUE diff (`last`), never on `is_changed()` alone: the
+/// settings dock writes the resource through its reflected field handle
+/// every frame it is open, so the change tick fires continuously — tick
+/// gating here put the worker in a stop/start loop that rebuilt the ONNX
+/// sessions ~6×/s (observed 2026-07-23). Same rationale as the OBSBOT
+/// framing coalescer's `last_sent`.
 #[cfg(feature = "body-tracking-camera")]
 pub fn restart_worker_on_webcam_change(
     webcam: Res<'_, crate::settings::webcam::WebcamSettings>,
     request: Option<Res<'_, BodyTrackingRequest>>,
     worker: Res<'_, BodyTrackingWorker>,
+    mut last: bevy::ecs::system::Local<'_, Option<String>>,
 ) {
-    if !webcam.is_changed() || webcam.is_added() || request.is_none() {
+    // Cheap steady-state exit: same value as last applied (no allocation).
+    if last.as_deref() == Some(webcam.camera.as_str()) {
+        return;
+    }
+    let first_run = last.is_none();
+    *last = Some(webcam.camera.clone());
+    if first_run || request.is_none() {
+        // Seeding (startup / persisted load) must not bounce a worker that
+        // already opened with this selection via the mirror.
         return;
     }
     crate::input::capture::devices::refresh_mirror(&webcam);
@@ -176,7 +192,10 @@ pub fn restart_worker_on_webcam_change(
     };
     if let Some(mut rt) = runtime.take() {
         rt.worker.stop();
-        tracing::info!("body tracking: webcam selection changed, reopening camera");
+        tracing::info!(
+            selection = %webcam.camera,
+            "body tracking: webcam selection changed, reopening camera"
+        );
     }
 }
 
@@ -577,8 +596,8 @@ pub fn open_camera_source(camera_index: u32) -> Result<Box<dyn FrameSource>, Cap
     {
         // Honor the operator's webcam selection (settings dock, Camera tab):
         // resolve the chosen name against the discovery order; automatic
-        // keeps the configured index unchanged.
-        let index = crate::input::capture::devices::selected_index_or(camera_index);
+        // prefers an attached OBSBOT (parity with the nokhwa branch below).
+        let index = crate::input::capture::devices::resolve_open_index(camera_index);
         let source = crate::input::capture::AvfFrameSource::open(index)?;
         Ok(crate::input::camera_preview::PreviewTap::wrap(Box::new(
             source,

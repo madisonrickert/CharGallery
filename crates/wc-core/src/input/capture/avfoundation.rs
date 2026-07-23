@@ -29,8 +29,9 @@ use objc2::{define_class, msg_send, AnyThread, DefinedClass};
 use objc2_av_foundation::{
     AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceDiscoverySession, AVCaptureDeviceInput,
     AVCaptureDevicePosition, AVCaptureDeviceTypeBuiltInWideAngleCamera,
-    AVCaptureDeviceTypeExternal, AVCaptureOutput, AVCaptureSession, AVCaptureSessionPreset1280x720,
-    AVCaptureVideoDataOutput, AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
+    AVCaptureDeviceTypeContinuityCamera, AVCaptureDeviceTypeExternal, AVCaptureOutput,
+    AVCaptureSession, AVCaptureSessionPreset1280x720, AVCaptureVideoDataOutput,
+    AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
 };
 use objc2_core_media::{CMSampleBuffer, CMTime, CMVideoFormatDescriptionGetDimensions};
 use objc2_core_video::{
@@ -118,10 +119,13 @@ pub(super) fn device_names() -> Vec<String> {
     let Some(media_video) = (unsafe { AVMediaTypeVideo }) else {
         return Vec::new();
     };
+    // This list MUST stay identical to `AvfFrameSource::open`'s — the
+    // dropdown's name positions are the indices that discovery order assigns.
     let device_types = NSArray::from_slice(&[
         // SAFETY: framework constants, read-only.
         unsafe { AVCaptureDeviceTypeBuiltInWideAngleCamera },
         unsafe { AVCaptureDeviceTypeExternal },
+        unsafe { AVCaptureDeviceTypeContinuityCamera },
     ]);
     // SAFETY: discovery over a valid device-type array + video media type,
     // any position — the same pattern as `open`.
@@ -329,12 +333,16 @@ impl AvfFrameSource {
         let media_video = unsafe { AVMediaTypeVideo }
             .ok_or_else(|| CaptureError::NoCamera("AVMediaTypeVideo unavailable".into()))?;
 
-        // Enumerate built-in wide-angle + external video devices, then map the
-        // requested index onto one (or fall back to the default video device).
-        // SAFETY: both are framework-provided constant device-type `NSString`s.
+        // Enumerate built-in wide-angle, external (UVC — the OBSBOT), and
+        // iPhone Continuity video devices, then map the requested index onto
+        // one (or fall back to the default video device). This list MUST stay
+        // identical to `device_names`' — the dropdown's name positions are
+        // the indices this discovery order assigns.
+        // SAFETY: all are framework-provided constant device-type `NSString`s.
         let device_types = NSArray::from_slice(&[
             unsafe { AVCaptureDeviceTypeBuiltInWideAngleCamera },
             unsafe { AVCaptureDeviceTypeExternal },
+            unsafe { AVCaptureDeviceTypeContinuityCamera },
         ]);
         // SAFETY: discovery over a valid device-type array + video media type,
         // any position.
@@ -353,6 +361,15 @@ impl AvfFrameSource {
             None => unsafe { AVCaptureDevice::defaultDeviceWithMediaType(media_video) }
                 .ok_or_else(|| CaptureError::NoCamera("no video capture device".into()))?,
         };
+        // Field-diagnostics parity with the nokhwa backend's roster log:
+        // which physical device actually bound.
+        // SAFETY: reading a property of a valid, retained AVCaptureDevice.
+        let bound_name = unsafe { device.localizedName() };
+        tracing::info!(
+            device = %bound_name,
+            requested_index = camera_index,
+            "webcam: opening AVFoundation capture device"
+        );
 
         // SAFETY: fresh capture session.
         let session = unsafe { AVCaptureSession::new() };

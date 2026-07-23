@@ -520,10 +520,10 @@ fn open_camera_source(
         // AVFoundation opens by index; the config's name preference is a
         // Windows/nokhwa concern (multiple MSMF sources on one box). The
         // operator's explicit webcam selection (settings dock, Camera tab)
-        // does apply: resolved to a discovery index, keeping `camera_index`
-        // when automatic or unmatched.
+        // does apply, and automatic prefers an attached OBSBOT — the same
+        // policy the nokhwa branch gets from `camera_name`'s default.
         let _ = camera_name;
-        let index = capture::devices::selected_index_or(camera_index);
+        let index = capture::devices::resolve_open_index(camera_index);
         let source = capture::AvfFrameSource::open(index)?;
         Ok(crate::input::camera_preview::PreviewTap::wrap(Box::new(
             source,

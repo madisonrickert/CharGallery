@@ -52,20 +52,34 @@ impl Plugin for WebcamSelectPlugin {
     }
 }
 
-/// `Startup`: fill the dropdown from the platform backend's enumeration.
+/// `Startup`: fill the dropdown from the platform backend's enumeration,
+/// logging the roster (parity with `audio input devices enumerated`).
 fn enumerate_camera_devices(mut list: ResMut<'_, AvailableCameraDevices>) {
     list.0.clear();
     list.0.push(AUTO_LABEL.to_string());
     list.0.extend(backend_device_names());
+    tracing::info!(
+        count = list.0.len() - 1,
+        devices = ?&list.0[1..],
+        "cameras enumerated"
+    );
 }
 
-/// `PreUpdate`: mirror the operator's selection into the process-wide slot
-/// on change only (change detection covers the initial insert, so a
-/// persisted selection is visible before the first camera open).
-fn mirror_webcam_selection(settings: Res<'_, WebcamSettings>) {
-    if settings.is_changed() {
-        refresh_mirror(&settings);
+/// `PreUpdate`: mirror the operator's selection into the process-wide slot.
+/// Value-diffed (`last`) rather than `is_changed()`-gated: the settings dock
+/// writes the resource through its reflected field handle every frame it is
+/// open, so the change tick alone would re-store (and re-allocate) per
+/// frame. The first run seeds the mirror so a persisted selection is
+/// visible before the first camera open.
+fn mirror_webcam_selection(
+    settings: Res<'_, WebcamSettings>,
+    mut last: bevy::ecs::system::Local<'_, Option<String>>,
+) {
+    if last.as_deref() == Some(settings.camera.as_str()) {
+        return;
     }
+    *last = Some(settings.camera.clone());
+    refresh_mirror(&settings);
 }
 
 /// Synchronously push `settings`' selection into the open-time mirror.
@@ -82,16 +96,22 @@ pub(crate) fn selected_camera() -> Option<String> {
     SELECTED_CAMERA.lock().ok().and_then(|slot| slot.clone())
 }
 
-/// The device index to open on macOS: the operator's selection resolved
-/// against the `AVFoundation` discovery order (a name's position is its
-/// index), or `fallback` when automatic or unmatched.
+/// The name automatic mode prefers when attached — parity with the
+/// Windows/nokhwa open paths, which pass `Some("OBSBOT")`: both webcam
+/// modalities target the same physical camera on the deployment.
 #[cfg(target_os = "macos")]
-pub(crate) fn selected_index_or(fallback: u32) -> u32 {
+const AUTO_PREFERRED: &str = "OBSBOT";
+
+/// The device index to open on macOS: the operator's explicit selection
+/// resolved against the `AVFoundation` discovery order (a name's position is
+/// its index); automatic prefers an attached OBSBOT ([`AUTO_PREFERRED`]),
+/// else `fallback` — the same automatic policy as the Windows/nokhwa paths.
+#[cfg(target_os = "macos")]
+pub(crate) fn resolve_open_index(fallback: u32) -> u32 {
+    let names = super::avfoundation::device_names();
     match selected_camera() {
-        Some(name) => {
-            resolve_index_by_name(&super::avfoundation::device_names(), Some(&name), fallback)
-        }
-        None => fallback,
+        Some(name) => resolve_index_by_name(&names, Some(&name), fallback),
+        None => resolve_index_by_name(&names, Some(AUTO_PREFERRED), fallback),
     }
 }
 
