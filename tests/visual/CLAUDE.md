@@ -149,9 +149,11 @@ lifetime); (c) a rising plume with licking-tongue structure above the head
 and shoulders (buoyancy + tongue noise), never a uniform isotropic halo;
 (d) fast **ejecta streaks** — velocity-stretched elongated sparks shooting
 radially off the silhouette, denser just after a synthetic beat (2 Hz;
-frames 120/240/480 all land on or near beats); (e) bright nested
-silhouette-contour ridges from the beat-pulse layer riding inside/around the
-flame; (f) the overall hue cycles slowly through the psychedelic wheel
+frames 120/240/480 all land on or near beats); (e) **in-medium beat flares**
+— on/near beat frames a band of *particles* brightens at the expanding
+wavefront's distance from the silhouette (light lives in the grains, never
+as a fullscreen contour ridge; empty water between particles stays dark);
+(f) the overall hue cycles slowly through the psychedelic wheel
 across frames (pink → gold → green at the default rate) while staying
 saturated; (g) `delta_prev` well above ~5 (continuous motion).
 

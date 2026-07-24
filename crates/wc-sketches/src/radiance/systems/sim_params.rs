@@ -170,6 +170,13 @@ pub struct RadianceState {
     /// Deterministic expected-alive estimate (see [`expected_alive_step`]):
     /// the density signal the beat burst adapts to. An expectation, not a
     /// readback — the GPU owns the real births/deaths.
+    ///
+    /// Known staleness bound, accepted as-is: the Active-only baker stops
+    /// advancing this during Idle while the real field dies out, so the
+    /// first post-Idle beats see a stale-high estimate and UNDER-boost. The
+    /// recurrence re-converges within a few seconds of Active baking, and
+    /// the failure mode is a merely-normal burst, never an oversized one —
+    /// deliberately documented instead of adding cross-state plumbing.
     pub est_alive: f32,
 }
 
@@ -487,6 +494,9 @@ pub fn bake_radiance_sim(
     // Density estimate: advance the deterministic expected-alive recurrence
     // on this frame's pre-burst emission (the GPU owns the real
     // births/deaths; this expectation only feeds the burst boost below).
+    // Only bakes advance it, so it holds stale through Idle while the real
+    // field dies — see the `est_alive` field doc for the accepted
+    // under-boost bound.
     let count_f = particle_count as f32;
     state.est_alive = expected_alive_step(
         state.est_alive,

@@ -180,7 +180,7 @@ impl Material2d for RadianceSparkleMaterial {
     }
 
     /// `Blend` routes into `Transparent2d`; [`Self::specialize`] then makes
-    /// it pure additive (the `RadianceMaterial`/pulse recipe).
+    /// it pure additive (the `RadianceMaterial` recipe).
     fn alpha_mode(&self) -> AlphaMode2d {
         AlphaMode2d::Blend
     }
@@ -306,8 +306,9 @@ fn advance_trackers(
     frame
 }
 
-/// `Update` (gated `in_state(AppState::Radiance)`, like the pulse driver):
-/// advance every present body's oscillation tracker, assign the shared mote
+/// `Update` (gated `in_state(AppState::Radiance)`, like the beat-wave
+/// clock): advance every present body's oscillation tracker, assign the
+/// shared mote
 /// pool, ease every envelope, and pack the constellation uniform. Hides the
 /// fullscreen quad while the uniform is fully dead — every envelope releases
 /// to ~0 within a second of the last active limb (see
@@ -345,7 +346,7 @@ pub fn update_radiance_sparkles(
     let dt = time.delta_secs().min(SPARKLE_DT_CAP);
     let elapsed = time.elapsed_secs();
 
-    // Same mask→world scale the sim baker and pulse driver use.
+    // Same mask→world scale the sim baker uses.
     let h = window.height().max(1.0);
     let scale = if settings.fit_to_height {
         Vec2::new(h, h)

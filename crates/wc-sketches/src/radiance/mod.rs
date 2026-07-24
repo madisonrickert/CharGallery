@@ -240,7 +240,7 @@ impl Plugin for RadiancePlugin {
         );
 
         // Extremity-sparkle driver: oscillation tracker + mirrored star
-        // pair. Same gating rationale as the pulse driver.
+        // pair. Same gating rationale as the beat-wave clock.
         #[cfg(feature = "body-tracking-mediapipe")]
         app.add_systems(
             Update,
