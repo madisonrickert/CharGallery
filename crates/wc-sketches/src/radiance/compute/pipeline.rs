@@ -490,10 +490,7 @@ mod tests {
             (MAX_EDGE_POINTS as u64) * 4,
             "one f32 motion weight per edge point"
         );
-        assert_eq!(
-            FIELD_BUFFER_SIZE, 65_536,
-            "one byte per 256^2 mask texel"
-        );
+        assert_eq!(FIELD_BUFFER_SIZE, 65_536, "one byte per 256^2 mask texel");
     }
 
     /// Dispatch math rounds up so the last partial workgroup still launches.

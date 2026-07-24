@@ -336,7 +336,10 @@ mod tests {
             std::mem::offset_of!(RadianceSimParamsGpu, repel_radius_px),
             408
         );
-        assert_eq!(std::mem::offset_of!(RadianceSimParamsGpu, contact_glow), 412);
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, contact_glow),
+            412
+        );
         assert_eq!(
             std::mem::offset_of!(RadianceSimParamsGpu, glow_decay_baked),
             416
