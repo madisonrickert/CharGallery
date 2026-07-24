@@ -100,7 +100,9 @@ struct SimParams {
     // the beat flare-wave lanes, layout-parity with the Rust
     // `RadianceSimParamsGpu`. WGSL uniform scalar arrays have 16-byte
     // stride, so the Rust `[f32; 8]` wave lanes mirror as two `vec4<f32>`
-    // each. Struct total 496 bytes.
+    // each. After the wave lanes: the 2026-07-24 calibration lanes
+    // (curl_evolve at 496, impulse_coupling at 500) and a two-lane tail
+    // pad. Struct total 512 bytes.
     repel_strength: f32,
     repel_radius_px: f32,
     contact_glow: f32,
@@ -112,6 +114,14 @@ struct SimParams {
     wave_radius_b: vec4<f32>,
     wave_strength_a: vec4<f32>,
     wave_strength_b: vec4<f32>,
+    // Time-evolution multiplier on the curl field's phase drift (see
+    // curl_flow: the drift clock is params.time * curl_evolve).
+    curl_evolve: f32,
+    // Limb-impulse force coupling per second (was the IMPULSE_COUPLING
+    // const, 6.0): how fast a particle inside an impulse radius converges
+    // on the limb's velocity without hard-snapping to it.
+    impulse_coupling: f32,
+    _pad_tail: vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;
@@ -128,10 +138,8 @@ struct SimParams {
 const MASK_DIM: i32 = 256;
 const FIELD_DIST_MAX_TEXELS: f32 = 160.0;
 
-// How strongly a particle inside an impulse radius couples to the limb
-// velocity, per second. 6.0 means a particle sitting on a limb reaches ~the
-// limb's velocity within a couple of frames without hard-snapping to it.
-const IMPULSE_COUPLING: f32 = 6.0;
+// (The impulse coupling gain lives in params.impulse_coupling — the
+// operator's "Motion coupling" setting — since 2026-07-24.)
 // Ejecta lifespan multiplier: shooting sparks die young, so the streaks stay
 // crisp instead of loitering as slow embers far from the body.
 const EJECTA_LIFE_MUL: f32 = 0.3;
@@ -361,7 +369,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         let dist = length(p.position - imp.position);
         let w = 1.0 - smoothstep(0.0, max(imp.radius, 1.0), dist);
-        accel = accel + imp.velocity * (imp.gain * w * IMPULSE_COUPLING);
+        accel = accel + imp.velocity * (imp.gain * w * params.impulse_coupling);
         // Motion disturbance: the same locally-weighted coupling that pushes
         // particles near a fast limb also lights them — the algae beat:
         // disturbance is luminous.
@@ -444,7 +452,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // flow_strength px/s regardless of the drag regime, and the
     // divergence-free field can never collapse the aura inward.
     if (params.flow_strength > 0.0) {
-        let turb = curl_flow(p.position, params.curl_scale, params.time, params.curl_octaves);
+        // The drift clock is scaled by curl_evolve so the vortex pattern
+        // itself churns at a tunable rate (1.0 = the original slow drift).
+        let turb = curl_flow(
+            p.position,
+            params.curl_scale,
+            params.time * params.curl_evolve,
+            params.curl_octaves,
+        );
         p.position = p.position + turb * params.flow_strength * params.dt;
     }
 

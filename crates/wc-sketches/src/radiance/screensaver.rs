@@ -108,6 +108,9 @@ pub fn drive_phantom(
             edges.motion.resize(n, 0.0);
             edges.slot_counts = [0; wc_core::input::body::MAX_TRACKED_BODIES];
             edges.slot_counts[0] = n;
+            // Square-authored synthetic content: declare a 1:1 source aspect
+            // so the fit-to-height mapping keeps the phantom's blobs round.
+            edges.frame_aspect = 1.0;
             edges.generation = edges.generation.wrapping_add(1);
         }
     }
@@ -126,10 +129,12 @@ pub fn drive_radiance_attract_sim(
     mut sim: ResMut<'_, RadianceSimParams>,
 ) {
     // The phantom writes slot 0's edges; the baker's phantom fallback gives
-    // that slot the whole (ember-scaled) emission share.
-    let slot_counts = edges.map_or([0; wc_core::input::body::MAX_TRACKED_BODIES], |e| {
-        e.slot_counts
-    });
+    // that slot the whole (ember-scaled) emission share. The phantom authors
+    // its mask in square space, so its stamped `frame_aspect` is 1.0.
+    let (slot_counts, mask_frame_aspect) = edges
+        .map_or(([0; wc_core::input::body::MAX_TRACKED_BODIES], 1.0), |e| {
+            (e.slot_counts, e.frame_aspect)
+        });
     let window_size = Vec2::new(window.width(), window.height());
     let quiet = neutral_audio();
     // Copied out first: the baker borrows `sim.params` mutably.
@@ -139,6 +144,7 @@ pub fn drive_radiance_attract_sim(
         &quiet,
         None,
         slot_counts,
+        mask_frame_aspect,
         particle_count,
         window_size,
         time.delta_secs(),
@@ -222,6 +228,7 @@ mod tests {
             motion: Vec::with_capacity(8),
             slot_counts: [0; wc_core::input::body::MAX_TRACKED_BODIES],
             generation: 1,
+            frame_aspect: 1.0,
         });
         let mut fade = ScreensaverFade::default();
         fade.set_target(1.0);
@@ -234,9 +241,11 @@ mod tests {
             .run_system_once(drive_radiance_attract_sim)
             .expect("attract writer runs");
         let sim = world.resource::<RadianceSimParams>();
-        // Live neutral value: rate(0.5) * EMISSION_BASE_HZ * dt; ember cuts
-        // it to the fraction.
-        let live = 0.5 * crate::radiance::systems::sim_params::EMISSION_BASE_HZ * sim.params.dt;
+        // Live neutral value: default rate * EMISSION_BASE_HZ * dt; ember
+        // cuts it to the fraction.
+        let live = RadianceSettings::default().emission_rate
+            * crate::radiance::systems::sim_params::EMISSION_BASE_HZ
+            * sim.params.dt;
         assert!(
             (sim.params.emission_prob - live * EMBER_EMISSION_FRACTION).abs() < 1e-6,
             "ember emission: {} vs live {live}",

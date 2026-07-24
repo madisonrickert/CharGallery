@@ -12,7 +12,7 @@
 //!    signed distance field (see `field_upload`).
 //! 3. `init_radiance_pipeline` (`RenderStartup`) builds the bind-group
 //!    layout, queues the compute pipeline, and allocates the persistent
-//!    uniform buffer (496 B `SimParams`), the persistent edge storage
+//!    uniform buffer (512 B `SimParams`), the persistent edge storage
 //!    buffers (`MAX_EDGE_POINTS` × 16 B points + `MAX_EDGE_POINTS` × 4 B
 //!    motion weights), and the persistent signed-field buffer (`MASK_SIZE²`
 //!    bytes) once — never per frame.
@@ -61,7 +61,7 @@ use super::sim_params::{RadianceSimParams, RadianceSimParamsGpu};
 /// `assets/shaders/radiance/simulate.wgsl`.
 const WORKGROUP_SIZE: u32 = 64;
 
-/// `RadianceSimParamsGpu` byte size (496) for binding 0's `min_binding_size`.
+/// `RadianceSimParamsGpu` byte size (512) for binding 0's `min_binding_size`.
 /// The `panic!` is inside a `const`, so a zero-sized regression fails at
 /// compile time.
 const SIM_PARAMS_SIZE: NonZeroU64 =
@@ -136,7 +136,7 @@ pub struct RadiancePipeline {
     bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     /// Handle into Bevy's [`PipelineCache`].
     pipeline_id: CachedComputePipelineId,
-    /// Persistent `UNIFORM | COPY_DST` buffer for the 496-byte sim params;
+    /// Persistent `UNIFORM | COPY_DST` buffer for the 512-byte sim params;
     /// refilled each frame via `write_buffer` (no realloc).
     sim_params_buffer: Buffer,
     /// Persistent `STORAGE | COPY_DST` buffer of `MAX_EDGE_POINTS` edge
@@ -474,12 +474,12 @@ mod tests {
         app.update();
     }
 
-    /// Binding 0's `min_binding_size` is the exact 496-byte layout, and the
+    /// Binding 0's `min_binding_size` is the exact 512-byte layout, and the
     /// edge + edge-motion + signed-field buffers hold the full contract
     /// capacity.
     #[test]
     fn buffer_size_constants_match_contracts() {
-        assert_eq!(SIM_PARAMS_SIZE.get(), 496);
+        assert_eq!(SIM_PARAMS_SIZE.get(), 512);
         assert_eq!(
             EDGES_BUFFER_SIZE,
             (MAX_EDGE_POINTS as u64) * 16,

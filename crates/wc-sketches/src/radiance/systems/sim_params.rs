@@ -103,8 +103,9 @@ pub const DRAG_PER_SECOND: f32 = 0.25;
 /// glow is a flash, not a state — a contact/flare highlight dies within a
 /// few hundred milliseconds of its cause.
 pub const GLOW_PER_SECOND: f32 = 0.02;
-/// Curl spatial frequency, radians per world px (~785 px swirl wavelength).
-pub const CURL_SCALE: f32 = 0.012;
+// (Curl spatial frequency and the limb-impulse coupling gain were hardwired
+// consts here until 2026-07-24; both are operator settings now — see
+// `RadianceSettings::curl_scale` / `curl_evolve` / `impulse_coupling`.)
 /// Limb impulse influence radius, world px.
 pub const IMPULSE_RADIUS: f32 = 140.0;
 /// Limb speed (world px/s) that maps to impulse gain 1.0.
@@ -433,6 +434,7 @@ pub fn bake_radiance_sim(
     audio: &AudioAnalysis,
     bodies: Option<&BodyTrackingState>,
     slot_counts: [usize; MAX_TRACKED_BODIES],
+    mask_frame_aspect: f32,
     particle_count: u32,
     window_size: Vec2,
     dt: f32,
@@ -531,7 +533,9 @@ pub fn bake_radiance_sim(
     }
     out.buoyancy = settings.buoyancy * drive.buoyancy_mul * beat_swell;
     out.flow_strength = settings.flow_strength * drive.turbulence_mul;
-    out.curl_scale = CURL_SCALE;
+    out.curl_scale = settings.curl_scale.max(0.0);
+    out.curl_evolve = settings.curl_evolve.max(0.0);
+    out.impulse_coupling = settings.impulse_coupling.max(0.0);
     out.curl_octaves = settings.curl_octaves.clamp(1, 3);
     out.drag_baked = DRAG_PER_SECOND.powf(dt);
     out.lifespan_min = LIFESPAN_MIN;
@@ -612,16 +616,22 @@ pub fn bake_radiance_sim(
     ));
     state.slot_fade_prev = fades;
 
-    // Mask → world scale. The mask is square; the `fit_to_height` setting maps
-    // it to a centred height×height square so the dancer keeps its proportions
-    // on non-square displays (portrait installs — a 9:16 screen otherwise
-    // stretches the dancer ~1.8x tall). The default stretches the square to fill
-    // the whole window rect (the v1 look, tuned for 16:9). Every consumer (fill,
-    // rim, edges, limb impulses) reads `uv_to_world`, so this one value keeps
-    // them consistent.
+    // Mask → world scale. Mask-UV `[0,1]²` is NOT a square view of the world:
+    // `ContentRect::to_content_norm` divides each camera axis out
+    // independently, so the unit square is the camera frame squished square.
+    // `fit_to_height` therefore restores true proportions by mapping the mask
+    // onto a centred `height·aspect × height` rect — the camera frame scaled
+    // to the window height (aspect-correct crop/pillarbox on any display).
+    // With it off, the mask stretches to fill the whole window rect, which is
+    // proportion-correct only when the window aspect happens to equal the
+    // camera aspect. `mask_frame_aspect` is stamped by whoever wrote the mask
+    // (camera worker: real frame aspect; attract phantom / debug dancer:
+    // square-authored, 1.0). Every consumer (fill, rim, edges, limb impulses,
+    // sparkles) reads `uv_to_world` or its silhouette-shader mirror, so these
+    // few lines keep them consistent.
     let h = window_size.y.max(1.0);
     out.uv_to_world = if settings.fit_to_height {
-        [h, h]
+        [h * mask_frame_aspect.max(0.1), h]
     } else {
         [window_size.x.max(1.0), h]
     };
@@ -734,7 +744,9 @@ pub fn update_radiance_sim(
     mut sim: ResMut<'_, RadianceSimParams>,
 ) {
     let audio_frame = audio.map_or_else(neutral_audio, |a| *a);
-    let slot_counts = edges.map_or([0; MAX_TRACKED_BODIES], |e| e.slot_counts);
+    let (slot_counts, mask_frame_aspect) = edges.map_or(([0; MAX_TRACKED_BODIES], 1.0), |e| {
+        (e.slot_counts, e.frame_aspect)
+    });
     let window_size = Vec2::new(window.width(), window.height());
     // Copied out first: the baker borrows `sim.params` mutably.
     let particle_count = sim.particle_count;
@@ -743,6 +755,7 @@ pub fn update_radiance_sim(
         &audio_frame,
         body.as_deref(),
         slot_counts,
+        mask_frame_aspect,
         particle_count,
         window_size,
         time.delta_secs(),
@@ -922,6 +935,7 @@ mod tests {
             audio,
             bodies,
             [edge_count, 0, 0, 0],
+            1.0,
             120_000,
             Vec2::new(1920.0, 1080.0),
             1.0 / 60.0,
@@ -956,6 +970,49 @@ mod tests {
         assert!(d.x > 0.0 && d.y < 0.0);
         let d_m = mask_dir_to_world(Vec2::new(1.0, 1.0), scale, true);
         assert!(d_m.x < 0.0 && d_m.y < 0.0);
+    }
+
+    /// `fit_to_height` restores the dancer's true proportions by mapping the
+    /// (aspect-squished) mask square onto a centred
+    /// `height·camera_aspect × height` rect. With a 16:9 camera on a 16:9
+    /// window that is exactly the full window (fit and stretch agree); on a
+    /// mismatched window only the fit branch keeps the camera proportions.
+    #[test]
+    fn fit_to_height_maps_the_mask_by_the_camera_aspect() {
+        let cam_aspect = 16.0 / 9.0;
+        let bake_uv = |fit: bool, window: Vec2| {
+            let settings = RadianceSettings {
+                fit_to_height: fit,
+                ..RadianceSettings::default()
+            };
+            let mut state = RadianceState::default();
+            let mut out = RadianceSimParamsGpu::default();
+            bake_radiance_sim(
+                &settings,
+                &neutral_audio(),
+                None,
+                [100, 0, 0, 0],
+                cam_aspect,
+                120_000,
+                window,
+                1.0 / 60.0,
+                0.0,
+                &mut state,
+                &mut out,
+            );
+            out.uv_to_world
+        };
+        // Matched aspects: the fit rect IS the full window.
+        let matched = bake_uv(true, Vec2::new(1920.0, 1080.0));
+        assert!((matched[0] - 1920.0).abs() < 0.1, "{matched:?}");
+        assert!((matched[1] - 1080.0).abs() < 0.1, "{matched:?}");
+        // Ultrawide window: the fit rect pillarboxes at the camera aspect…
+        let ultrawide = bake_uv(true, Vec2::new(3840.0, 1080.0));
+        assert!((ultrawide[0] - 1920.0).abs() < 0.1, "{ultrawide:?}");
+        assert!((ultrawide[1] - 1080.0).abs() < 0.1, "{ultrawide:?}");
+        // …while the stretch branch fills (and distorts to) the window.
+        let stretched = bake_uv(false, Vec2::new(3840.0, 1080.0));
+        assert!((stretched[0] - 3840.0).abs() < 0.1, "{stretched:?}");
     }
 
     /// Sensitivity 0 (or silent input) is the exact neutral drive: every
@@ -1037,6 +1094,7 @@ mod tests {
                 &sustained,
                 None,
                 [100, 0, 0, 0],
+                1.0,
                 120_000,
                 win,
                 1.0 / 60.0,
@@ -1063,7 +1121,12 @@ mod tests {
     /// The baker scales emission with the bass drive vs the neutral bake.
     #[test]
     fn bake_bass_raises_emission_prob() {
-        let settings = RadianceSettings::default();
+        // Non-zero buoyancy so the bass-raise lane is observable (the
+        // 2026-07-24 calibration default is 0 — the water look).
+        let settings = RadianceSettings {
+            buoyancy: 135.0,
+            ..RadianceSettings::default()
+        };
         let quiet = neutral_audio();
         let bassy = fixture_audio([0.9, 0.9, 0.9, 0.0, 0.0, 0.0, 0.0, 0.0], 0.4, 0.0);
         let (_, base) = bake(&settings, &quiet, None, 500);
@@ -1071,7 +1134,7 @@ mod tests {
         assert!(driven.emission_prob > base.emission_prob);
         assert!(driven.buoyancy > base.buoyancy);
         // Expected neutral value: rate * 1.0 * EMISSION_BASE_HZ * dt.
-        let expect = 0.5 * EMISSION_BASE_HZ / 60.0;
+        let expect = settings.emission_rate * EMISSION_BASE_HZ / 60.0;
         assert!((base.emission_prob - expect).abs() < 1e-6);
     }
 
@@ -1089,6 +1152,7 @@ mod tests {
             &hit,
             None,
             [100, 0, 0, 0],
+            1.0,
             120_000,
             win,
             1.0 / 60.0,
@@ -1104,6 +1168,7 @@ mod tests {
                 &silence,
                 None,
                 [100, 0, 0, 0],
+                1.0,
                 120_000,
                 win,
                 1.0 / 60.0,
@@ -1411,6 +1476,7 @@ mod tests {
             &neutral_audio(),
             Some(&bodies),
             [200, 300, 0, 0],
+            1.0,
             120_000,
             Vec2::new(1920.0, 1080.0),
             1.0 / 60.0,
@@ -1480,7 +1546,12 @@ mod tests {
     /// (the "flame swells on the beat" lane).
     #[test]
     fn bake_beat_swells_emission_and_buoyancy() {
-        let settings = RadianceSettings::default();
+        // Non-zero buoyancy so the swell lane is observable (calibration
+        // default is 0 — see `bake_bass_raises_emission_prob`).
+        let settings = RadianceSettings {
+            buoyancy: 135.0,
+            ..RadianceSettings::default()
+        };
         let base = fixture_audio([0.2; 8], 0.2, 0.0);
         let mut on_beat = base;
         on_beat.beat_confidence = 1.0;
@@ -1516,7 +1587,12 @@ mod tests {
     /// setting pins it off (uniform buoyancy).
     #[test]
     fn bake_bakes_tongue_noise() {
-        let settings = RadianceSettings::default();
+        // Explicit tongue strength: the calibration default is 0 (tongues
+        // off in the water look), so the "on" branch sets its own.
+        let settings = RadianceSettings {
+            tongue_strength: 0.65,
+            ..RadianceSettings::default()
+        };
         let (_, out) = bake(&settings, &neutral_audio(), None, 500);
         assert!(out.tongue_amp > 0.0 && (out.tongue_freq - TONGUE_FREQ).abs() < f32::EPSILON);
         let mut flat = settings.clone();
@@ -1540,6 +1616,7 @@ mod tests {
                 &neutral_audio(),
                 None,
                 [100, 0, 0, 0],
+                1.0,
                 120_000,
                 Vec2::new(1920.0, 1080.0),
                 1.0 / 60.0,

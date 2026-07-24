@@ -95,8 +95,9 @@ pub const MAX_IMPULSES: usize = 8;
 /// (repel / contact-glow / flare / motion) from offset 400 to 432, then two
 /// `[f32; 8]` beat-wave arrays (`wave_radius_px` at 432, `wave_strength` at
 /// 464) — each mirrored on the WGSL side as two `vec4<f32>` because uniform
-/// scalar arrays have 16-byte stride. Total size 496, already a 16-byte
-/// multiple, so no trailing pad.
+/// scalar arrays have 16-byte stride — then the 2026-07-24 calibration
+/// lanes `curl_evolve` (496) and `impulse_coupling` (500) plus a two-lane
+/// tail pad. Total size 512, a 16-byte multiple.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct RadianceSimParamsGpu {
@@ -203,6 +204,21 @@ pub struct RadianceSimParamsGpu {
     pub wave_radius_px: [f32; 8],
     /// Per-wave strength (0 = dead slot), age-decayed CPU-side.
     pub wave_strength: [f32; 8],
+    /// Curl-field time-evolution multiplier: scales the per-octave
+    /// `CURL_DRIFTS · time` phase drift in `curl_flow`, so the vortex
+    /// pattern churns at an operator-tunable rate (the `curl_evolve`
+    /// setting; 1.0 = the pre-setting drift).
+    pub curl_evolve: f32,
+    /// Limb-impulse force coupling (the `impulse_coupling` setting; was the
+    /// shader-side `IMPULSE_COUPLING = 6.0` const).
+    pub impulse_coupling: f32,
+    /// Tail padding to the 16-byte uniform boundary (two spare lanes for
+    /// future scalars). WGSL mirrors as `_pad_tail: vec2<f32>`.
+    #[allow(
+        clippy::pub_underscore_fields,
+        reason = "GPU struct layout padding must be pub for bytemuck"
+    )]
+    pub _pad_tail: [f32; 2],
 }
 
 const _: () = {
@@ -220,7 +236,7 @@ const _: () = {
 /// the Cymatics F2 lesson).
 ///
 /// The `paused` / `frozen_secs` pair lives on the extract copy only — it is
-/// **not** part of [`RadianceSimParamsGpu`], so the 496-byte uniform layout
+/// **not** part of [`RadianceSimParamsGpu`], so the 512-byte uniform layout
 /// and its parity tests are untouched.
 #[derive(Resource, Clone, ExtractResource)]
 pub struct RadianceSimParams {
@@ -360,19 +376,25 @@ mod tests {
             std::mem::offset_of!(RadianceSimParamsGpu, wave_strength),
             464
         );
-        assert_eq!(std::mem::size_of::<RadianceSimParamsGpu>(), 496);
+        assert_eq!(std::mem::offset_of!(RadianceSimParamsGpu, curl_evolve), 496);
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, impulse_coupling),
+            500
+        );
+        assert_eq!(std::mem::size_of::<RadianceSimParamsGpu>(), 512);
     }
 
-    /// Locks the "header 144 bytes, total 496" claim to the real const, so a
+    /// Locks the "header 144 bytes, total 512" claim to the real const, so a
     /// change to `MAX_IMPULSES` cannot silently shift the size expectations.
     #[test]
     fn sim_params_size_tracks_max_impulses() {
         const HEADER_BYTES: usize = 144;
         const IMPULSE_STRIDE: usize = 32;
         // edge_motion_bias + 7 gain scalars (8 total = 32 B) + two [f32; 8]
-        // wave-lane arrays (64 B), offsets 400..496; no trailing pad because
-        // 496 is already a 16-byte multiple.
-        const TAIL_BYTES: usize = 96;
+        // wave-lane arrays (64 B) at 400..496 + the calibration lanes
+        // (curl_evolve, impulse_coupling) and their two-lane pad (16 B) at
+        // 496..512.
+        const TAIL_BYTES: usize = 112;
         assert_eq!(
             std::mem::size_of::<RadianceSimParamsGpu>(),
             HEADER_BYTES + MAX_IMPULSES * IMPULSE_STRIDE + TAIL_BYTES

@@ -331,6 +331,7 @@ pub fn update_radiance_sparkles(
     fade: Res<'_, ScreensaverFade>,
     state: Res<'_, super::systems::sim_params::RadianceState>,
     body: Option<Res<'_, BodyTrackingState>>,
+    edges: Option<Res<'_, wc_core::input::body::SilhouetteEdges>>,
     mut sparkles: ResMut<'_, RadianceSparkles>,
     mut quads: Query<
         '_,
@@ -346,10 +347,13 @@ pub fn update_radiance_sparkles(
     let dt = time.delta_secs().min(SPARKLE_DT_CAP);
     let elapsed = time.elapsed_secs();
 
-    // Same mask→world scale the sim baker uses.
+    // Same mask→world scale the sim baker uses (see its `uv_to_world`
+    // comment: the mask writer stamps the source frame aspect that undoes
+    // the mask-UV squish).
     let h = window.height().max(1.0);
+    let mask_frame_aspect = edges.map_or(1.0, |e| e.frame_aspect.max(0.1));
     let scale = if settings.fit_to_height {
-        Vec2::new(h, h)
+        Vec2::new(h * mask_frame_aspect, h)
     } else {
         Vec2::new(window.width().max(1.0), h)
     };

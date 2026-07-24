@@ -98,6 +98,7 @@ pub fn ensure_body_surfaces(
             motion: Vec::with_capacity(MAX_EDGE_POINTS),
             slot_counts: [0; MAX_TRACKED_BODIES],
             generation: 0,
+            frame_aspect: 1.0,
         });
     }
 }

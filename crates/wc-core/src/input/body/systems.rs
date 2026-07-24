@@ -283,6 +283,7 @@ pub fn sync_body_tracking(
             *state = BodyTrackingState::default();
             edges.points.clear();
             edges.slot_counts = [0; MAX_TRACKED_BODIES];
+            edges.frame_aspect = 1.0;
             edges.generation = edges.generation.wrapping_add(1);
             *diagnostics = BodyTrackingDiagnostics::default();
             tracing::info!("body tracking: request removed, worker stopped");
@@ -351,6 +352,7 @@ pub fn poll_body_worker(
                     edges.motion.clear();
                     edges.motion.extend_from_slice(&payload.edge_motion);
                     edges.slot_counts = payload.edge_slot_counts;
+                    edges.frame_aspect = payload.frame_aspect;
                     edges.generation = edges.generation.wrapping_add(1);
                     // …and hand the buffer back to the worker. The recycle
                     // ring is sized pool+1 so this cannot fail; if it ever

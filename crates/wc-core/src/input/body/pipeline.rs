@@ -8,7 +8,10 @@
 //! never pays the detector; associate detections to **stable slots**
 //! ([`super::selection::assign_slots`]): active/reserved slots re-bind by
 //! centre distance (a returning person keeps their slot), new people claim
-//! free slots. Per active slot: warp the rotated ROI into a 256² crop; run
+//! free slots — after the `ClaimGate`'s consecutive-sighting debounce and
+//! collapse cooldown filter out detector false positives (a person-shaped
+//! coat rack must not spin the claim/collapse cycle). Per active slot: warp
+//! the rotated ROI into a 256² crop; run
 //! the landmark model; gate on its pose-presence scalar; project the 39 rows
 //! back to square-norm; heavily One-Euro filter the aux alignment rows before
 //! deriving next frame's tracking ROI so the crop does not jitter; publish
@@ -59,7 +62,7 @@ use super::roi::{
     ContentRect, RoiRect, AUX_CENTER_ROW, AUX_SCALE_ROW, LANDMARK_INPUT, LANDMARK_ROWS,
     LANDMARK_VALUES,
 };
-use super::selection::{assign_slots, dead_reckoned_anchor, visible_fraction};
+use super::selection::{assign_slots, dead_reckoned_anchor, visible_fraction, ASSOC_MAX_DIST};
 use super::smoothing::OneEuroFilter;
 use super::transport::{BodyFramePayload, SlotFrame};
 use super::{BodyLandmark, BODY_LANDMARK_COUNT, MASK_CHANNELS, MASK_SIZE, MAX_TRACKED_BODIES};
@@ -138,6 +141,38 @@ const RESERVE_MIN_ACTIVE: Duration = Duration::from_millis(600);
 /// margin: the returning person re-binds within it, a genuine walker frees
 /// the slot in half a second instead of four.
 const YOUNG_EDGE_RESERVE: Duration = Duration::from_millis(500);
+
+/// A detector candidate must be sighted on this many *consecutive* detector
+/// passes before it may claim a Free slot (see [`ClaimGate`]).
+///
+/// One-pass claims let anything that grazes `detector_score_threshold` for a
+/// single pass — a person-shaped coat rack shimmering at the confidence
+/// boundary, a shadow crossing a poster — burn a full landmark inference and
+/// a claim/collapse log pair per graze. Requiring a second consecutive
+/// sighting costs a real person one extra detector pass: ~33 ms on the
+/// every-frame cold-start cadence, one [`DETECT_SCAN_INTERVAL`] (300 ms) when
+/// joining an existing session mid-track — both under the main-side
+/// `envelope::ADMIT_DWELL` (700 ms) they'd wait out anyway.
+const CLAIM_MIN_SIGHTINGS: u8 = 2;
+
+/// After a *young* track dies at the fresh-admission presence gate (claimed,
+/// then the landmark model found nobody in the crop), Free-slot claims within
+/// `ASSOC_MAX_DIST` of its last anchor are suppressed for this window.
+///
+/// That claim-then-collapse signature is a person-shaped static object
+/// fooling the detector but not the landmark model (live case: a coat rack).
+/// The detector alone can propose it every pass, so the consecutive-sighting
+/// debounce cannot filter it — without this cooldown the spot spins a
+/// claim → landmark inference → collapse cycle at the scan cadence
+/// indefinitely. Two seconds throttles that spin to 0.5 Hz while keeping the
+/// worst-case penalty for a real person standing exactly on a just-collapsed
+/// spot to a 2 s admission delay.
+const CLAIM_DENY_WINDOW: Duration = Duration::from_secs(2);
+
+/// Fixed capacity of the [`ClaimGate`] denial list. Matches
+/// [`MAX_PERSON_CANDIDATES`]: a detector pass cannot mint more collapse
+/// spots than it has candidates.
+const CLAIM_DENIAL_SLOTS: usize = MAX_PERSON_CANDIDATES;
 
 /// Active-track count at or below which every track runs landmark/mask
 /// inference every frame; above it the pipeline interleaves round-robin,
@@ -493,7 +528,164 @@ fn log_slot_loss(slot: &SlotTrack, idx: usize, cause: &str) {
     if slot.phase == SlotPhase::Reserved {
         tracing::info!(slot = idx, cause, "body slot: lost, reserved");
     } else {
-        tracing::info!(slot = idx, cause, "body slot: lost, freed (young)");
+        // Young frees are the high-frequency tail of detector false positives
+        // (see [`CLAIM_DENY_WINDOW`]); the claim itself already logged at
+        // info, so keep the per-graze churn out of the operator log.
+        tracing::debug!(slot = idx, cause, "body slot: lost, freed (young)");
+    }
+}
+
+/// Pre-claim debounce + post-collapse cooldown for Free-slot claims.
+///
+/// Two fixed-size defences against detector false positives, sitting
+/// upstream of [`PosePipeline::associate_detections`]'s Free→Active arm
+/// (matches to Active/Reserved slots — existing occupancies — bypass both):
+///
+/// 1. **Consecutive-sighting debounce** (`pending`): an unmatched candidate
+///    must be sighted on [`CLAIM_MIN_SIGHTINGS`] consecutive detector passes
+///    (matched by centre within `ASSOC_MAX_DIST`) before it may claim. A
+///    missed pass restarts the count.
+/// 2. **Collapse cooldown** (`denials`): after a young claim dies at the
+///    fresh-admission presence gate, claims near its anchor are refused for
+///    [`CLAIM_DENY_WINDOW`] (see that const for the coat-rack rationale).
+///
+/// Both buffers are fixed arrays refreshed in place — this runs on the
+/// worker's per-frame path, so it never allocates.
+struct ClaimGate {
+    /// Candidates seen on a recent pass but not yet claim-eligible.
+    pending: [Option<PendingClaim>; MAX_PERSON_CANDIDATES],
+    /// Spots where a young claim recently died at the presence gate.
+    denials: [Option<ClaimDenial>; CLAIM_DENIAL_SLOTS],
+    /// Detector-pass counter driving the consecutiveness check.
+    pass: u64,
+}
+
+/// A not-yet-eligible claim candidate (see [`ClaimGate`]).
+struct PendingClaim {
+    /// Candidate centre (square-norm), refreshed on every matched sighting.
+    centre: Vec2,
+    /// Consecutive-pass sighting count.
+    sightings: u8,
+    /// The detector pass this candidate was last sighted on.
+    last_pass: u64,
+}
+
+/// A temporarily claim-suppressed spot (see [`ClaimGate`]).
+struct ClaimDenial {
+    /// Anchor of the collapsed young track (square-norm).
+    centre: Vec2,
+    /// Worker time the suppression lapses.
+    until: Duration,
+}
+
+impl ClaimGate {
+    fn new() -> Self {
+        Self {
+            pending: [const { None }; MAX_PERSON_CANDIDATES],
+            denials: [const { None }; CLAIM_DENIAL_SLOTS],
+            pass: 0,
+        }
+    }
+
+    /// Start a detector pass: advance the consecutiveness clock and drop
+    /// lapsed denials. Call once per `associate_detections`.
+    fn begin_pass(&mut self, now: Duration) {
+        self.pass += 1;
+        for denial in &mut self.denials {
+            if denial.as_ref().is_some_and(|d| now >= d.until) {
+                *denial = None;
+            }
+        }
+    }
+
+    /// Whether the candidate at `centre` has earned a Free-slot claim.
+    /// Records the sighting either way, so calling this *is* the candidate's
+    /// appearance for consecutiveness purposes.
+    fn approve(&mut self, centre: Vec2, now: Duration) -> bool {
+        if self
+            .denials
+            .iter()
+            .flatten()
+            .any(|d| now < d.until && d.centre.distance(centre) <= ASSOC_MAX_DIST)
+        {
+            return false;
+        }
+        let matched = self.pending.iter().position(|entry| {
+            entry
+                .as_ref()
+                .is_some_and(|p| p.centre.distance(centre) <= ASSOC_MAX_DIST)
+        });
+        if let Some(i) = matched {
+            let Some(entry) = self.pending[i].as_mut() else {
+                return false; // unreachable: position() matched Some above
+            };
+            entry.sightings = if entry.last_pass + 1 == self.pass {
+                entry.sightings.saturating_add(1)
+            } else {
+                1 // a missed pass restarts the consecutive count
+            };
+            entry.last_pass = self.pass;
+            entry.centre = centre;
+            if entry.sightings >= CLAIM_MIN_SIGHTINGS {
+                self.pending[i] = None;
+                return true;
+            }
+            return false;
+        }
+        // First sighting: seed a pending entry, recycling the stalest slot
+        // when the fixed buffer is full.
+        let mut target = 0;
+        let mut oldest = u64::MAX;
+        for (i, entry) in self.pending.iter().enumerate() {
+            match entry {
+                None => {
+                    target = i;
+                    break;
+                }
+                Some(p) if p.last_pass < oldest => {
+                    target = i;
+                    oldest = p.last_pass;
+                }
+                Some(_) => {}
+            }
+        }
+        self.pending[target] = Some(PendingClaim {
+            centre,
+            sightings: 1,
+            last_pass: self.pass,
+        });
+        false
+    }
+
+    /// Suppress Free-slot claims near `centre` for [`CLAIM_DENY_WINDOW`]
+    /// (a young track just died at the fresh-admission presence gate there).
+    fn deny_near(&mut self, centre: Vec2, now: Duration) {
+        let until = now + CLAIM_DENY_WINDOW;
+        // Refresh an overlapping denial in place rather than burning a slot.
+        for denial in self.denials.iter_mut().flatten() {
+            if denial.centre.distance(centre) <= ASSOC_MAX_DIST {
+                denial.centre = centre;
+                denial.until = until;
+                return;
+            }
+        }
+        // Otherwise take a free slot, or evict the soonest-lapsing denial.
+        let mut target = 0;
+        let mut soonest = Duration::MAX;
+        for (i, entry) in self.denials.iter().enumerate() {
+            match entry {
+                None => {
+                    target = i;
+                    break;
+                }
+                Some(d) if d.until < soonest => {
+                    target = i;
+                    soonest = d.until;
+                }
+                Some(_) => {}
+            }
+        }
+        self.denials[target] = Some(ClaimDenial { centre, until });
     }
 }
 
@@ -509,6 +701,8 @@ pub struct PosePipeline {
     max_tracked: usize,
     /// Per-slot tracking state, indexed by stable slot.
     slots: [SlotTrack; MAX_TRACKED_BODIES],
+    /// Pre-claim debounce + collapse cooldown for Free-slot claims.
+    claim_gate: ClaimGate,
     /// Per-slot results of the latest processed frame (what the worker
     /// publishes).
     slot_frames: [SlotFrame; MAX_TRACKED_BODIES],
@@ -537,6 +731,10 @@ pub struct PosePipeline {
     /// Candidate count from the most recent detector pass, surfaced through
     /// [`PoseDiagnostics::people_detected`]. Stale on tracking frames.
     people_detected: u8,
+    /// Width/height aspect of the most recent valid camera frame; stamped
+    /// into every published payload so mask-UV consumers can restore true
+    /// screen proportions. `1.0` until the first valid frame.
+    last_frame_aspect: f32,
 }
 
 impl PosePipeline {
@@ -555,6 +753,7 @@ impl PosePipeline {
             config,
             max_tracked,
             slots: std::array::from_fn(|_| SlotTrack::new()),
+            claim_gate: ClaimGate::new(),
             slot_frames: [SlotFrame::default(); MAX_TRACKED_BODIES],
             next_scan: Duration::ZERO,
             rr_next: 0,
@@ -576,6 +775,7 @@ impl PosePipeline {
             detections: Vec::new(),
             person_clusters: Vec::with_capacity(MAX_PERSON_CANDIDATES),
             people_detected: 0,
+            last_frame_aspect: 1.0,
         }
     }
 
@@ -628,6 +828,7 @@ impl PosePipeline {
             return Ok(());
         }
         let content = ContentRect::for_frame(frame.width, frame.height);
+        self.last_frame_aspect = dim(frame.width) / dim(frame.height.max(1));
 
         // Square-pad into the reused buffer (taken out so stage methods can
         // borrow it beside &mut self; restored before every return).
@@ -912,6 +1113,7 @@ impl PosePipeline {
     /// configured cap. Newly (re)activated slots are marked `fresh` so their
     /// aux filter cold-starts and their inference jumps the queue.
     fn associate_detections(&mut self, now: Duration, fresh: &mut [bool; MAX_TRACKED_BODIES]) {
+        self.claim_gate.begin_pass(now);
         let mut anchors: [Option<Vec2>; MAX_TRACKED_BODIES] = [None; MAX_TRACKED_BODIES];
         let mut claimable = [false; MAX_TRACKED_BODIES];
         for (i, slot) in self.slots.iter().enumerate() {
@@ -934,6 +1136,12 @@ impl PosePipeline {
         let assigned = assign_slots(&centres[..n], &anchors, &claimable);
         for (c, slot_idx) in assigned.iter().take(n).enumerate() {
             let Some(s) = *slot_idx else { continue };
+            // Only *fresh* claims pass through the gate: an Active match is
+            // an existing track and a Reserved match is the same person
+            // returning — both bypass debounce and denial.
+            if self.slots[s].phase == SlotPhase::Free && !self.claim_gate.approve(centres[c], now) {
+                continue;
+            }
             let slot = &mut self.slots[s];
             match slot.phase {
                 // Already tracked: the candidate is the same person; the
@@ -1042,6 +1250,7 @@ impl PosePipeline {
             ref mut warp_buf,
             ref config,
             ref mut slots,
+            ref mut claim_gate,
             ..
         } = *self;
         let slot = &mut slots[slot_idx];
@@ -1072,6 +1281,15 @@ impl PosePipeline {
         if picked.confidence < gate {
             // Presence collapsed: the person left this crop.
             slot.lose(now);
+            if slot.phase == SlotPhase::Free {
+                // The claim died young at the admission gate — the signature
+                // of a person-shaped static object fooling the detector.
+                // Suppress re-claims at this spot briefly, or the
+                // claim/inference/collapse cycle spins at the scan cadence
+                // (see [`CLAIM_DENY_WINDOW`]). `release()` keeps the anchor,
+                // so it still names the spot here.
+                claim_gate.deny_near(slot.anchor, now);
+            }
             log_slot_loss(slot, slot_idx, "presence collapsed");
             return Ok(());
         }
@@ -1185,6 +1403,7 @@ impl PosePipeline {
     /// Write every slot's mask channel + the slot-partitioned edge list into
     /// the pooled payload (in place; no allocation).
     fn write_payload(&mut self, payload: &mut BodyFramePayload) {
+        payload.frame_aspect = self.last_frame_aspect;
         payload.edges.clear();
         payload.edge_motion.clear();
         for (i, slot) in self.slots.iter().enumerate() {
@@ -1832,13 +2051,29 @@ mod tests {
         BodyFramePayload::new()
     }
 
+    /// First-claim warm-up: the [`ClaimGate`] requires a candidate to be
+    /// sighted on [`CLAIM_MIN_SIGHTINGS`] consecutive detector passes before
+    /// a Free-slot claim, so a pipeline's very first claim needs one seeding
+    /// pass (cold start runs the detector every frame while nothing is
+    /// tracked). Runs that pass at `t` and asserts nothing claimed yet.
+    fn seed_claim_gate(p: &mut PosePipeline, frame: &Frame, t: Duration) {
+        p.process(frame, t, false, None)
+            .expect("claim-gate seeding pass");
+        assert_eq!(
+            p.diagnostics().active_tracks,
+            0,
+            "the first sighting must not claim (CLAIM_MIN_SIGHTINGS)"
+        );
+    }
+
     #[test]
     fn cold_start_detects_then_tracks() {
         let mut p = person_pipeline();
         let mut pl = payload();
         let frame = solid_frame();
 
-        p.process(&frame, Duration::from_millis(0), false, Some(&mut pl))
+        seed_claim_gate(&mut p, &frame, Duration::from_millis(0));
+        p.process(&frame, Duration::from_millis(16), false, Some(&mut pl))
             .expect("frame 1");
         let s0 = &p.slot_frames()[0];
         assert!(s0.present);
@@ -1862,7 +2097,7 @@ mod tests {
 
         // Frame 2: the carried aux-row track skips the detector entirely
         // (one active track, no free capacity scan due yet).
-        p.process(&frame, Duration::from_millis(16), false, Some(&mut pl))
+        p.process(&frame, Duration::from_millis(32), false, Some(&mut pl))
             .expect("frame 2");
         assert!(p.slot_frames()[0].present);
         assert_eq!(p.diagnostics().detector_reason, DetectorRunReason::Tracking);
@@ -1872,9 +2107,10 @@ mod tests {
     fn mask_and_edges_land_in_the_slot0_channel() {
         let mut p = person_pipeline();
         let mut pl = payload();
+        seed_claim_gate(&mut p, &solid_frame(), Duration::from_millis(0));
         p.process(
             &solid_frame(),
-            Duration::from_millis(0),
+            Duration::from_millis(16),
             false,
             Some(&mut pl),
         )
@@ -1893,6 +2129,13 @@ mod tests {
         );
         assert_eq!(pl.edge_slot_counts[0], pl.edges.len());
         assert_eq!(pl.edge_slot_counts[1], 0);
+        // The payload declares the source frame's aspect (64×48 → 4:3) so
+        // mask-UV consumers can restore true screen proportions.
+        assert!(
+            (pl.frame_aspect - 64.0 / 48.0).abs() < 1e-6,
+            "payload carries the camera frame aspect: {}",
+            pl.frame_aspect
+        );
     }
 
     /// (The loss here happens at track age 0 — under `RESERVE_MIN_ACTIVE` — so
@@ -1910,9 +2153,10 @@ mod tests {
             PoseConfig::default(),
         );
         let mut pl = payload();
+        seed_claim_gate(&mut p, &solid_frame(), Duration::from_millis(0));
         p.process(
             &solid_frame(),
-            Duration::from_millis(0),
+            Duration::from_millis(16),
             false,
             Some(&mut pl),
         )
@@ -1924,7 +2168,7 @@ mod tests {
         // Next frame must re-detect (no active track).
         p.process(
             &solid_frame(),
-            Duration::from_millis(16),
+            Duration::from_millis(32),
             false,
             Some(&mut pl),
         )
@@ -1976,25 +2220,30 @@ mod tests {
     fn invalid_frame_reserves_tracks_then_reacquires() {
         let mut p = person_pipeline();
         let good = solid_frame();
-        p.process(&good, Duration::from_millis(0), false, None)
+        seed_claim_gate(&mut p, &good, Duration::from_millis(0));
+        p.process(&good, Duration::from_millis(16), false, None)
             .expect("acquire");
         let bad = Frame {
             width: 10, // inconsistent: no bytes
             ..Frame::default()
         };
-        p.process(&bad, Duration::from_millis(16), false, None)
+        p.process(&bad, Duration::from_millis(32), false, None)
             .expect("invalid frame is not an error");
         assert!(!p.slot_frames()[0].present);
         assert_eq!(
             p.diagnostics().detector_reason,
             DetectorRunReason::InvalidFrame
         );
-        p.process(&good, Duration::from_millis(32), false, None)
-            .expect("reacquire");
+        // The young track freed outright, so the re-acquisition is a fresh
+        // claim: it re-earns the claim gate's two consecutive sightings.
+        p.process(&good, Duration::from_millis(48), false, None)
+            .expect("re-sight");
         assert_eq!(
             p.diagnostics().detector_reason,
             DetectorRunReason::ColdStart
         );
+        p.process(&good, Duration::from_millis(64), false, None)
+            .expect("reacquire");
         // The person lands back in slot 0 (a young track freed by the
         // fast-free rule re-claims the lowest free slot; a mature one would
         // re-bind to its reservation — same outcome either way here).
@@ -2091,7 +2340,8 @@ mod tests {
             PoseConfig::default(),
         );
         let frame = solid_frame();
-        p.process(&frame, Duration::from_millis(0), false, None)
+        seed_claim_gate(&mut p, &frame, Duration::from_millis(0));
+        p.process(&frame, Duration::from_millis(16), false, None)
             .expect("acquire");
         assert_eq!(p.slots[0].phase, SlotPhase::Active);
         // Presence dips into the band: 0.35 ≤ 0.42 < 0.5 — the track holds
@@ -2131,7 +2381,8 @@ mod tests {
             PoseConfig::default(),
         );
         let frame = solid_frame();
-        p.process(&frame, Duration::from_millis(0), false, None)
+        seed_claim_gate(&mut p, &frame, Duration::from_millis(0));
+        p.process(&frame, Duration::from_millis(16), false, None)
             .expect("attempt");
         assert_ne!(
             p.slots[0].phase,
@@ -2166,9 +2417,11 @@ mod tests {
             PoseConfig::default(),
         );
         let good = solid_frame();
-        p.process(&good, Duration::from_millis(0), false, None)
+        seed_claim_gate(&mut p, &good, Duration::from_millis(0));
+        p.process(&good, Duration::from_millis(16), false, None)
             .expect("acquire");
-        // An invalid frame at 700 ms (age ≥ RESERVE_MIN_ACTIVE): reserves.
+        // An invalid frame at 700 ms (age 684 ms ≥ RESERVE_MIN_ACTIVE):
+        // reserves.
         let bad = Frame {
             width: 10,
             ..Frame::default()
@@ -2185,7 +2438,7 @@ mod tests {
             .expect("reacquire");
         assert_eq!(p.slots[0].phase, SlotPhase::Active);
         // …and a loss 50 ms later must STILL reserve: the occupancy's age
-        // carries across the re-acquisition (750 ms > 600 ms), it does not
+        // carries across the re-acquisition (784 ms > 600 ms), it does not
         // restart at the re-acquisition instant.
         *landmark.lock().expect("outputs lock") = low_confidence_landmark_outputs();
         p.process(&good, Duration::from_millis(800), false, None)
@@ -2210,9 +2463,9 @@ mod tests {
     /// later at [`PERSON_C_CENTER`] ≈ 0.875 — 0.31 away from the frozen anchor
     /// (a fresh-slot claim without reckoning) but only ≈ 0.11 from the
     /// reckoned anchor (≈ 0.77). The discriminator is `active_since`: a
-    /// Reserved→Active re-acquisition keeps the original age (here `ZERO`),
-    /// whereas a fresh Free→Active claim would stamp it with the return time
-    /// and light a *different* slot.
+    /// Reserved→Active re-acquisition keeps the original age (here the
+    /// 16 ms claim instant), whereas a fresh Free→Active claim would stamp
+    /// it with the return time and light a *different* slot.
     #[test]
     fn reserved_anchor_dead_reckons_toward_a_moving_return() {
         struct SharedOutputs(std::sync::Arc<std::sync::Mutex<Vec<Tensor>>>);
@@ -2238,9 +2491,10 @@ mod tests {
         let good = solid_frame();
 
         // Acquire the track at the central anchor (≈ 0.518).
-        p.process(&good, ms(0), false, None).expect("acquire");
+        seed_claim_gate(&mut p, &good, ms(0));
+        p.process(&good, ms(16), false, None).expect("acquire");
         assert_eq!(p.slots[0].phase, SlotPhase::Active);
-        assert_eq!(p.slots[0].active_since, Duration::ZERO);
+        assert_eq!(p.slots[0].active_since, ms(16));
 
         // March the tracking ROI steadily rightward to build `anchor_vel`.
         // A wide centre→scale span (150 vs 0 crop px) keeps the carried ROI
@@ -2290,7 +2544,7 @@ mod tests {
         );
         assert_eq!(
             p.slots[0].active_since,
-            Duration::ZERO,
+            ms(16),
             "re-acquisition keeps the original age — not a fresh claim"
         );
         assert!(p.slot_frames()[0].present, "slot 0 is the present body");
@@ -2344,7 +2598,8 @@ mod tests {
         );
         let mut pl = payload();
         let frame = solid_frame();
-        p.process(&frame, Duration::from_millis(0), false, Some(&mut pl))
+        seed_claim_gate(&mut p, &frame, Duration::from_millis(0));
+        p.process(&frame, Duration::from_millis(16), false, Some(&mut pl))
             .expect("frame 1");
         assert_eq!(p.diagnostics().people_detected, 2);
         assert_eq!(p.diagnostics().active_tracks, 2);
@@ -2382,7 +2637,7 @@ mod tests {
         );
 
         // Tracking frames keep both slots without re-detecting.
-        p.process(&frame, Duration::from_millis(16), false, Some(&mut pl))
+        p.process(&frame, Duration::from_millis(32), false, Some(&mut pl))
             .expect("frame 2");
         assert_eq!(p.diagnostics().detector_reason, DetectorRunReason::Tracking);
         assert!(p.slot_frames()[0].present && p.slot_frames()[1].present);
@@ -2402,7 +2657,8 @@ mod tests {
                 ..PoseConfig::default()
             },
         );
-        p.process(&solid_frame(), Duration::from_millis(0), false, None)
+        seed_claim_gate(&mut p, &solid_frame(), Duration::from_millis(0));
+        p.process(&solid_frame(), Duration::from_millis(16), false, None)
             .expect("frame");
         assert_eq!(p.diagnostics().people_detected, 2, "both detected");
         assert_eq!(p.diagnostics().active_tracks, 1, "but only one tracked");
@@ -2422,15 +2678,16 @@ mod tests {
             PoseConfig::default(),
         );
         let frame = solid_frame();
+        seed_claim_gate(&mut p, &frame, Duration::from_millis(0));
         // Frame 1: three fresh tracks, budget 2 → two run now, one is active
         // but not yet inferred.
-        p.process(&frame, Duration::from_millis(0), false, None)
+        p.process(&frame, Duration::from_millis(16), false, None)
             .expect("frame 1");
         assert_eq!(p.diagnostics().active_tracks, 3);
         let present_1 = p.slot_frames().iter().filter(|s| s.present).count();
         assert_eq!(present_1, 2, "budget: two inferences on frame 1");
         // Frame 2: the round-robin reaches the remaining slot; all present.
-        p.process(&frame, Duration::from_millis(16), false, None)
+        p.process(&frame, Duration::from_millis(32), false, None)
             .expect("frame 2");
         let present_2 = p.slot_frames().iter().filter(|s| s.present).count();
         assert_eq!(present_2, 3, "round-robin covers every active slot");
@@ -2441,7 +2698,7 @@ mod tests {
             "slot 2 tracks person C: {x2}"
         );
         // Steady state stays all-present (held frames for skipped slots).
-        p.process(&frame, Duration::from_millis(32), false, None)
+        p.process(&frame, Duration::from_millis(48), false, None)
             .expect("frame 3");
         assert_eq!(p.slot_frames().iter().filter(|s| s.present).count(), 3);
     }
@@ -2449,8 +2706,9 @@ mod tests {
     #[test]
     fn discovery_scan_admits_a_second_person_mid_track() {
         // Start with one person, then the detector begins reporting two: the
-        // periodic scan must claim a slot for the newcomer within the scan
-        // interval, without disturbing slot 0.
+        // periodic scan must claim a slot for the newcomer within two scan
+        // intervals (sighting + gate-cleared claim), without disturbing
+        // slot 0.
         struct SharedInference(std::sync::Arc<std::sync::Mutex<Vec<Tensor>>>);
         impl ModelInference for SharedInference {
             fn run(
@@ -2466,23 +2724,38 @@ mod tests {
         let outputs = std::sync::Arc::new(std::sync::Mutex::new(two_person_detector_outputs(
             4.0, -100.0, // person B far below threshold at first
         )));
+        // The wide centre→scale aux span keeps the incumbent's carried ROI
+        // alive across the 300+ ms scan gaps (the base fixture's narrow span
+        // collapses it into the young-edge-reserve path, which would turn
+        // the later scans into cold starts — same reason as
+        // `established_track_holds_through_the_presence_release_band`).
         let mut p = PosePipeline::new(
             Box::new(SharedInference(std::sync::Arc::clone(&outputs))),
             Box::new(StaticInference {
-                outputs: confident_landmark_outputs(),
+                outputs: confident_landmark_outputs_aux(150.0, 128.0, 150.0, 0.0),
             }),
             PoseConfig::default(),
         );
         let frame = solid_frame();
-        p.process(&frame, Duration::from_millis(0), false, None)
+        seed_claim_gate(&mut p, &frame, Duration::from_millis(0));
+        p.process(&frame, Duration::from_millis(16), false, None)
             .expect("frame 1");
         assert_eq!(p.diagnostics().active_tracks, 1);
 
         // Person B walks in.
         *outputs.lock().expect("outputs lock") = two_person_detector_outputs(4.0, 4.0);
-        // Just after the scan interval elapses, the detector re-runs.
+        // Just after the scan interval elapses, the detector re-runs and
+        // sights the newcomer; the claim gate admits them one scan later
+        // (two consecutive detector-pass sightings).
         p.process(&frame, Duration::from_millis(350), false, None)
             .expect("scan frame");
+        assert_eq!(p.diagnostics().detector_reason, DetectorRunReason::Scan);
+        assert!(
+            !p.slot_frames()[1].present,
+            "first sighting must not claim the newcomer"
+        );
+        p.process(&frame, Duration::from_millis(700), false, None)
+            .expect("second scan frame");
         assert_eq!(p.diagnostics().detector_reason, DetectorRunReason::Scan);
         assert!(
             p.slot_frames()[0].present && p.slot_frames()[1].present,
@@ -2695,9 +2968,11 @@ mod tests {
         };
         let mut on = make(false);
         let mut off = make(true);
-        on.process(&solid_frame(), Duration::from_millis(0), false, None)
+        seed_claim_gate(&mut on, &solid_frame(), Duration::from_millis(0));
+        seed_claim_gate(&mut off, &solid_frame(), Duration::from_millis(0));
+        on.process(&solid_frame(), Duration::from_millis(16), false, None)
             .expect("refine on");
-        off.process(&solid_frame(), Duration::from_millis(0), false, None)
+        off.process(&solid_frame(), Duration::from_millis(16), false, None)
             .expect("refine off");
         let r_on = &on.slot_frames()[0];
         let r_off = &off.slot_frames()[0];
@@ -2707,6 +2982,145 @@ mod tests {
             "refinement must move landmark 0 (on={}, off={})",
             r_on.landmarks[0].pos.x,
             r_off.landmarks[0].pos.x
+        );
+    }
+
+    /// Landmark stub that replays fixed outputs while counting invocations —
+    /// lets the [`ClaimGate`] tests assert exactly how many landmark
+    /// inferences a claim pattern spends.
+    struct CountingInference {
+        outputs: Vec<Tensor>,
+        calls: std::sync::Arc<AtomicU32>,
+    }
+
+    impl ModelInference for CountingInference {
+        fn run(&mut self, _input: &Tensor, out: &mut Vec<Tensor>) -> Result<(), InferenceError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            out.clone_from(&self.outputs);
+            Ok(())
+        }
+    }
+
+    /// The claim debounce, positive path: a candidate's first detector
+    /// sighting seeds but must not claim; the second consecutive sighting
+    /// claims. On the every-frame cold-start cadence this costs a real
+    /// person one frame.
+    #[test]
+    fn first_sighting_seeds_and_second_consecutive_sighting_claims() {
+        let mut p = person_pipeline();
+        let frame = solid_frame();
+        p.process(&frame, Duration::from_millis(0), false, None)
+            .expect("pass 1");
+        assert_eq!(
+            p.diagnostics().active_tracks,
+            0,
+            "first sighting must not claim"
+        );
+        assert!(!p.slot_frames()[0].present);
+        p.process(&frame, Duration::from_millis(16), false, None)
+            .expect("pass 2");
+        assert_eq!(
+            p.diagnostics().active_tracks,
+            1,
+            "second consecutive sighting claims"
+        );
+        assert!(p.slot_frames()[0].present);
+    }
+
+    /// A detection flickering on alternating detector passes (a
+    /// person-shaped object grazing the score threshold) never accumulates
+    /// the consecutive sightings a claim requires — and therefore never
+    /// spends a landmark inference. The failing landmark stub proves the
+    /// stage is never invoked.
+    #[test]
+    fn flickering_detection_never_claims_or_runs_landmarks() {
+        struct SharedInference(std::sync::Arc<std::sync::Mutex<Vec<Tensor>>>);
+        impl ModelInference for SharedInference {
+            fn run(
+                &mut self,
+                _input: &Tensor,
+                out: &mut Vec<Tensor>,
+            ) -> Result<(), InferenceError> {
+                out.clone_from(&self.0.lock().expect("outputs lock"));
+                Ok(())
+            }
+        }
+        let det = std::sync::Arc::new(std::sync::Mutex::new(hot_person_detector_outputs()));
+        let mut p = PosePipeline::new(
+            Box::new(SharedInference(std::sync::Arc::clone(&det))),
+            Box::new(FailingInference), // landmark stage must never run
+            PoseConfig::default(),
+        );
+        let frame = solid_frame();
+        // Ten alternating hot/empty passes: hits restart on every gap.
+        for i in 0..10_u64 {
+            *det.lock().expect("outputs lock") = if i % 2 == 0 {
+                hot_person_detector_outputs()
+            } else {
+                empty_detector_outputs()
+            };
+            p.process(&frame, Duration::from_millis(i * 16), false, None)
+                .expect("flicker pass");
+            assert_eq!(
+                p.diagnostics().active_tracks,
+                0,
+                "a flickering detection must never claim (pass {i})"
+            );
+        }
+    }
+
+    /// The collapse cooldown: a young claim that dies at the fresh-admission
+    /// presence gate (the coat-rack signature — the detector proposes it
+    /// every pass, the landmark model finds nobody) suppresses re-claims at
+    /// that spot for [`CLAIM_DENY_WINDOW`], throttling the
+    /// claim/inference/collapse spin; once the window lapses the spot may
+    /// try again.
+    #[test]
+    fn young_presence_collapse_suppresses_reclaims_at_that_spot() {
+        let calls = std::sync::Arc::new(AtomicU32::new(0));
+        let mut p = PosePipeline::new(
+            Box::new(StaticInference {
+                outputs: hot_person_detector_outputs(),
+            }),
+            Box::new(CountingInference {
+                outputs: low_confidence_landmark_outputs(),
+                calls: std::sync::Arc::clone(&calls),
+            }),
+            PoseConfig::default(),
+        );
+        let frame = solid_frame();
+        // Seed + claim; the claim's landmark inference collapses (young →
+        // freed) and records the denial.
+        p.process(&frame, Duration::from_millis(0), false, None)
+            .expect("seed");
+        p.process(&frame, Duration::from_millis(16), false, None)
+            .expect("claim + collapse");
+        assert_eq!(calls.load(Ordering::Relaxed), 1, "one inference spent");
+        assert_eq!(p.slots[0].phase, SlotPhase::Free, "young collapse frees");
+        // Inside the deny window the spot cannot re-claim, so no further
+        // landmark inference is spent no matter how often the detector
+        // proposes it.
+        for t in (100..1900).step_by(300) {
+            p.process(&frame, Duration::from_millis(t), false, None)
+                .expect("denied pass");
+            assert_eq!(p.diagnostics().active_tracks, 0, "denied at t={t}");
+        }
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "no inference spent while the spot is denied"
+        );
+        // After CLAIM_DENY_WINDOW lapses (measured from the collapse at
+        // 16 ms) the spot may claim again: two consecutive sightings, then
+        // the second inference.
+        p.process(&frame, Duration::from_millis(2100), false, None)
+            .expect("re-seed");
+        p.process(&frame, Duration::from_millis(2116), false, None)
+            .expect("re-claim");
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "the lapsed window permits exactly one more claim attempt"
         );
     }
 }

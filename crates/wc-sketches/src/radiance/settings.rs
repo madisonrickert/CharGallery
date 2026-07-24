@@ -75,7 +75,7 @@ pub struct RadianceSettings {
     /// GPU particle budget. The storage buffer and billboard mesh are sized
     /// once at spawn, so this requires a restart (reload fade) to apply.
     #[setting(
-        default = 120_000.0_f32,
+        default = 130_000.0_f32,
         min = 10_000.0_f32,
         max = 300_000.0_f32,
         step = 10_000.0_f32,
@@ -90,7 +90,7 @@ pub struct RadianceSettings {
     /// Baseline emission: the per-second respawn pressure on dead particles
     /// (scaled by the bass drive). 0 = no new particles.
     #[setting(
-        default = 0.5_f32,
+        default = 0.06_f32,
         min = 0.0_f32,
         max = 1.0_f32,
         step = 0.01_f32,
@@ -104,7 +104,7 @@ pub struct RadianceSettings {
     /// Curl-noise flow advection speed in world px/s (scaled by the highs
     /// drive). The primary "how alive is the aura" knob.
     #[setting(
-        default = 40.0_f32,
+        default = 160.0_f32,
         min = 0.0_f32,
         max = 400.0_f32,
         step = 5.0_f32,
@@ -118,7 +118,7 @@ pub struct RadianceSettings {
     /// Constant upward acceleration in world px/s² — the flame-like rise
     /// (pulsed by the bass drive).
     #[setting(
-        default = 135.0_f32,
+        default = 0.0_f32,
         min = 0.0_f32,
         max = 300.0_f32,
         step = 5.0_f32,
@@ -147,7 +147,7 @@ pub struct RadianceSettings {
     /// the silhouette so the aura rises in licking tongues instead of a
     /// uniform sheet. 0 = uniform buoyancy (the old look).
     #[setting(
-        default = 0.65_f32,
+        default = 0.0_f32,
         min = 0.0_f32,
         max = 1.0_f32,
         step = 0.05_f32,
@@ -162,7 +162,7 @@ pub struct RadianceSettings {
     /// particles on audio onsets (bright streaks fired along the silhouette
     /// normal). 0 disables the shooting-spark layer.
     #[setting(
-        default = 0.6_f32,
+        default = 1.0_f32,
         min = 0.0_f32,
         max = 1.0_f32,
         step = 0.05_f32,
@@ -199,7 +199,7 @@ pub struct RadianceSettings {
     /// of the segmented silhouette, so at higher bias a swept fan sheds fire
     /// along its arc. Live-tunable at the venue.
     #[setting(
-        default = 0.5_f32,
+        default = 1.0_f32,
         min = 0.0_f32,
         max = 1.0_f32,
         step = 0.05_f32,
@@ -217,7 +217,7 @@ pub struct RadianceSettings {
     /// so contact glow and the flare lane keep sampling the field and any
     /// one lane can be A/B'd alone.
     #[setting(
-        default = 900.0_f32,
+        default = 1850.0_f32,
         min = 0.0_f32,
         max = 3000.0_f32,
         step = 50.0_f32,
@@ -231,7 +231,7 @@ pub struct RadianceSettings {
     /// Repel influence radius outside the boundary, world px (the falloff
     /// reaches zero here; inside the body the force is always full).
     #[setting(
-        default = 70.0_f32,
+        default = 16.0_f32,
         min = 1.0_f32,
         max = 300.0_f32,
         step = 5.0_f32,
@@ -246,9 +246,9 @@ pub struct RadianceSettings {
     /// against the silhouette boundary (falloff-weighted — the
     /// bioluminescent "touch lights the water" response). 0 disables.
     #[setting(
-        default = 1.2_f32,
+        default = 8.0_f32,
         min = 0.0_f32,
-        max = 8.0_f32,
+        max = 12.0_f32,
         step = 0.1_f32,
         label = "Contact glow",
         section = "Simulation",
@@ -261,9 +261,9 @@ pub struct RadianceSettings {
     /// exterior distance (the in-medium flare-wave, the retired contour
     /// overlay's successor). 0 disables the flare lane.
     #[setting(
-        default = 3.0_f32,
+        default = 12.0_f32,
         min = 0.0_f32,
-        max = 12.0_f32,
+        max = 18.0_f32,
         step = 0.25_f32,
         label = "Flare gain",
         section = "Simulation",
@@ -276,7 +276,7 @@ pub struct RadianceSettings {
     /// (`pulse::PULSE_WIDTH_PX`'s heritage — the retired overlay's ring
     /// width).
     #[setting(
-        default = 60.0_f32,
+        default = 150.0_f32,
         min = 10.0_f32,
         max = 200.0_f32,
         step = 5.0_f32,
@@ -291,7 +291,7 @@ pub struct RadianceSettings {
     /// (emission multiplier + outward kick on each beat rising edge). 0
     /// disables the burst lane.
     #[setting(
-        default = 1.0_f32,
+        default = 3.2_f32,
         min = 0.0_f32,
         max = 4.0_f32,
         step = 0.1_f32,
@@ -321,7 +321,7 @@ pub struct RadianceSettings {
     /// same locally-weighted coupling that pushes particles near a fast limb
     /// also lights them (disturbance is luminous). 0 disables.
     #[setting(
-        default = 0.8_f32,
+        default = 2.95_f32,
         min = 0.0_f32,
         max = 4.0_f32,
         step = 0.05_f32,
@@ -332,12 +332,65 @@ pub struct RadianceSettings {
     #[serde(default = "default_motion_glow")]
     pub motion_glow: f32,
 
+    /// Curl-noise spatial frequency, radians per world px: higher = smaller,
+    /// tighter vortices on screen. The pre-setting hardwired value was 0.012
+    /// (~520 px swirl wavelength); the 0.022 default (~290 px) reflects the
+    /// 2026-07-24 calibration note that the vortices read too large on the
+    /// installation screen.
+    #[setting(
+        default = 0.022_f32,
+        min = 0.004_f32,
+        max = 0.06_f32,
+        step = 0.002_f32,
+        label = "Vortex scale",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_curl_scale")]
+    pub curl_scale: f32,
+
+    /// Time-evolution speed of the curl-noise field: a multiplier on the
+    /// per-octave phase drift (`CURL_DRIFTS` in `simulate.wgsl`), so the
+    /// vortex pattern itself churns and reforms instead of only advecting
+    /// particles through a near-frozen field. 1.0 = the pre-setting drift
+    /// rate (a full phase cycle in ~48 s, visually near-static); the 3.0
+    /// default cycles in ~16 s, a visible slow churn. 0 freezes the field.
+    #[setting(
+        default = 3.0_f32,
+        min = 0.0_f32,
+        max = 8.0_f32,
+        step = 0.25_f32,
+        label = "Vortex evolution",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_curl_evolve")]
+    pub curl_evolve: f32,
+
+    /// Limb-impulse force coupling: gain on the acceleration a moving limb
+    /// imparts to nearby particles (the motion-driven push, distinct from
+    /// the ambient curl flow). The pre-setting hardwired value was 6.0; the
+    /// 8.0 default nudges the mix further toward motion-driven particles per
+    /// the 2026-07-24 calibration. 0 disables the limb force entirely
+    /// (particles ride only flow, buoyancy, and repel).
+    #[setting(
+        default = 8.0_f32,
+        min = 0.0_f32,
+        max = 16.0_f32,
+        step = 0.5_f32,
+        label = "Motion coupling",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_impulse_coupling")]
+    pub impulse_coupling: f32,
+
     /// Per-body hue spread, in fractions of a full hue turn per slot: each
     /// tracked dancer's color identity is the palette hue rotated by
     /// `slot × spread`, so multiple dancers read as distinct-but-harmonious
     /// (0.13 ≈ 47° apart). 0 = every body shares the palette hue.
     #[setting(
-        default = 0.13_f32,
+        default = 0.19_f32,
         min = 0.0_f32,
         max = 0.35_f32,
         step = 0.01_f32,
@@ -352,7 +405,7 @@ pub struct RadianceSettings {
     /// all tracked bodies (the shader's fixed capacity is 12; see
     /// `sparkle::MAX_SPARKLES`).
     #[setting(
-        default = 10_u32,
+        default = 8_u32,
         min = 2_u32,
         max = 12_u32,
         step = 1_u32,
@@ -365,7 +418,7 @@ pub struct RadianceSettings {
 
     /// Aura gradient palette.
     #[setting(
-        default = RadiancePalette::Prism,
+        default = RadiancePalette::Ember,
         ty = Enum,
         label = "Palette",
         section = "Look",
@@ -376,7 +429,7 @@ pub struct RadianceSettings {
 
     /// Silhouette fill intensity: strength of the dark glassy body fill.
     #[setting(
-        default = 0.8_f32,
+        default = 0.95_f32,
         min = 0.0_f32,
         max = 2.0_f32,
         step = 0.05_f32,
@@ -389,9 +442,9 @@ pub struct RadianceSettings {
 
     /// Emissive rim brightness in the mask's edge band (HDR — feeds bloom).
     #[setting(
-        default = 1.2_f32,
+        default = 4.0_f32,
         min = 0.0_f32,
-        max = 4.0_f32,
+        max = 6.0_f32,
         step = 0.05_f32,
         label = "Rim glow",
         section = "Look",
@@ -411,14 +464,18 @@ pub struct RadianceSettings {
     #[serde(default = "default_mirror")]
     pub mirror: bool,
 
-    /// Fit the square body mask to the window **height** (aspect-correct,
-    /// centred) instead of stretching it to fill the whole window. **On by
-    /// default:** the mask is square, so filling the whole window rect distorts
-    /// the dancer on any non-square display — roughly 1.8x too wide on a 16:9
-    /// landscape screen, 1.8x too tall on a 9:16 portrait screen. With this on
-    /// the dancer keeps its proportions; the aura fills the space to either side
-    /// (landscape) or is cropped at the sides (portrait). Turn it off for the
-    /// original full-window-stretch look.
+    /// Fit the dancer to the window **height** at the *camera's* true
+    /// proportions (a centred `height·camera_aspect × height` rect —
+    /// aspect-correct zoom/crop) instead of stretching the body mask to fill
+    /// the whole window. The mask's unit square is the camera frame squished
+    /// square (each axis content-normalized independently), so "fit" must
+    /// un-squish by the camera aspect — which the mask writer stamps on
+    /// `SilhouetteEdges` — not treat the mask as square. **On by default:**
+    /// the dancer keeps true proportions on every display; when the window
+    /// and camera aspects match, this is identical to the stretch. Turn it
+    /// off for the full-window-stretch look, which distorts the dancer
+    /// whenever the window aspect differs from the camera's (e.g. a portrait
+    /// install fed by a landscape camera).
     #[setting(
         default = true,
         label = "Fit dancer to height",
@@ -449,7 +506,7 @@ pub struct RadianceSettings {
     /// fastest-oscillating limb and its mirror partner. Scales the glint
     /// brightness; 0 disables the pair.
     #[setting(
-        default = 1.0_f32,
+        default = 1.9_f32,
         min = 0.0_f32,
         max = 3.0_f32,
         step = 0.05_f32,
@@ -464,7 +521,7 @@ pub struct RadianceSettings {
     /// accelerates the phase on top of this base rate (see
     /// `bake_radiance_sim`); 0 pins the palette's original hues.
     #[setting(
-        default = 0.02_f32,
+        default = 0.06_f32,
         min = 0.0_f32,
         max = 0.2_f32,
         step = 0.005_f32,
@@ -478,7 +535,7 @@ pub struct RadianceSettings {
     /// Master scale on every audio→visual coupling (emission, buoyancy,
     /// turbulence, burst, intensity). 0 = motion-drive only.
     #[setting(
-        default = 1.0_f32,
+        default = 1.15_f32,
         min = 0.0_f32,
         max = 3.0_f32,
         step = 0.05_f32,
@@ -673,70 +730,79 @@ impl wc_core::sketch::SketchLifecycle for RadianceSettings {
 // Per-field serde defaults. Values MUST match the `#[setting(default = ...)]`
 // attributes above; update both sites together.
 fn default_particle_count() -> f32 {
-    120_000.0
+    130_000.0
 }
 fn default_emission_rate() -> f32 {
-    0.5
+    0.06
 }
 fn default_flow_strength() -> f32 {
-    40.0
+    160.0
 }
 fn default_buoyancy() -> f32 {
-    135.0
+    0.0
 }
 fn default_curl_octaves() -> u32 {
     3
 }
 fn default_tongue_strength() -> f32 {
-    0.65
+    0.0
 }
 fn default_ejecta_amount() -> f32 {
-    0.6
+    1.0
 }
 fn default_background_subdue() -> f32 {
     0.5
 }
 fn default_edge_motion_bias() -> f32 {
-    0.5
+    1.0
 }
 fn default_repel_strength() -> f32 {
-    900.0
+    1850.0
 }
 fn default_repel_radius() -> f32 {
-    70.0
+    16.0
 }
 fn default_contact_glow() -> f32 {
-    1.2
+    8.0
 }
 fn default_flare_gain() -> f32 {
-    3.0
+    12.0
 }
 fn default_flare_band() -> f32 {
-    60.0
+    150.0
 }
 fn default_burst_scale() -> f32 {
-    1.0
+    3.2
 }
 fn default_burst_boost_cap() -> f32 {
     4.0
 }
 fn default_motion_glow() -> f32 {
-    0.8
+    2.95
+}
+fn default_curl_scale() -> f32 {
+    0.022
+}
+fn default_curl_evolve() -> f32 {
+    3.0
+}
+fn default_impulse_coupling() -> f32 {
+    8.0
 }
 fn default_hue_spread() -> f32 {
-    0.13
+    0.19
 }
 fn default_sparkle_count() -> u32 {
-    10
+    8
 }
 fn default_palette() -> RadiancePalette {
-    RadiancePalette::Prism
+    RadiancePalette::Ember
 }
 fn default_silhouette_fill() -> f32 {
-    0.8
+    0.95
 }
 fn default_rim_glow() -> f32 {
-    1.2
+    4.0
 }
 fn default_mirror() -> bool {
     true
@@ -745,16 +811,16 @@ fn default_fit_to_height() -> bool {
     true
 }
 fn default_audio_sensitivity() -> f32 {
-    1.0
+    1.15
 }
 fn default_pulse_intensity() -> f32 {
     1.0
 }
 fn default_sparkle_intensity() -> f32 {
-    1.0
+    1.9
 }
 fn default_hue_cycle_speed() -> f32 {
-    0.02
+    0.06
 }
 fn default_audio_input_device() -> String {
     String::new()
@@ -810,18 +876,18 @@ mod tests {
         assert!((parsed.emission_rate - 0.7).abs() < 1e-6);
         assert!(!parsed.mirror);
         assert!(
-            (parsed.particle_count - 120_000.0).abs() < 1e-6,
+            (parsed.particle_count - 130_000.0).abs() < 1e-6,
             "sibling default"
         );
         assert!(
-            (parsed.flow_strength - 40.0).abs() < 1e-6,
+            (parsed.flow_strength - 160.0).abs() < 1e-6,
             "sibling default"
         );
         assert!(
-            (parsed.edge_motion_bias - 0.5).abs() < 1e-6,
+            (parsed.edge_motion_bias - 1.0).abs() < 1e-6,
             "sibling default"
         );
-        assert_eq!(parsed.palette, RadiancePalette::Prism, "sibling default");
+        assert_eq!(parsed.palette, RadiancePalette::Ember, "sibling default");
         assert!(
             parsed.audio_input_device.is_empty(),
             "missing device falls back to system default"
@@ -849,6 +915,9 @@ mod tests {
         assert!((d.burst_scale - default_burst_scale()).abs() < f32::EPSILON);
         assert!((d.burst_boost_cap - default_burst_boost_cap()).abs() < f32::EPSILON);
         assert!((d.motion_glow - default_motion_glow()).abs() < f32::EPSILON);
+        assert!((d.curl_scale - default_curl_scale()).abs() < f32::EPSILON);
+        assert!((d.curl_evolve - default_curl_evolve()).abs() < f32::EPSILON);
+        assert!((d.impulse_coupling - default_impulse_coupling()).abs() < f32::EPSILON);
         assert!((d.hue_spread - default_hue_spread()).abs() < f32::EPSILON);
         assert_eq!(d.sparkle_count, default_sparkle_count());
         assert_eq!(d.palette, default_palette());

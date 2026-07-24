@@ -327,6 +327,15 @@ pub struct SilhouetteEdges {
     pub slot_counts: [usize; MAX_TRACKED_BODIES],
     /// Bumped on each new body frame so consumers can skip re-upload.
     pub generation: u64,
+    /// Width/height aspect ratio of the source frame whose content was
+    /// normalized into mask-UV space. `ContentRect::to_content_norm` divides
+    /// each axis out independently, so the `[0,1]²` mask is the camera frame
+    /// *squished to a square*; consumers mapping mask UV back to screen
+    /// proportions must multiply x by this to undo the squish. The camera
+    /// worker stamps the real frame aspect; synthetic writers (the attract
+    /// phantom, the debug dancer) author square-space content and stamp
+    /// `1.0`, which is also the default before any frame arrives.
+    pub frame_aspect: f32,
 }
 
 impl Default for SilhouetteEdges {
@@ -336,6 +345,7 @@ impl Default for SilhouetteEdges {
             motion: Vec::with_capacity(MAX_EDGE_POINTS),
             slot_counts: [0; MAX_TRACKED_BODIES],
             generation: 0,
+            frame_aspect: 1.0,
         }
     }
 }

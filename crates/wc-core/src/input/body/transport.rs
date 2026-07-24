@@ -49,6 +49,11 @@ pub struct BodyFramePayload {
     pub edge_motion: Vec<f32>,
     /// Per-slot edge counts partitioning `edges` (ascending slot order).
     pub edge_slot_counts: [usize; MAX_TRACKED_BODIES],
+    /// Width/height aspect ratio of the camera frame this payload's mask and
+    /// edges were content-normalized from (`1.0` until the first valid frame).
+    /// Consumers need it to undo the per-axis squish of mask-UV space when
+    /// mapping back to screen proportions.
+    pub frame_aspect: f32,
 }
 
 impl BodyFramePayload {
@@ -60,6 +65,7 @@ impl BodyFramePayload {
             edges: Vec::with_capacity(MAX_EDGE_POINTS),
             edge_motion: Vec::with_capacity(MAX_EDGE_POINTS),
             edge_slot_counts: [0; MAX_TRACKED_BODIES],
+            frame_aspect: 1.0,
         }
     }
 }

@@ -39,8 +39,10 @@ pub const MAX_PULSES: usize = 6;
 /// next beat lands at dance tempi, so multiple flare fronts sweep the medium
 /// at once.
 pub const PULSE_SPEED_PX_S: f32 = 650.0;
-/// Default flare-band half-width, world px — the Gaussian half-band of the
-/// in-medium flare front. Task 3's `flare_band` Dev default inherits it.
+/// Original flare-band half-width, world px — the Gaussian half-band the
+/// retired contour overlay used. Kept as the heritage reference; the live
+/// `flare_band` Dev setting default has since been calibrated wider
+/// (2026-07-24: 150 px on the installation screen).
 pub const PULSE_WIDTH_PX: f32 = 60.0;
 /// Seconds until a wave slot is dead. The CPU age-decay (`exp(-age · 1.8)` in
 /// [`advance_beat_waves`]) dims the strength smoothly to near-zero well before

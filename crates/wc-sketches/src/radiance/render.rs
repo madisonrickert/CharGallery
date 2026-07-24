@@ -375,6 +375,7 @@ pub fn drive_radiance_materials(
     state: Res<'_, RadianceState>,
     fade: Res<'_, ScreensaverFade>,
     body: Option<Res<'_, wc_core::input::body::BodyTrackingState>>,
+    edges: Option<Res<'_, wc_core::input::body::SilhouetteEdges>>,
     particle_roots: Query<
         '_,
         '_,
@@ -416,13 +417,17 @@ pub fn drive_radiance_materials(
         settings.mask_threshold,
         f32::from(u8::from(settings.mirror)),
     );
-    // `fit_to_height` maps the square mask to a centred, height-tall square so
-    // the dancer keeps its proportions on non-square displays; the silhouette
-    // shader remaps its mask sample by this aspect factor (`window_w/window_h`;
-    // 1.0 = the full-window stretch). Matches `uv_to_world` in the sim baker so
+    // `fit_to_height` maps the aspect-squished mask square onto a centred
+    // `height·cam_aspect × height` rect so the dancer keeps true proportions
+    // (see the sim baker's `uv_to_world` comment — mask UV is the camera
+    // frame squished square, and the writer of the mask stamps its source
+    // aspect on `SilhouetteEdges`). The silhouette shader remaps its mask
+    // sample u by this factor: `window_w / (window_h · frame_aspect)`; 1.0 =
+    // the full-window stretch. Matches `uv_to_world` in the sim baker so
     // fill, rim, and particle spawns agree.
+    let mask_frame_aspect = edges.map_or(1.0, |e| e.frame_aspect.max(0.1));
     let fit_aspect = if settings.fit_to_height {
-        window.width() / window.height().max(1.0)
+        window.width() / (window.height() * mask_frame_aspect).max(1.0)
     } else {
         1.0
     };
