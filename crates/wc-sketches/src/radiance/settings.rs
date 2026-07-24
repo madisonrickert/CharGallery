@@ -256,6 +256,66 @@ pub struct RadianceSettings {
     #[serde(default = "default_contact_glow")]
     pub contact_glow: f32,
 
+    /// Flare gain: brightness added as a beat wave front passes a particle's
+    /// exterior distance (the in-medium flare-wave, the retired contour
+    /// overlay's successor). 0 disables the flare lane.
+    #[setting(
+        default = 3.0_f32,
+        min = 0.0_f32,
+        max = 12.0_f32,
+        step = 0.25_f32,
+        label = "Flare gain",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_flare_gain")]
+    pub flare_gain: f32,
+
+    /// Flare band: Gaussian half-width of the flare front, world px
+    /// (`pulse::PULSE_WIDTH_PX`'s heritage — the retired overlay's ring
+    /// width).
+    #[setting(
+        default = 60.0_f32,
+        min = 10.0_f32,
+        max = 200.0_f32,
+        step = 5.0_f32,
+        label = "Flare band (px)",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_flare_band")]
+    pub flare_band: f32,
+
+    /// Beat burst scale: master gain on the density-adaptive beat burst
+    /// (emission multiplier + outward kick on each beat rising edge). 0
+    /// disables the burst lane.
+    #[setting(
+        default = 1.0_f32,
+        min = 0.0_f32,
+        max = 4.0_f32,
+        step = 0.1_f32,
+        label = "Burst scale",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_burst_scale")]
+    pub burst_scale: f32,
+
+    /// Ceiling on the inverse-density burst boost: a beat from near-empty
+    /// water births up to this many times the dense-field burst (the
+    /// legibility floor).
+    #[setting(
+        default = 4.0_f32,
+        min = 1.0_f32,
+        max = 8.0_f32,
+        step = 0.5_f32,
+        label = "Burst boost cap",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_burst_boost_cap")]
+    pub burst_boost_cap: f32,
+
     /// Per-body hue spread, in fractions of a full hue turn per slot: each
     /// tracked dancer's color identity is the palette hue rotated by
     /// `slot × spread`, so multiple dancers read as distinct-but-harmonious
@@ -629,6 +689,18 @@ fn default_repel_radius() -> f32 {
 fn default_contact_glow() -> f32 {
     1.2
 }
+fn default_flare_gain() -> f32 {
+    3.0
+}
+fn default_flare_band() -> f32 {
+    60.0
+}
+fn default_burst_scale() -> f32 {
+    1.0
+}
+fn default_burst_boost_cap() -> f32 {
+    4.0
+}
 fn default_hue_spread() -> f32 {
     0.13
 }
@@ -750,6 +822,10 @@ mod tests {
         assert!((d.repel_strength - default_repel_strength()).abs() < f32::EPSILON);
         assert!((d.repel_radius - default_repel_radius()).abs() < f32::EPSILON);
         assert!((d.contact_glow - default_contact_glow()).abs() < f32::EPSILON);
+        assert!((d.flare_gain - default_flare_gain()).abs() < f32::EPSILON);
+        assert!((d.flare_band - default_flare_band()).abs() < f32::EPSILON);
+        assert!((d.burst_scale - default_burst_scale()).abs() < f32::EPSILON);
+        assert!((d.burst_boost_cap - default_burst_boost_cap()).abs() < f32::EPSILON);
         assert!((d.hue_spread - default_hue_spread()).abs() < f32::EPSILON);
         assert_eq!(d.sparkle_count, default_sparkle_count());
         assert_eq!(d.palette, default_palette());

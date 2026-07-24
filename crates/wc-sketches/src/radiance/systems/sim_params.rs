@@ -25,6 +25,7 @@ use wc_core::input::body::{
 use crate::radiance::compute::sim_params::{
     RadianceImpulse, RadianceSimParams, RadianceSimParamsGpu, MAX_IMPULSES,
 };
+use crate::radiance::pulse::BEAT_EDGE;
 use crate::radiance::settings::RadianceSettings;
 use crate::radiance::visibility::VisibilityLatch;
 
@@ -162,6 +163,14 @@ pub struct RadianceState {
     /// `crate::radiance::visibility`): marginal landmark visibility holds
     /// its last gate decision instead of strobing the impulse layer.
     pub impulse_latch: [[VisibilityLatch; IMPULSE_SOURCE_COUNT]; MAX_TRACKED_BODIES],
+    /// Previous frame's `beat_confidence` — the density-adaptive burst's
+    /// rising-edge detector (same `BEAT_EDGE` bookkeeping as the wave
+    /// clock's `step_pulses`).
+    pub prev_beat: f32,
+    /// Deterministic expected-alive estimate (see [`expected_alive_step`]):
+    /// the density signal the beat burst adapts to. An expectation, not a
+    /// readback — the GPU owns the real births/deaths.
+    pub est_alive: f32,
 }
 
 /// The neutral [`AudioAnalysis`] used when the resource is absent (headless
@@ -272,6 +281,33 @@ pub fn band_aggregates(audio: &AudioAnalysis) -> (f32, f32) {
     (bass, highs)
 }
 
+/// One step of the deterministic expected-alive recurrence: dead slots win
+/// respawns at `emission_prob`, alive particles die at `1/mean_lifespan`.
+/// An expectation, not a count — the GPU owns the real births/deaths — but
+/// bias-stable, which is all the burst boost needs (see the spec's
+/// density-adaptive burst).
+#[must_use]
+pub fn expected_alive_step(
+    est: f32,
+    emission_prob: f32,
+    particle_count: f32,
+    dt: f32,
+    mean_lifespan: f32,
+) -> f32 {
+    let births = emission_prob * (particle_count - est).max(0.0);
+    let deaths = est * (dt / mean_lifespan.max(1e-3));
+    (est + births - deaths).clamp(0.0, particle_count)
+}
+
+/// Inverse-density boost for the beat burst: 1 when the medium is full,
+/// rising toward `cap` as it empties — the legibility floor: a beat from
+/// near-empty water births a visibly larger shell.
+#[must_use]
+pub fn burst_boost(est_alive: f32, particle_count: f32, cap: f32) -> f32 {
+    let density = (est_alive / particle_count.max(1.0)).clamp(0.0, 1.0);
+    (1.0 + (cap - 1.0) * (1.0 - density)).clamp(1.0, cap)
+}
+
 /// Apportion the **shared** particle budget across body slots: normalized
 /// fade-weighted spawn shares (density stays constant as dancers come and
 /// go — four dancers each get a quarter of the flame, not four flames).
@@ -365,21 +401,25 @@ pub fn weights_to_cdf(weights: [f32; MAX_TRACKED_BODIES]) -> [f32; MAX_TRACKED_B
 #[allow(
     clippy::cast_possible_truncation,
     clippy::as_conversions,
+    clippy::cast_precision_loss,
     reason = "edge/particle counts are bounded (MAX_EDGE_POINTS / the 300k \
-              particle slider); usize -> u32 is exact in range"
+              particle slider); usize -> u32 and u32 -> f32 are exact in range"
 )]
 #[allow(
     clippy::too_many_arguments,
-    reason = "a pure baker's parameters are its data dependencies; the ninth \
-              (elapsed, alongside dt) is what lets the screensaver performer \
-              (Task 12) drive the same function on its own virtual clock \
-              instead of duplicating the kernel-uniform write"
+    reason = "a pure baker's parameters are its data dependencies; the \
+              elapsed-alongside-dt pair is what lets the screensaver \
+              performer (Task 12) drive the same function on its own virtual \
+              clock, and particle_count is what the density-adaptive beat \
+              burst measures fullness against, instead of duplicating the \
+              kernel-uniform write"
 )]
 pub fn bake_radiance_sim(
     settings: &RadianceSettings,
     audio: &AudioAnalysis,
     bodies: Option<&BodyTrackingState>,
     slot_counts: [usize; MAX_TRACKED_BODIES],
+    particle_count: u32,
     window_size: Vec2,
     dt: f32,
     elapsed: f32,
@@ -433,9 +473,35 @@ pub fn bake_radiance_sim(
     out.emission_prob =
         (settings.emission_rate * drive.emission_mul * beat_swell * EMISSION_BASE_HZ * dt)
             .clamp(0.0, 1.0);
+    // Density estimate: advance the deterministic expected-alive recurrence
+    // on this frame's pre-burst emission (the GPU owns the real
+    // births/deaths; this expectation only feeds the burst boost below).
+    let count_f = particle_count as f32;
+    state.est_alive = expected_alive_step(
+        state.est_alive,
+        out.emission_prob,
+        count_f,
+        dt,
+        (LIFESPAN_MIN + LIFESPAN_MAX) * 0.5,
+    );
     out.spawn_offset = SPAWN_OFFSET;
     out.spawn_speed = SPAWN_SPEED * (0.6 + 0.4 * state.intensity);
     out.burst_speed = state.onset_env * BURST_SPEED;
+    // Density-adaptive beat burst: on a beat rising edge (same BEAT_EDGE
+    // bookkeeping as the wave clock's `step_pulses`), pump this bake's
+    // emission by the inverse-density boost — a beat from near-empty water
+    // births a visibly larger shell (the legibility floor) — and add the
+    // outward kick through the existing burst lane. The kick lasts exactly
+    // this bake: the lane is rewritten from the onset envelope next bake.
+    let rising = audio.beat_confidence > BEAT_EDGE && state.prev_beat <= BEAT_EDGE;
+    state.prev_beat = audio.beat_confidence;
+    if rising {
+        let boost = burst_boost(state.est_alive, count_f, settings.burst_boost_cap);
+        out.emission_prob = (out.emission_prob
+            * (1.0 + settings.burst_scale * audio.beat_confidence * boost))
+            .clamp(0.0, 1.0);
+        out.burst_speed += BURST_SPEED * settings.burst_scale * audio.beat_confidence;
+    }
     out.buoyancy = settings.buoyancy * drive.buoyancy_mul * beat_swell;
     out.flow_strength = settings.flow_strength * drive.turbulence_mul;
     out.curl_scale = CURL_SCALE;
@@ -469,6 +535,11 @@ pub fn bake_radiance_sim(
     out.repel_radius_px = settings.repel_radius.max(1.0);
     out.contact_glow = settings.contact_glow.max(0.0);
     out.glow_decay_baked = GLOW_PER_SECOND.powf(dt);
+    // Flare-wave gains: the kernel brightens particles as the beat waves
+    // (baked by `pulse::advance_beat_waves` into the wave lanes) pass their
+    // exterior distance. The band floors at 1 px (it divides the Gaussian).
+    out.flare_gain = settings.flare_gain.max(0.0);
+    out.flare_band_px = settings.flare_band.max(1.0);
 
     // Per-slot edge ranges: `SilhouetteEdges` concatenates slots ascending,
     // so starts are the prefix sums; counts clamp so `start + count` stays
@@ -635,11 +706,14 @@ pub fn update_radiance_sim(
     let audio_frame = audio.map_or_else(neutral_audio, |a| *a);
     let slot_counts = edges.map_or([0; MAX_TRACKED_BODIES], |e| e.slot_counts);
     let window_size = Vec2::new(window.width(), window.height());
+    // Copied out first: the baker borrows `sim.params` mutably.
+    let particle_count = sim.particle_count;
     bake_radiance_sim(
         &settings,
         &audio_frame,
         body.as_deref(),
         slot_counts,
+        particle_count,
         window_size,
         time.delta_secs(),
         time.elapsed_secs(),
@@ -818,6 +892,7 @@ mod tests {
             audio,
             bodies,
             [edge_count, 0, 0, 0],
+            120_000,
             Vec2::new(1920.0, 1080.0),
             1.0 / 60.0,
             10.0,
@@ -932,6 +1007,7 @@ mod tests {
                 &sustained,
                 None,
                 [100, 0, 0, 0],
+                120_000,
                 win,
                 1.0 / 60.0,
                 0.0,
@@ -983,6 +1059,7 @@ mod tests {
             &hit,
             None,
             [100, 0, 0, 0],
+            120_000,
             win,
             1.0 / 60.0,
             0.0,
@@ -997,6 +1074,7 @@ mod tests {
                 &silence,
                 None,
                 [100, 0, 0, 0],
+                120_000,
                 win,
                 1.0 / 60.0,
                 0.0,
@@ -1303,6 +1381,7 @@ mod tests {
             &neutral_audio(),
             Some(&bodies),
             [200, 300, 0, 0],
+            120_000,
             Vec2::new(1920.0, 1080.0),
             1.0 / 60.0,
             0.0,
@@ -1339,6 +1418,32 @@ mod tests {
         };
         let (_, out) = bake(&wild, &neutral_audio(), None, 500);
         assert!((out.edge_motion_bias - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn expected_alive_rises_under_emission_and_decays_without() {
+        let mut est = 0.0;
+        for _ in 0..600 {
+            est = expected_alive_step(est, 0.05, 10_000.0, 1.0 / 60.0, 1.5);
+        }
+        assert!(est > 1_000.0, "sustained emission fills the field: {est}");
+        let peak = est;
+        for _ in 0..600 {
+            est = expected_alive_step(est, 0.0, 10_000.0, 1.0 / 60.0, 1.5);
+        }
+        assert!(est < peak * 0.05, "no emission decays toward empty: {est}");
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "the empty-field boost clamps to the cap exactly"
+    )]
+    fn burst_boost_is_one_when_dense_and_capped_when_empty() {
+        assert!((burst_boost(9_000.0, 10_000.0, 4.0) - 1.0).abs() < 0.35);
+        assert_eq!(burst_boost(0.0, 10_000.0, 4.0), 4.0);
+        let mid = burst_boost(2_500.0, 10_000.0, 4.0);
+        assert!(mid > 1.0 && mid < 4.0);
     }
 
     /// A beat pumps emission + buoyancy over the identical no-beat frame
@@ -1405,6 +1510,7 @@ mod tests {
                 &neutral_audio(),
                 None,
                 [100, 0, 0, 0],
+                120_000,
                 Vec2::new(1920.0, 1080.0),
                 1.0 / 60.0,
                 7.0, // pinned elapsed: the old time-based salt would not advance

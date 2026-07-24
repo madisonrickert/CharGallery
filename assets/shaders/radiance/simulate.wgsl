@@ -251,6 +251,17 @@ fn pick_slot(r: f32) -> u32 {
     return 4u;
 }
 
+// One beat wave's Gaussian flare contribution at a particle's exterior
+// distance: peak strength where the wave radius crosses the particle,
+// falling off over the flare band. Dead slots (strength 0) cost one compare.
+fn wave_term(radius: f32, strength: f32, d_ext: f32) -> f32 {
+    if (strength <= 0.0) {
+        return 0.0;
+    }
+    let x = (d_ext - radius) / max(params.flare_band_px, 1.0);
+    return strength * exp(-x * x);
+}
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let idx = id.x;
@@ -368,7 +379,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 glow = glow + params.contact_glow * falloff * params.dt;
             }
         }
-        // Flare-wave + motion glow land in Tasks 3-4.
+        // Beat flare-wave: brighten as a wave radius passes this particle's
+        // exterior distance. Strength is age-decayed CPU-side (also kills
+        // the saturation-shell sync flash); the shell itself is suppressed
+        // outright: beyond it every particle reads the same clamped d.
+        let d_ext = max(d, 0.0);
+        if (params.flare_gain > 0.0 && d_ext < FIELD_DIST_MAX_TEXELS * params.uv_to_world.y / f32(MASK_DIM) - params.flare_band_px) {
+            var flare = 0.0;
+            for (var w = 0u; w < 4u; w = w + 1u) {
+                flare = flare + wave_term(params.wave_radius_a[w], params.wave_strength_a[w], d_ext);
+                flare = flare + wave_term(params.wave_radius_b[w], params.wave_strength_b[w], d_ext);
+            }
+            glow = glow + params.flare_gain * flare * params.dt;
+        }
     }
     p.glow = min(glow, 4.0);
 

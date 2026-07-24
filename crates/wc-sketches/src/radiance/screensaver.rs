@@ -132,11 +132,14 @@ pub fn drive_radiance_attract_sim(
     });
     let window_size = Vec2::new(window.width(), window.height());
     let quiet = neutral_audio();
+    // Copied out first: the baker borrows `sim.params` mutably.
+    let particle_count = sim.particle_count;
     bake_radiance_sim(
         &settings,
         &quiet,
         None,
         slot_counts,
+        particle_count,
         window_size,
         time.delta_secs(),
         time.elapsed_secs(),
