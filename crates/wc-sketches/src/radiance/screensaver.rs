@@ -5,9 +5,10 @@
 //! established thermal present-rate throttle:
 //!
 //! - [`drive_phantom`]: an analytic SDF silhouette (the synthetic module's
-//!   drifting ellipse cluster) writes a synthetic mask + edge list through
-//!   the SAME `MaskTexture` / `SilhouetteEdges` resources the real tracker
-//!   uses, so the particle kernel and silhouette material are unchanged.
+//!   slow-drifting, breathing circle) writes a synthetic mask + edge list
+//!   through the SAME `MaskTexture` / `SilhouetteEdges` resources the real
+//!   tracker uses, so the particle kernel and silhouette material are
+//!   unchanged.
 //!   Rasterization is rate-limited to [`PHANTOM_REGEN_HZ`]; between regens
 //!   the phantom costs one accumulator add.
 //! - [`drive_radiance_attract_sim`]: the screensaver's [`bake_radiance_sim`]

@@ -3,10 +3,11 @@
 //! One generator, three consumers (the spec's testing keystone):
 //!
 //! - unit tests (mask/edge math, below);
-//! - the attract-mode phantom (`screensaver.rs`) — a slow drifting ellipse
-//!   cluster;
-//! - the capture scenarios' dancer (`systems/debug.rs`) — the same cluster
-//!   with larger, faster limb swings plus synthetic landmarks/audio.
+//! - the attract-mode phantom (`screensaver.rs`) — a single slow-drifting,
+//!   breathing circle (deliberately abstract; see [`phantom_pose`]);
+//! - the capture scenarios' dancer (`systems/debug.rs`) — the six-blob
+//!   figure rig with larger, faster limb swings plus synthetic
+//!   landmarks/audio.
 //!
 //! Everything is a pure function of `t` (virtual seconds), so fixed-dt
 //! captures are reproducible frame-for-frame. Mask space is the pinned
@@ -27,14 +28,26 @@ pub struct Ellipse {
     pub radii: Vec2,
 }
 
-/// A phantom body: six blobs (head, torso, two arms, two legs).
+/// A phantom body: the union of up to six blobs.
+///
+/// The **dancer rig** fills all six (head, torso, two arms, two legs) and is
+/// what the capture scenarios and the debug synthetic body use. The
+/// **attract phantom** is a single circle ([`phantom_pose`]) — deliberately
+/// abstract rather than a figure. Only `blobs[..blob_count]` is live, so the
+/// circle costs one ellipse per pixel instead of six on the thermal-sensitive
+/// attract path.
 #[derive(Clone, Copy, Debug)]
 pub struct PhantomPose {
-    /// Blob cluster; the union rasterizes into the silhouette.
+    /// Blob cluster; the union of `blobs[..blob_count]` is the silhouette.
+    /// Trailing entries past `blob_count` are ignored (never read).
     pub blobs: [Ellipse; 6],
+    /// How many leading [`Self::blobs`] entries are live (`1..=6`).
+    pub blob_count: usize,
 }
 
-/// Blob indices (documented so limb landmarks can anchor to them).
+/// Blob indices (documented so limb landmarks can anchor to them). These
+/// name the **six-blob dancer rig** only; the attract circle has one blob
+/// and no limbs (see [`dancer_landmark_uv`], which is dancer-only).
 pub const BLOB_HEAD: usize = 0;
 /// See [`BLOB_HEAD`].
 pub const BLOB_TORSO: usize = 1;
@@ -94,13 +107,43 @@ fn pose_at(t: f32, sway_amp: f32, limb_amp: f32, cx0: f32) -> PhantomPose {
                 radii: Vec2::new(0.045, 0.14),
             },
         ],
+        blob_count: 6,
     }
 }
 
-/// The attract phantom: slow drift, small limb motion.
+/// Base radius of the attract circle, in mask UV. 0.18 spans a bit over a
+/// third of the mask's height — a clear presence to shed an aura from
+/// (≈290 boundary points at 256², well under `MAX_EDGE_POINTS`) without
+/// crowding the frame once the drift is added.
+const ATTRACT_RADIUS_UV: f32 = 0.18;
+
+/// The attract phantom: one slow-drifting, gently breathing circle.
+///
+/// Abstract by choice — the six-blob figure read as a "lo-fi bubble person"
+/// on the installation screen, and a circle is the honest shape for what
+/// this actually is: a stand-in silhouette for the aura to wrap while
+/// nobody is there. Motion is kept (a slow lateral sway, a slower bob, and
+/// a ±6% breath on the radius) so the attract loop still reads as alive
+/// rather than a frozen disc.
+///
+/// The radius is equal in both mask-UV axes, and the attract writer stamps
+/// a 1:1 `frame_aspect`, so this renders as a true circle under
+/// `fit_to_height`. With that setting off (the full-window stretch branch)
+/// it takes the window's aspect like everything else in the mask.
 #[must_use]
 pub fn phantom_pose(t: f32) -> PhantomPose {
-    pose_at(t, 0.05, 0.03, 0.5)
+    let drift = Vec2::new((t * 0.35).sin() * 0.05, (t * 0.9).sin() * 0.015);
+    let breath = 1.0 + (t * 0.55).sin() * 0.06;
+    let circle = Ellipse {
+        center: Vec2::splat(0.5) + drift,
+        radii: Vec2::splat(ATTRACT_RADIUS_UV * breath),
+    };
+    PhantomPose {
+        // Only the first entry is read (`blob_count: 1`); the rest are
+        // copies purely to fill the fixed-size array.
+        blobs: [circle; 6],
+        blob_count: 1,
+    }
 }
 
 /// The capture dancer: bigger sway and limb swings (still deterministic).
@@ -198,7 +241,7 @@ pub fn rasterize_mask_slots(poses: [Option<&PhantomPose>; MASK_CHANNELS], out: &
                 // field f = |(p-c)/r|² crosses 1 at the boundary; a
                 // smoothstep band (0.85..1.15) softens it.
                 let mut cov = 0.0_f32;
-                for blob in &pose.blobs {
+                for blob in &pose.blobs[..pose.blob_count.min(pose.blobs.len())] {
                     let q = (p - blob.center) / blob.radii;
                     let f = q.length_squared();
                     let c = 1.0 - smoothstep(0.85, 1.15, f);
@@ -386,6 +429,7 @@ mod tests {
                 center: Vec2::new(0.5, 0.5),
                 radii: Vec2::new(0.2, 0.2),
             }; 6],
+            blob_count: 1,
         };
         let mut mask = vec![0u8; MASK_BYTES];
         rasterize_mask(&pose, &mut mask);
@@ -407,6 +451,60 @@ mod tests {
             );
             let r = (pos - Vec2::new(0.5, 0.5)).length();
             assert!((r - 0.2).abs() < 0.03, "on the rim: r = {r}");
+        }
+    }
+
+    /// The attract phantom is one round blob, not the figure rig: a single
+    /// live blob, equal radii (a true circle in mask space), and every
+    /// extracted rim point equidistant from its centre. Drift and breath
+    /// keep it moving, and it never leaves the mask frame.
+    #[test]
+    fn attract_phantom_is_a_drifting_circle() {
+        for t in [0.0_f32, 1.7, 4.2, 9.9, 23.5] {
+            let pose = phantom_pose(t);
+            assert_eq!(pose.blob_count, 1, "attract phantom is a single blob");
+            let c = pose.blobs[0];
+            assert!(
+                (c.radii.x - c.radii.y).abs() < 1e-6,
+                "equal radii = a circle: {:?}",
+                c.radii
+            );
+            // Breath stays within ±6% of the base radius…
+            let scale = c.radii.x / ATTRACT_RADIUS_UV;
+            assert!((0.94..=1.06).contains(&scale), "breath scale {scale}");
+            // …and the whole disc stays inside the mask frame.
+            let r = c.radii.x;
+            assert!(
+                c.center.min_element() - r > 0.0 && c.center.max_element() + r < 1.0,
+                "circle inside the frame at t={t}: c={:?} r={r}",
+                c.center
+            );
+        }
+        // It drifts: two distant times differ in centre.
+        assert!(
+            phantom_pose(0.0).blobs[0]
+                .center
+                .distance(phantom_pose(2.5).blobs[0].center)
+                > 1e-3,
+            "the attract circle must drift"
+        );
+
+        // The rasterized rim is round: every edge point sits one radius from
+        // the centre (the figure rig's rim never could).
+        let pose = phantom_pose(0.0);
+        let mut mask = vec![0u8; MASK_BYTES];
+        rasterize_mask(&pose, &mut mask);
+        let mut edges = Vec::with_capacity(MAX_EDGE_POINTS);
+        extract_edges(&mask, &mut edges);
+        assert!(!edges.is_empty(), "the circle sheds a rim");
+        let c = pose.blobs[0];
+        for e in &edges {
+            let r = (e.pos - c.center).length();
+            assert!(
+                (r - c.radii.x).abs() < 0.03,
+                "rim point off-circle: r={r} vs {}",
+                c.radii.x
+            );
         }
     }
 
