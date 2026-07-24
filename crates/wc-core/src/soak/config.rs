@@ -5,7 +5,7 @@
 //! parse env once at startup).
 //!
 //! Format (`;`-separated `key=value`, same grammar as `WC_CAPTURE`):
-//! `dir=<path>;duration=<secs>[;health=<secs>][;cycle=<secs>][;activity=active|natural]`
+//! `dir=<path>;duration=<secs>[;health=<secs>][;cycle=<secs>][;activity=active|natural][;silent=true|false]`
 //! - `dir`: output directory for the `health.json` snapshot the launcher polls.
 //! - `duration`: total soak length in seconds; the app requests `AppExit` once
 //!   its own wall clock passes it (the launcher keeps an independent timeout as
@@ -21,6 +21,9 @@
 //!   sketch stays `SketchActivity::Active` under representative load; `natural`
 //!   lets the idle timer run through `Idle` -> `Screensaver` the way an
 //!   untouched kiosk would.
+//! - `silent`: hard-mute the master audio output for the whole run (the
+//!   launcher's `--silent`; default off). The DSP graph still ticks — only
+//!   the output gain is zeroed.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -54,6 +57,11 @@ pub struct SoakConfig {
     pub cycle: Option<Duration>,
     /// Whether to hold the sketch `Active` or let the idle path run.
     pub activity: SoakActivity,
+    /// Hard-mute the master audio output for the whole run (the launcher's
+    /// `--silent`): overnight soaks run in shared living spaces. The DSP
+    /// graph still ticks — only the output gain is zeroed — so the load
+    /// stays representative.
+    pub silent: bool,
 }
 
 /// Default `health.json` republish interval.
@@ -72,6 +80,7 @@ pub fn parse_wc_soak(raw: &str) -> Result<SoakConfig, String> {
     let mut health = DEFAULT_HEALTH;
     let mut cycle: Option<Duration> = None;
     let mut activity = SoakActivity::Active;
+    let mut silent = false;
 
     for pair in raw.split(';').filter(|s| !s.trim().is_empty()) {
         let (key, value) = pair
@@ -100,6 +109,17 @@ pub fn parse_wc_soak(raw: &str) -> Result<SoakConfig, String> {
                     }
                 };
             }
+            "silent" => {
+                silent = match value.to_ascii_lowercase().as_str() {
+                    "true" | "1" => true,
+                    "false" | "0" => false,
+                    other => {
+                        return Err(format!(
+                            "WC_SOAK: bad silent {other:?} (expected 'true' or 'false')"
+                        ))
+                    }
+                };
+            }
             other => return Err(format!("WC_SOAK: unknown key {other:?}")),
         }
     }
@@ -120,6 +140,7 @@ pub fn parse_wc_soak(raw: &str) -> Result<SoakConfig, String> {
         health,
         cycle,
         activity,
+        silent,
     })
 }
 
@@ -164,6 +185,22 @@ mod tests {
     fn zero_cycle_means_no_cycling() {
         let cfg = parse_wc_soak("dir=out;duration=60;cycle=0").unwrap();
         assert_eq!(cfg.cycle, None);
+    }
+
+    #[test]
+    fn silent_parses_and_defaults_off() {
+        assert!(
+            parse_wc_soak("dir=out;duration=60;silent=true")
+                .unwrap()
+                .silent
+        );
+        assert!(
+            !parse_wc_soak("dir=out;duration=60;silent=false")
+                .unwrap()
+                .silent
+        );
+        assert!(!parse_wc_soak("dir=out;duration=60").unwrap().silent);
+        assert!(parse_wc_soak("dir=out;duration=60;silent=loud").is_err());
     }
 
     #[test]

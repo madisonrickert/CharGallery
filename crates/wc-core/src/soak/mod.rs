@@ -61,11 +61,16 @@ impl Plugin for SoakPlugin {
             Ok(config) => {
                 tracing::info!(?config, "WC_SOAK active");
                 let hold_active = config.activity == SoakActivity::Active;
+                let silent = config.silent;
                 app.insert_resource(SoakRuntime::new(&config));
                 app.insert_resource(config);
                 app.add_systems(Update, drive_soak);
                 if hold_active {
                     app.add_systems(Update, hold_sketch_active);
+                }
+                if silent {
+                    app.add_systems(Update, system::enforce_soak_mute);
+                    tracing::info!("WC_SOAK silent: master audio will be muted");
                 }
             }
             Err(err) => {

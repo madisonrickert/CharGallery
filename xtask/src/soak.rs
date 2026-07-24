@@ -106,6 +106,12 @@ pub struct Args {
     /// holding the sketch active. Soaks the kiosk's *unattended* path.
     #[arg(long)]
     pub natural_idle: bool,
+    /// Mute every sketch synth in the run's clean config so an overnight
+    /// soak is silent in a shared living space. Audio capture, analysis, and
+    /// the synth graphs still run — only their output gain is zeroed — so
+    /// the load stays representative for the RSS/FPS/thermal verdict lanes.
+    #[arg(long)]
+    pub silent: bool,
     /// Name the run directory under `target/soak/` (default: a UTC timestamp).
     #[arg(long)]
     pub label: Option<String>,
@@ -164,6 +170,11 @@ pub struct RunConfig {
     pub provider: String,
     /// `active` (idle timer held off) or `natural` (idle -> screensaver runs).
     pub activity: String,
+    /// Whether the run's clean config muted every sketch synth (`--silent`).
+    /// Defaulted so `run.json` files written before the flag existed still
+    /// parse.
+    #[serde(default)]
+    pub silent: bool,
 }
 
 /// Paths to the run's artifacts, relative to the workspace root.
@@ -227,6 +238,7 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             "active".to_string()
         },
+        silent: args.silent,
     };
 
     if !args.json {
@@ -302,6 +314,26 @@ fn launch_and_sample(
     // the operator last left in the settings panel.
     let clean_config = out_dir.join("clean-config");
     std::fs::create_dir_all(&clean_config)?;
+    if config.silent {
+        // Seed the fresh config with every synth output gain zeroed BEFORE
+        // the app's first settings read. Sparse TOML: every other field
+        // lands on its default, exactly as the clean config intends.
+        let seed_dir = clean_config.join("waveconductor");
+        std::fs::create_dir_all(&seed_dir)?;
+        std::fs::write(
+            seed_dir.join("sketch-settings.toml"),
+            "# soak --silent seed: synth output gains zeroed; all else default.\n\
+             [cymatics]\n\
+             blub_level = 0.0\n\
+             osc_level = 0.0\n\n\
+             [dots]\n\
+             synth_volume_scale = 0.0\n\n\
+             [flame]\n\
+             synth_volume_scale = 0.0\n\n\
+             [line]\n\
+             synth_volume_scale = 0.0\n",
+        )?;
+    }
 
     let mut cmd = Command::new(binary);
     cmd.current_dir(root)
@@ -380,7 +412,7 @@ fn launch_and_sample(
 /// without launching anything.
 #[must_use]
 pub fn build_wc_soak(out_dir: &Path, config: &RunConfig) -> String {
-    format!(
+    let mut env = format!(
         "dir={};duration={};health={};cycle={};activity={}",
         out_dir.display(),
         config.duration_secs,
@@ -390,7 +422,13 @@ pub fn build_wc_soak(out_dir: &Path, config: &RunConfig) -> String {
         health_interval_secs(config.sample_secs),
         config.cycle_secs,
         config.activity,
-    )
+    );
+    if config.silent {
+        // Emitted only when requested, so a pre-`silent` app binary keeps
+        // parsing WC_SOAK on ordinary runs.
+        env.push_str(";silent=true");
+    }
+    env
 }
 
 /// The app's `health.json` republish interval for a given launcher sample
@@ -664,6 +702,7 @@ mod tests {
             sketch: "line".to_string(),
             provider: "synthetic".to_string(),
             activity: "active".to_string(),
+            silent: false,
         }
     }
 

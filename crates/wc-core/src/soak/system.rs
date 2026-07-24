@@ -274,6 +274,35 @@ pub fn hold_sketch_active(
     }
 }
 
+/// Hard-mute enforcement for `WC_SOAK` `silent=true` runs (the launcher's
+/// `--silent`): whenever the audio thread's echoed state reads unmuted, push
+/// [`AudioCommand::SetMuted(true)`](crate::audio::command::AudioCommand).
+///
+/// A converging loop rather than a one-shot, because the command sender does
+/// not exist until the audio engine boots (and is *removed* while the engine
+/// reconnects — see `audio::nav`'s module doc), so a startup one-shot could
+/// fire into the void. Once the echo flips to muted this is a two-`Option`
+/// check and a bool compare per frame; the stream-rebuild path re-applies
+/// `AudioState::muted` on its own (see `audio::engine`), so reconnects stay
+/// muted without another push.
+pub fn enforce_soak_mute(
+    config: Option<Res<'_, SoakConfig>>,
+    state: Option<Res<'_, AudioState>>,
+    sender: Option<bevy::ecs::system::NonSendMut<'_, crate::audio::ring::AudioCommandSender>>,
+) {
+    let (Some(config), Some(state), Some(mut sender)) = (config, state, sender) else {
+        return;
+    };
+    if config.silent && !state.muted {
+        use crate::audio::command::AudioCommand;
+        if sender.push(AudioCommand::SetMuted(true)).is_err() {
+            tracing::warn!("audio command ring full; soak mute retry next frame");
+        } else {
+            tracing::info!("soak silent: master output muted");
+        }
+    }
+}
+
 /// Gather the current readings into a [`HealthSnapshot`]. Pure over its inputs.
 #[allow(
     clippy::too_many_arguments,
@@ -466,6 +495,7 @@ mod tests {
             health: Duration::from_secs(1),
             cycle: None,
             activity: SoakActivity::Active,
+            silent: false,
         };
         let mut runtime = SoakRuntime::default();
         publish(&config, &mut runtime, &snap());
@@ -510,6 +540,7 @@ mod tests {
             health: Duration::from_secs(1),
             cycle: Some(Duration::from_mins(5)),
             activity: SoakActivity::Active,
+            silent: false,
         };
         let runtime = SoakRuntime::new(&config);
         assert_eq!(
@@ -539,6 +570,7 @@ mod tests {
             health: Duration::from_hours(1), // never publishes during the test
             cycle: None,
             activity: SoakActivity::Active,
+            silent: false,
         });
         app.init_resource::<SoakRuntime>();
         // `next_health` starts at zero, which would publish on the first tick;
@@ -569,6 +601,7 @@ mod tests {
             health,
             cycle: None,
             activity: SoakActivity::Active,
+            silent: false,
         };
         app.insert_resource(SoakRuntime::new(&config));
         app.insert_resource(config);
