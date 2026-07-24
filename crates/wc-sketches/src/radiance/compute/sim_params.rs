@@ -3,8 +3,10 @@
 //!
 //! Layout contract with `assets/shaders/radiance/simulate.wgsl` and
 //! `assets/shaders/radiance/render.wgsl` (kernel parity discipline: change
-//! all copies together, field for field). All structs are 16-byte-multiple
-//! sized, compile-time asserted, and locked by `offset_of!` tests below.
+//! all copies together, field for field). The uniform-side structs are
+//! 16-byte-multiple sized and the storage-side particle is an 8-multiple
+//! (its WGSL alignment), all compile-time asserted and locked by
+//! `offset_of!` tests below.
 
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResource;
