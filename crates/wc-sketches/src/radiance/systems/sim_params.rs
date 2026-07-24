@@ -26,7 +26,7 @@ use crate::radiance::compute::sim_params::{
     RadianceImpulse, RadianceSimParams, RadianceSimParamsGpu, MAX_IMPULSES,
 };
 use crate::radiance::pulse::BEAT_EDGE;
-use crate::radiance::settings::RadianceSettings;
+use crate::radiance::settings::{RadianceFrameFit, RadianceSettings};
 use crate::radiance::visibility::VisibilityLatch;
 
 /// Number of impulse source concepts per body (seven of the eight
@@ -616,29 +616,65 @@ pub fn bake_radiance_sim(
     ));
     state.slot_fade_prev = fades;
 
-    // Mask → world scale. Mask-UV `[0,1]²` is NOT a square view of the world:
-    // `ContentRect::to_content_norm` divides each camera axis out
-    // independently, so the unit square is the camera frame squished square.
-    // `fit_to_height` therefore restores true proportions by mapping the mask
-    // onto a centred `height·aspect × height` rect — the camera frame scaled
-    // to the window height (aspect-correct crop/pillarbox on any display).
-    // With it off, the mask stretches to fill the whole window rect, which is
-    // proportion-correct only when the window aspect happens to equal the
-    // camera aspect. `mask_frame_aspect` is stamped by whoever wrote the mask
-    // (camera worker: real frame aspect; attract phantom / debug dancer:
-    // square-authored, 1.0). Every consumer (fill, rim, edges, limb impulses,
-    // sparkles) reads `uv_to_world` or its silhouette-shader mirror, so these
-    // few lines keep them consistent.
-    let h = window_size.y.max(1.0);
-    out.uv_to_world = if settings.fit_to_height {
-        [h * mask_frame_aspect.max(0.1), h]
-    } else {
-        [window_size.x.max(1.0), h]
-    };
+    // Mask → world scale: the aspect-fit rect (see [`mask_fit_rect`]). Every
+    // consumer (fill, rim, edges, limb impulses, sparkles) reads
+    // `uv_to_world` or its silhouette-shader mirror, so this one line keeps
+    // them consistent.
+    out.uv_to_world = mask_fit_rect(window_size, mask_frame_aspect, settings.frame_fit).to_array();
 
     // Limb impulses from the smoothed landmark velocities.
     bake_impulses(bodies, settings.mirror, &mut state.impulse_latch, out);
     // particle_count is owned by spawn (buffer size); the baker leaves it.
+}
+
+/// The mask's world-space rect: the camera frame placed in the window at its
+/// true proportions, centred, per the [`RadianceFrameFit`] mode.
+///
+/// Mask-UV `[0,1]²` is NOT a square view of the world —
+/// `ContentRect::to_content_norm` divides each camera axis out
+/// independently, so the unit square is the camera frame *squished* square.
+/// Un-squishing by `frame_aspect` is what restores the dancer's true
+/// proportions, and it is unconditional: **neither mode ever stretches the
+/// body.** `frame_aspect` is stamped by whoever wrote the mask (camera
+/// worker: the real frame aspect; attract circle / debug dancer:
+/// square-authored, 1.0).
+///
+/// The modes differ only on the axis where window and camera aspects
+/// disagree — the rect is always `w × w/aspect`, only `w` differs:
+/// - [`RadianceFrameFit::FillHeight`] — the frame spans the window height.
+///   A window *narrower* than the camera aspect (portrait) crops the sides;
+///   a wider one (ultrawide) pillarboxes, since height is already the
+///   binding axis there.
+/// - [`RadianceFrameFit::Fit`] — the frame fits entirely inside the window
+///   ("contain"), so nothing is ever cropped on any aspect; the mismatched
+///   axis gets margins.
+///
+/// When the window aspect equals the camera aspect both yield the full
+/// window exactly (this installation: a 16:9 camera on a 16:9 panel).
+#[must_use]
+pub fn mask_fit_rect(window: Vec2, frame_aspect: f32, fit: RadianceFrameFit) -> Vec2 {
+    let aspect = frame_aspect.max(0.1);
+    let win = Vec2::new(window.x.max(1.0), window.y.max(1.0));
+    // Width the window's height allows at this aspect. `FillHeight` takes it
+    // verbatim (overflowing width = the side crop); `Fit` also clamps to the
+    // window's own width, so the frame never exceeds either axis.
+    let height_bound = win.y * aspect;
+    let w = match fit {
+        RadianceFrameFit::FillHeight => height_bound,
+        RadianceFrameFit::Fit => win.x.min(height_bound),
+    };
+    Vec2::new(w, w / aspect)
+}
+
+/// Per-axis `window / mask_rect` ratios for the silhouette shader's UV
+/// remap: `1.0` on an axis that spans the window, `> 1.0` on a boxed axis
+/// (samples land outside `[0,1]` in the margin and are discarded), `< 1.0`
+/// on a cropped axis (the frame's outer edges fall beyond the window).
+/// Derived from [`mask_fit_rect`] so fill and rim agree with the particles.
+#[must_use]
+pub fn mask_fit_uv_scale(window: Vec2, frame_aspect: f32, fit: RadianceFrameFit) -> Vec2 {
+    let rect = mask_fit_rect(window, frame_aspect, fit);
+    Vec2::new(window.x.max(1.0), window.y.max(1.0)) / rect
 }
 
 /// Fan the limb impulses across EVERY present body in slot order until the
@@ -972,17 +1008,101 @@ mod tests {
         assert!(d_m.x < 0.0 && d_m.y < 0.0);
     }
 
-    /// `fit_to_height` restores the dancer's true proportions by mapping the
-    /// (aspect-squished) mask square onto a centred
-    /// `height·camera_aspect × height` rect. With a 16:9 camera on a 16:9
-    /// window that is exactly the full window (fit and stretch agree); on a
-    /// mismatched window only the fit branch keeps the camera proportions.
+    /// The frame-fit geometry, on every display aspect. The invariant that
+    /// matters most: **neither mode ever distorts** — the mapped rect always
+    /// carries the camera's aspect, whatever the window is.
     #[test]
-    fn fit_to_height_maps_the_mask_by_the_camera_aspect() {
-        let cam_aspect = 16.0 / 9.0;
-        let bake_uv = |fit: bool, window: Vec2| {
+    fn frame_fit_never_distorts_on_any_display_aspect() {
+        let cam = 16.0 / 9.0;
+        let windows = [
+            ("matched 16:9", Vec2::new(1920.0, 1080.0)),
+            ("laptop 16:10", Vec2::new(2560.0, 1600.0)),
+            ("ultrawide 21:9", Vec2::new(3440.0, 1440.0)),
+            ("portrait 9:16", Vec2::new(1080.0, 1920.0)),
+            ("square", Vec2::new(1200.0, 1200.0)),
+        ];
+        for (name, win) in windows {
+            for fit in [RadianceFrameFit::FillHeight, RadianceFrameFit::Fit] {
+                let rect = mask_fit_rect(win, cam, fit);
+                assert!(
+                    (rect.x / rect.y - cam).abs() < 1e-3,
+                    "{name} / {fit:?} distorts: {rect:?}"
+                );
+                // The UV scale is the exact inverse mapping, so fill/rim and
+                // particles cannot disagree.
+                let uv = mask_fit_uv_scale(win, cam, fit);
+                assert!((uv.x - win.x / rect.x).abs() < 1e-4, "{name} / {fit:?}");
+                assert!((uv.y - win.y / rect.y).abs() < 1e-4, "{name} / {fit:?}");
+            }
+        }
+    }
+
+    /// Mode semantics: `FillHeight` spans the window height (cropping the
+    /// sides on a portrait screen — the zoom/crop look the operator asked to
+    /// keep); `Fit` never crops on any aspect. They agree exactly when the
+    /// window matches the camera.
+    #[test]
+    fn fill_height_crops_portrait_sides_while_fit_never_crops() {
+        let cam = 16.0 / 9.0;
+
+        // Matched 16:9: both modes are the full window, no margin, no crop.
+        let win = Vec2::new(1920.0, 1080.0);
+        for fit in [RadianceFrameFit::FillHeight, RadianceFrameFit::Fit] {
+            let r = mask_fit_rect(win, cam, fit);
+            assert!(
+                (r.x - 1920.0).abs() < 0.1 && (r.y - 1080.0).abs() < 0.1,
+                "{fit:?} {r:?}"
+            );
+        }
+
+        // Portrait 9:16 — the mode that matters. FillHeight spans the height
+        // (1920) and overflows the 1080-wide window: the sides crop.
+        let portrait = Vec2::new(1080.0, 1920.0);
+        let filled = mask_fit_rect(portrait, cam, RadianceFrameFit::FillHeight);
+        assert!(
+            (filled.y - 1920.0).abs() < 0.1,
+            "spans the height: {filled:?}"
+        );
+        assert!(filled.x > portrait.x, "sides crop: {filled:?}");
+        // Its UV x scale is < 1: the frame's outer edges fall outside the
+        // window rather than the window falling outside the frame.
+        let filled_uv = mask_fit_uv_scale(portrait, cam, RadianceFrameFit::FillHeight);
+        assert!(
+            filled_uv.x < 1.0 && (filled_uv.y - 1.0).abs() < 1e-4,
+            "{filled_uv:?}"
+        );
+
+        // Fit letterboxes instead: the whole frame is on screen.
+        let fitted = mask_fit_rect(portrait, cam, RadianceFrameFit::Fit);
+        assert!(
+            fitted.x <= portrait.x + 0.1 && fitted.y <= portrait.y + 0.1,
+            "{fitted:?}"
+        );
+        let fitted_uv = mask_fit_uv_scale(portrait, cam, RadianceFrameFit::Fit);
+        assert!(
+            fitted_uv.y > 1.0,
+            "vertical letterbox margin: {fitted_uv:?}"
+        );
+
+        // Ultrawide: height is already the binding axis, so both pillarbox
+        // identically — the modes only diverge on windows narrower than the
+        // camera aspect.
+        let ultrawide = Vec2::new(3440.0, 1440.0);
+        let a = mask_fit_rect(ultrawide, cam, RadianceFrameFit::FillHeight);
+        let b = mask_fit_rect(ultrawide, cam, RadianceFrameFit::Fit);
+        assert!((a - b).length() < 0.1, "{a:?} vs {b:?}");
+        assert!(a.x < ultrawide.x, "pillarboxed: {a:?}");
+    }
+
+    /// The baker publishes the fit rect verbatim as `uv_to_world`, so the
+    /// particle kernel shares the fill/rim geometry.
+    #[test]
+    fn bake_publishes_the_frame_fit_rect_as_uv_to_world() {
+        let cam = 16.0 / 9.0;
+        let win = Vec2::new(1080.0, 1920.0); // portrait
+        for fit in [RadianceFrameFit::FillHeight, RadianceFrameFit::Fit] {
             let settings = RadianceSettings {
-                fit_to_height: fit,
+                frame_fit: fit,
                 ..RadianceSettings::default()
             };
             let mut state = RadianceState::default();
@@ -992,27 +1112,22 @@ mod tests {
                 &neutral_audio(),
                 None,
                 [100, 0, 0, 0],
-                cam_aspect,
+                cam,
                 120_000,
-                window,
+                win,
                 1.0 / 60.0,
                 0.0,
                 &mut state,
                 &mut out,
             );
-            out.uv_to_world
-        };
-        // Matched aspects: the fit rect IS the full window.
-        let matched = bake_uv(true, Vec2::new(1920.0, 1080.0));
-        assert!((matched[0] - 1920.0).abs() < 0.1, "{matched:?}");
-        assert!((matched[1] - 1080.0).abs() < 0.1, "{matched:?}");
-        // Ultrawide window: the fit rect pillarboxes at the camera aspect…
-        let ultrawide = bake_uv(true, Vec2::new(3840.0, 1080.0));
-        assert!((ultrawide[0] - 1920.0).abs() < 0.1, "{ultrawide:?}");
-        assert!((ultrawide[1] - 1080.0).abs() < 0.1, "{ultrawide:?}");
-        // …while the stretch branch fills (and distorts to) the window.
-        let stretched = bake_uv(false, Vec2::new(3840.0, 1080.0));
-        assert!((stretched[0] - 3840.0).abs() < 0.1, "{stretched:?}");
+            let expect = mask_fit_rect(win, cam, fit);
+            assert!(
+                (out.uv_to_world[0] - expect.x).abs() < 0.1
+                    && (out.uv_to_world[1] - expect.y).abs() < 0.1,
+                "{fit:?}: {:?} vs {expect:?}",
+                out.uv_to_world
+            );
+        }
     }
 
     /// Sensitivity 0 (or silent input) is the exact neutral drive: every
@@ -1193,8 +1308,9 @@ mod tests {
         let (_, out) = bake(&settings, &neutral_audio(), Some(&body), 500);
         assert_eq!(out.impulse_count, 1, "one moving limb -> one slot");
         let imp = out.impulses[0];
-        // Wrist at UV (0.7, 0.4), mirrored. `fit_to_height` (the default) maps
-        // the square mask by the window height (1080), so world x =
+        // Wrist at UV (0.7, 0.4), mirrored. The bake's square-authored source
+        // aspect (1.0) makes the frame-fit rect the window height square
+        // (1080), so world x =
         // (1-0.7-0.5)*1080 = -216; world y = (0.5-0.4)*1080 = 108.
         assert!(
             (imp.position[0] - -216.0).abs() < 1e-3,

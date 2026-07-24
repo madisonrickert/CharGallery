@@ -110,7 +110,7 @@ pub fn drive_phantom(
             edges.slot_counts = [0; wc_core::input::body::MAX_TRACKED_BODIES];
             edges.slot_counts[0] = n;
             // Square-authored synthetic content: declare a 1:1 source aspect
-            // so the fit-to-height mapping keeps the phantom's blobs round.
+            // so the frame-fit mapping keeps the phantom's circle round.
             edges.frame_aspect = 1.0;
             edges.generation = edges.generation.wrapping_add(1);
         }

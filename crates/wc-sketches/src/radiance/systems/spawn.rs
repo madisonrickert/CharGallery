@@ -272,6 +272,10 @@ fn placeholder_silhouette_material(
             rim_colors: slot_colors,
             fades: Vec4::new(1.0, 0.0, 0.0, 0.0),
         },
+        // Identity remap until the first `drive_radiance_materials` pass
+        // computes the real aspect fit (a zero scale would collapse the
+        // sample to the mask centre for one frame).
+        fit_params: Vec4::new(1.0, 1.0, 0.0, 0.0),
     }
 }
 

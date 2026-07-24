@@ -233,7 +233,7 @@ fn field_signed_px(t: vec2<i32>) -> f32 {
     let i = u32(c.y * MASK_DIM + c.x);
     let byte = (field[i >> 2u] >> ((i & 3u) * 8u)) & 0xffu;
     let texels = (f32(byte) - 128.0) / 127.0 * FIELD_DIST_MAX_TEXELS;
-    // World px per mask texel: the fit-to-height mapping (uv_to_world.y
+    // World px per mask texel: the frame-fit mapping (uv_to_world.y
     // spans MASK_DIM texels vertically).
     return texels * params.uv_to_world.y / f32(MASK_DIM);
 }
@@ -417,7 +417,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         // the saturation-shell sync flash); the shell itself is suppressed
         // outright: beyond it every particle reads the same clamped d.
         if (params.flare_gain > 0.0) {
-            // Pillarbox extension: with fit-to-height on a wide window the
+            // Pillarbox extension: on a window wider than the frame-fit rect the
             // mask square (|world x| <= uv_to_world.x / 2) ends before the
             // window does, and the clamped texel lookup freezes d at the
             // square's vertical edge — the flare front would halt on an

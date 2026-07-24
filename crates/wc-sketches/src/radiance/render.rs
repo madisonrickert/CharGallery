@@ -203,8 +203,8 @@ pub struct RadianceSilhouetteMaterial {
     /// x = fill intensity, y = rim glow, z = mask threshold, w = mirror.
     #[uniform(2)]
     pub fill_params: Vec4,
-    /// x = elapsed seconds, y = shimmer amount, z = raw-mask debug, w =
-    /// fit-to-height aspect factor (`window_w`/`window_h`; 1 = full-window stretch).
+    /// x = elapsed seconds, y = shimmer amount, z = raw-mask debug, w = the
+    /// aspect-fit remap's x scale (mirrors [`Self::fit_params`]`.x`).
     #[uniform(3)]
     pub effect_params: Vec4,
     /// Deep glassy base color (linear).
@@ -213,6 +213,11 @@ pub struct RadianceSilhouetteMaterial {
     /// Per-slot rim colors + fades.
     #[uniform(5)]
     pub slots: RadianceSilhouetteSlots,
+    /// Aspect-fit UV remap scales: x/y are `window / mask_rect` per axis
+    /// (`systems::sim_params::mask_fit_uv_scale`), zw reserved. `1` spans,
+    /// `> 1` boxes (margin, discarded), `< 1` crops.
+    #[uniform(6)]
+    pub fit_params: Vec4,
 }
 
 #[cfg(feature = "body-tracking-mediapipe")]
@@ -417,26 +422,25 @@ pub fn drive_radiance_materials(
         settings.mask_threshold,
         f32::from(u8::from(settings.mirror)),
     );
-    // `fit_to_height` maps the aspect-squished mask square onto a centred
-    // `height·cam_aspect × height` rect so the dancer keeps true proportions
-    // (see the sim baker's `uv_to_world` comment — mask UV is the camera
-    // frame squished square, and the writer of the mask stamps its source
-    // aspect on `SilhouetteEdges`). The silhouette shader remaps its mask
-    // sample u by this factor: `window_w / (window_h · frame_aspect)`; 1.0 =
-    // the full-window stretch. Matches `uv_to_world` in the sim baker so
-    // fill, rim, and particle spawns agree.
+    // Aspect-fit UV remap for the fill/rim, both axes. Derived from the same
+    // `mask_fit_rect` the sim baker uses for `uv_to_world`, so fill, rim, and
+    // particle spawns land on identical geometry on every display aspect
+    // (the mask writer stamps its source aspect on `SilhouetteEdges`).
     let mask_frame_aspect = edges.map_or(1.0, |e| e.frame_aspect.max(0.1));
-    let fit_aspect = if settings.fit_to_height {
-        window.width() / (window.height() * mask_frame_aspect).max(1.0)
-    } else {
-        1.0
-    };
+    let fit_uv_scale = crate::radiance::systems::sim_params::mask_fit_uv_scale(
+        Vec2::new(window.width(), window.height()),
+        mask_frame_aspect,
+        settings.frame_fit,
+    );
     let effect_params = Vec4::new(
         time.elapsed_secs(),
         state.sparkle,
         f32::from(u8::from(settings.mask_debug_overlay)),
-        fit_aspect,
+        // w carries the aspect-fit remap's x scale; y rides in fit_params
+        // (see the shader's binding table).
+        fit_uv_scale.x,
     );
+    let fit_params = Vec4::new(fit_uv_scale.x, fit_uv_scale.y, 0.0, 0.0);
     let slots = RadianceSilhouetteSlots {
         rim_colors: slot_colors.map(|c| (c * 1.3).with_w(1.0)),
         fades: slot_fades(body.as_deref()),
@@ -445,6 +449,7 @@ pub fn drive_radiance_materials(
         if let Some(mut material) = silhouette_materials.get_mut(&handle.0) {
             material.fill_params = fill_params;
             material.effect_params = effect_params;
+            material.fit_params = fit_params;
             material.fill_color = silhouette_fill_color();
             material.slots = slots;
         }

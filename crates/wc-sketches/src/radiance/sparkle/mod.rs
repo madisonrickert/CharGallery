@@ -350,13 +350,12 @@ pub fn update_radiance_sparkles(
     // Same mask→world scale the sim baker uses (see its `uv_to_world`
     // comment: the mask writer stamps the source frame aspect that undoes
     // the mask-UV squish).
-    let h = window.height().max(1.0);
     let mask_frame_aspect = edges.map_or(1.0, |e| e.frame_aspect.max(0.1));
-    let scale = if settings.fit_to_height {
-        Vec2::new(h * mask_frame_aspect, h)
-    } else {
-        Vec2::new(window.width().max(1.0), h)
-    };
+    let scale = super::systems::sim_params::mask_fit_rect(
+        Vec2::new(window.width(), window.height()),
+        mask_frame_aspect,
+        settings.frame_fit,
+    );
 
     let frame = advance_trackers(&mut sparkles.trackers, body.as_deref(), dt);
     let TrackerFrame {

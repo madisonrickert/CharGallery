@@ -126,10 +126,10 @@ const ATTRACT_RADIUS_UV: f32 = 0.18;
 /// a ±6% breath on the radius) so the attract loop still reads as alive
 /// rather than a frozen disc.
 ///
-/// The radius is equal in both mask-UV axes, and the attract writer stamps
-/// a 1:1 `frame_aspect`, so this renders as a true circle under
-/// `fit_to_height`. With that setting off (the full-window stretch branch)
-/// it takes the window's aspect like everything else in the mask.
+/// The radius is equal in both mask-UV axes and the attract writer stamps a
+/// 1:1 `frame_aspect`, so it renders as a true circle on any display: the
+/// frame-fit mapping never distorts, in either
+/// [`RadianceFrameFit`](crate::radiance::settings::RadianceFrameFit) mode.
 #[must_use]
 pub fn phantom_pose(t: f32) -> PhantomPose {
     let drift = Vec2::new((t * 0.35).sin() * 0.05, (t * 0.9).sin() * 0.015);

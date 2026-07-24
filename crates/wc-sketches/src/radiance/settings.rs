@@ -34,6 +34,31 @@ pub enum RadiancePalette {
     Ocean,
 }
 
+/// How the camera frame is placed inside the window. **Both modes preserve
+/// the frame's true proportions** — the dancer is never stretched; they
+/// differ only in what happens on the axis the window and camera disagree
+/// on. See `systems::sim_params::mask_fit_rect` for the geometry.
+///
+/// On a display whose aspect matches the camera's (this installation: a 16:9
+/// camera on a 16:9 panel) the two modes are identical — the frame fills the
+/// window exactly either way.
+#[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum RadianceFrameFit {
+    /// The camera frame spans the window **height**; a window narrower than
+    /// the camera aspect (a **portrait** install) crops the sides. The
+    /// zoom/crop look: the dancer stays as large as the screen allows and
+    /// fills it edge to edge, at the cost of the frame's outer edges.
+    #[default]
+    FillHeight,
+    /// The whole camera frame is always visible, centred, with margins on
+    /// the mismatched axis (letterbox on a portrait screen, pillarbox on an
+    /// ultrawide). Nothing is ever cropped — no display aspect can cut off a
+    /// head, feet, or outstretched arms. Choose this when losing the edges
+    /// of frame is worse than a margin; the aura's particles fly outward
+    /// into the margins, so they never read as dead screen.
+    Fit,
+}
+
 impl RadiancePalette {
     /// The three linear-HDR gradient stops `[a, b, c]` (w unused, kept 1.0).
     #[must_use]
@@ -453,6 +478,21 @@ pub struct RadianceSettings {
     #[serde(default = "default_rim_glow")]
     pub rim_glow: f32,
 
+    /// How the camera frame sits in the window when their aspects differ
+    /// (see [`RadianceFrameFit`]). Both modes keep the dancer's true
+    /// proportions — this chooses *crop the sides* (`FillHeight`, the
+    /// default) versus *show everything with margins* (`Fit`). On a display
+    /// matching the camera's aspect the two are identical.
+    #[setting(
+        default = RadianceFrameFit::FillHeight,
+        ty = Enum,
+        label = "Frame fit",
+        section = "Look",
+        category = User
+    )]
+    #[serde(default = "default_frame_fit")]
+    pub frame_fit: RadianceFrameFit,
+
     /// Mirror the image horizontally (it is a mirror for the dancer). On by
     /// default per the spec.
     #[setting(
@@ -463,27 +503,6 @@ pub struct RadianceSettings {
     )]
     #[serde(default = "default_mirror")]
     pub mirror: bool,
-
-    /// Fit the dancer to the window **height** at the *camera's* true
-    /// proportions (a centred `height·camera_aspect × height` rect —
-    /// aspect-correct zoom/crop) instead of stretching the body mask to fill
-    /// the whole window. The mask's unit square is the camera frame squished
-    /// square (each axis content-normalized independently), so "fit" must
-    /// un-squish by the camera aspect — which the mask writer stamps on
-    /// `SilhouetteEdges` — not treat the mask as square. **On by default:**
-    /// the dancer keeps true proportions on every display; when the window
-    /// and camera aspects match, this is identical to the stretch. Turn it
-    /// off for the full-window-stretch look, which distorts the dancer
-    /// whenever the window aspect differs from the camera's (e.g. a portrait
-    /// install fed by a landscape camera).
-    #[setting(
-        default = true,
-        label = "Fit dancer to height",
-        section = "Look",
-        category = User
-    )]
-    #[serde(default = "default_fit_to_height")]
-    pub fit_to_height: bool,
 
     /// Operator master over the beat-synchronized visuals: scales the
     /// in-medium flare-wave brightness (on top of the Dev `flare_gain`) and
@@ -807,8 +826,8 @@ fn default_rim_glow() -> f32 {
 fn default_mirror() -> bool {
     true
 }
-fn default_fit_to_height() -> bool {
-    true
+fn default_frame_fit() -> RadianceFrameFit {
+    RadianceFrameFit::FillHeight
 }
 fn default_audio_sensitivity() -> f32 {
     1.15
@@ -924,7 +943,7 @@ mod tests {
         assert!((d.silhouette_fill - default_silhouette_fill()).abs() < f32::EPSILON);
         assert!((d.rim_glow - default_rim_glow()).abs() < f32::EPSILON);
         assert_eq!(d.mirror, default_mirror());
-        assert_eq!(d.fit_to_height, default_fit_to_height());
+        assert_eq!(d.frame_fit, default_frame_fit());
         assert!((d.audio_sensitivity - default_audio_sensitivity()).abs() < f32::EPSILON);
         assert!((d.pulse_intensity - default_pulse_intensity()).abs() < f32::EPSILON);
         assert!((d.sparkle_intensity - default_sparkle_intensity()).abs() < f32::EPSILON);

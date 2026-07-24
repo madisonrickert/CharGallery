@@ -143,7 +143,7 @@ pub fn drive_synthetic_body(
                 extract_edges_slots(data, &mut edges.points, &mut slot_counts);
                 edges.slot_counts = slot_counts;
                 // Square-authored synthetic content (see the attract phantom):
-                // declare a 1:1 source aspect for the fit-to-height mapping.
+                // declare a 1:1 source aspect for the frame-fit mapping.
                 edges.frame_aspect = 1.0;
                 edges.generation = edges.generation.wrapping_add(1);
             }
