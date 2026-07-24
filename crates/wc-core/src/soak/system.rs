@@ -168,6 +168,7 @@ pub fn drive_soak(
     activity: Option<Res<'_, State<SketchActivity>>>,
     reload_state: Option<ResMut<'_, SketchReloadState>>,
     audio_state: Option<Res<'_, AudioState>>,
+    cycle_settings: Option<Res<'_, crate::lifecycle::sketch_cycle::SketchCycleSettings>>,
     mut exit: MessageWriter<'_, AppExit>,
 ) {
     let (Some(config), Some(mut runtime)) = (config, runtime) else {
@@ -212,7 +213,16 @@ pub fn drive_soak(
         if elapsed >= runtime.next_cycle {
             if let (Some(current), Some(mut reload_state)) = (app_state.as_deref(), reload_state) {
                 if reload_state.is_idle() {
-                    let next = current.get().next_sketch();
+                    // Honor the operator's per-sketch cycle toggles, exactly
+                    // as the pedestal buttons do (`nav`): a soak on a curated
+                    // installation must exercise the same rotation the
+                    // installation runs. Missing resource / all-disabled →
+                    // fall back to the unfiltered cycle so a bare soak
+                    // harness still cycles.
+                    let next = cycle_settings
+                        .as_deref()
+                        .and_then(|c| c.next_enabled(*current.get()))
+                        .unwrap_or_else(|| current.get().next_sketch());
                     tracing::info!(?next, "soak: cycling sketch");
                     let pre_fade_volume = audio_state.as_deref().map_or(1.0, |s| s.volume);
                     reload_state.begin_fade_out(

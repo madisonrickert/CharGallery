@@ -65,6 +65,7 @@ pub(crate) fn handle_navigation_actions(
     mut reload_state: ResMut<'_, SketchReloadState>,
     audio_state: Option<Res<'_, AudioState>>,
     display_settings: Res<'_, crate::settings::DisplaySettings>,
+    cycle: Res<'_, crate::lifecycle::sketch_cycle::SketchCycleSettings>,
     mut fullscreen_override: ResMut<'_, crate::settings::FullscreenOverride>,
 ) {
     use WaveConductorAction as A;
@@ -94,10 +95,22 @@ pub(crate) fn handle_navigation_actions(
         }
     }
 
+    // Next/prev honor the operator's per-sketch cycle toggles (walk yields
+    // None with everything disabled → the press is a no-op). Direct selects
+    // and Home deliberately bypass the toggles — an explicit choice at the
+    // keyboard is honored; see the `sketch_cycle` module doc.
     let transition_to = pressed_select
         .or_else(|| home.then_some(AppState::Home))
-        .or_else(|| go_next.then(|| current.get().next_sketch()))
-        .or_else(|| go_prev.then(|| current.get().prev_sketch()));
+        .or_else(|| {
+            go_next
+                .then(|| cycle.next_enabled(*current.get()))
+                .flatten()
+        })
+        .or_else(|| {
+            go_prev
+                .then(|| cycle.prev_enabled(*current.get()))
+                .flatten()
+        });
 
     if let Some(target) = transition_to {
         if *current.get() != target {
@@ -308,6 +321,47 @@ mod tests {
         assert_eq!(reload.phase, crate::lifecycle::reload::ReloadPhase::FadeOut);
         assert_eq!(reload.return_state, AppState::Line);
         assert_eq!(reload.reason, ReloadReason::SketchSwitch);
+    }
+
+    /// The pedestal-button cycle honors the per-sketch enablement toggles:
+    /// with Flame disabled, Next from Home (which lands on Line first when
+    /// everything is enabled… here we arm from Home so the first Next
+    /// targets Line, the first *enabled* stop) skips over disabled entries.
+    /// With everything disabled, Next is a complete no-op.
+    #[test]
+    fn navigate_next_skips_disabled_sketches_and_noops_when_all_disabled() {
+        use crate::lifecycle::sketch_cycle::SketchCycleSettings;
+
+        let mut app = test_app();
+        app.update();
+        // Disable Line: from Home, Next must land on Flame (Line skipped).
+        app.world_mut()
+            .resource_mut::<SketchCycleSettings>()
+            .enable_line = false;
+        press(&mut app, WaveConductorAction::NavigateNext);
+        let reload = app.world().resource::<SketchReloadState>();
+        assert_eq!(
+            reload.return_state,
+            AppState::Flame,
+            "Next from Home must skip the disabled Line and target Flame"
+        );
+
+        // Fresh app, everything disabled: Next arms nothing at all.
+        let mut app = test_app();
+        app.update();
+        {
+            let mut cycle = app.world_mut().resource_mut::<SketchCycleSettings>();
+            cycle.enable_line = false;
+            cycle.enable_flame = false;
+            cycle.enable_dots = false;
+            cycle.enable_cymatics = false;
+            cycle.enable_radiance = false;
+        }
+        press(&mut app, WaveConductorAction::NavigateNext);
+        assert!(
+            app.world().resource::<SketchReloadState>().is_idle(),
+            "with every sketch disabled, Next must be a no-op"
+        );
     }
 
     /// The already-in-flight edge case documented on the module: a nav key

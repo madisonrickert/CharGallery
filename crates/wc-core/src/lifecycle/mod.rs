@@ -23,6 +23,7 @@ pub mod idle;
 pub mod nav;
 pub mod reload;
 pub mod screensaver;
+pub mod sketch_cycle;
 pub mod state;
 pub mod thermal;
 pub mod window_resize;
@@ -40,6 +41,12 @@ pub struct LifecyclePlugin;
 
 impl Plugin for LifecyclePlugin {
     fn build(&self, app: &mut App) {
+        // Which sketches the next/prev cycle visits (pedestal buttons +
+        // debug soak cycler); read live by `nav::handle_navigation_actions`.
+        {
+            use crate::settings::RegisterSketchSettingsExt as _;
+            app.register_sketch_settings::<sketch_cycle::SketchCycleSettings>();
+        }
         app
             // States machine
             .init_state::<state::AppState>()
