@@ -316,6 +316,21 @@ pub struct RadianceSettings {
     #[serde(default = "default_burst_boost_cap")]
     pub burst_boost_cap: f32,
 
+    /// Motion glow: brightness gain coupled to the limb-impulse weight — the
+    /// same locally-weighted coupling that pushes particles near a fast limb
+    /// also lights them (disturbance is luminous). 0 disables.
+    #[setting(
+        default = 0.8_f32,
+        min = 0.0_f32,
+        max = 4.0_f32,
+        step = 0.05_f32,
+        label = "Motion glow",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_motion_glow")]
+    pub motion_glow: f32,
+
     /// Per-body hue spread, in fractions of a full hue turn per slot: each
     /// tracked dancer's color identity is the palette hue rotated by
     /// `slot × spread`, so multiple dancers read as distinct-but-harmonious
@@ -701,6 +716,9 @@ fn default_burst_scale() -> f32 {
 fn default_burst_boost_cap() -> f32 {
     4.0
 }
+fn default_motion_glow() -> f32 {
+    0.8
+}
 fn default_hue_spread() -> f32 {
     0.13
 }
@@ -826,6 +844,7 @@ mod tests {
         assert!((d.flare_band - default_flare_band()).abs() < f32::EPSILON);
         assert!((d.burst_scale - default_burst_scale()).abs() < f32::EPSILON);
         assert!((d.burst_boost_cap - default_burst_boost_cap()).abs() < f32::EPSILON);
+        assert!((d.motion_glow - default_motion_glow()).abs() < f32::EPSILON);
         assert!((d.hue_spread - default_hue_spread()).abs() < f32::EPSILON);
         assert_eq!(d.sparkle_count, default_sparkle_count());
         assert_eq!(d.palette, default_palette());

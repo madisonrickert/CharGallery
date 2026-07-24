@@ -345,6 +345,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 + p.position.y * params.tongue_freq * 0.5));
     var accel = vec2<f32>(0.0, params.buoyancy * tongue);
 
+    // Glow accumulator: decay last frame's residue first (framerate-
+    // independent, baked CPU-side like drag), then let this frame's motion /
+    // contact / flare terms add onto it.
+    var glow = p.glow * params.glow_decay_baked;
+
     // Limb impulses: locally-weighted coupling toward each limb's velocity,
     // fading to zero by the slot radius — a fast limb sheds a burst.
     let live_impulses = min(params.impulse_count, MAX_IMPULSES);
@@ -356,13 +361,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let dist = length(p.position - imp.position);
         let w = 1.0 - smoothstep(0.0, max(imp.radius, 1.0), dist);
         accel = accel + imp.velocity * (imp.gain * w * IMPULSE_COUPLING);
+        // Motion disturbance: the same locally-weighted coupling that pushes
+        // particles near a fast limb also lights them — the algae beat:
+        // disturbance is luminous.
+        glow = glow + params.motion_glow * imp.gain * w * params.dt;
     }
 
     // Silhouette repel + contact glow: signed field, positive outside.
     // Central-difference gradient in world space; inside the body the
     // interior chamfer keeps the ascent direction pointing at the nearest
     // boundary, so overlap corrects smoothly instead of trapping.
-    var glow = p.glow * params.glow_decay_baked;
     if (params.edge_count > 0u && params.repel_strength > 0.0) {
         let t = world_to_texel(p.position);
         let d = field_signed_px(t);

@@ -540,6 +540,8 @@ pub fn bake_radiance_sim(
     // exterior distance. The band floors at 1 px (it divides the Gaussian).
     out.flare_gain = settings.flare_gain.max(0.0);
     out.flare_band_px = settings.flare_band.max(1.0);
+    // Motion glow: the impulse loop's disturbance-is-luminous coupling.
+    out.motion_glow = settings.motion_glow.max(0.0);
 
     // Per-slot edge ranges: `SilhouetteEdges` concatenates slots ascending,
     // so starts are the prefix sums; counts clamp so `start + count` stays
