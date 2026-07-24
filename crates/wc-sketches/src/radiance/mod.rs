@@ -46,7 +46,8 @@
 //! truth for wiring order.
 
 pub mod compute;
-// Silhouette chamfer distance field (feeds the beat-wave shader). Consumes
+// Signed silhouette chamfer distance field (feeds the particle compute
+// kernel through the render-world field upload). Consumes
 // `wc_core::input::body` (mask + edge generation), so it is gated like
 // `synthetic`/`screensaver` below (same `cargo doc` default-features-only
 // rationale).

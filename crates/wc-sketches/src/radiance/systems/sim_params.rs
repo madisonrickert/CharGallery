@@ -97,6 +97,11 @@ pub const SUBDUE_MOTION_FLOOR: f32 = 0.6;
 pub const IGNITE_FADE_CEIL: f32 = 0.7;
 /// Velocity fraction remaining after one second of drag.
 pub const DRAG_PER_SECOND: f32 = 0.25;
+/// Glow fraction remaining after one second (baked per frame as
+/// `GLOW_PER_SECOND.powf(dt)`, the drag idiom). Fast decay deliberately:
+/// glow is a flash, not a state — a contact/flare highlight dies within a
+/// few hundred milliseconds of its cause.
+pub const GLOW_PER_SECOND: f32 = 0.02;
 /// Curl spatial frequency, radians per world px (~785 px swirl wavelength).
 pub const CURL_SCALE: f32 = 0.012;
 /// Limb impulse influence radius, world px.
@@ -455,6 +460,16 @@ pub fn bake_radiance_sim(
     // probability floor (1 - bias), so clamp to the unit range here.
     out.edge_motion_bias = settings.edge_motion_bias.clamp(0.0, 1.0);
 
+    // Silhouette-field couplings (the bioluminescence rework): the kernel
+    // reads the signed distance field for the repel force + contact glow.
+    // The radius floors at 1 px (it divides the falloff, mirroring the
+    // kernel's max(imp.radius, 1.0) guard); glow decays framerate-
+    // independently exactly like drag.
+    out.repel_strength = settings.repel_strength.max(0.0);
+    out.repel_radius_px = settings.repel_radius.max(1.0);
+    out.contact_glow = settings.contact_glow.max(0.0);
+    out.glow_decay_baked = GLOW_PER_SECOND.powf(dt);
+
     // Per-slot edge ranges: `SilhouetteEdges` concatenates slots ascending,
     // so starts are the prefix sums; counts clamp so `start + count` stays
     // inside the uploaded MAX_EDGE_POINTS prefix.
@@ -639,6 +654,12 @@ pub fn update_radiance_sim(
 /// particle field that must die out rather than stop mid-air. Once the field
 /// is deterministically all-dead, [`update_radiance_pause`] stops the
 /// dispatch and the billboard draw entirely.
+///
+/// The glow/repel/flare gains are deliberately NOT zeroed here: Idle keeps
+/// decaying glow via the still-running kernel — the baker simply stops
+/// updating, which leaves the last baked `glow_decay_baked` (and the gains)
+/// constant in place. Correct as-is: with emission zero the surviving
+/// particles just fade their residual glow out.
 pub fn freeze_radiance_emission(mut sim: ResMut<'_, RadianceSimParams>) {
     sim.params.emission_prob = 0.0;
     sim.params.burst_speed = 0.0;

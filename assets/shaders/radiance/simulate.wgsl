@@ -7,7 +7,9 @@
 // motion weights (0..1, how fast the boundary moved there) at @group(0)
 // @binding(3). The edge buffers are allocated at full MAX_EDGE_POINTS
 // capacity; the CPU packs per-slot (start, count) ranges so indexing
-// `start + hash % count` never leaves a slot's live prefix.
+// `start + hash % count` never leaves a slot's live prefix. Reads the packed
+// signed silhouette distance field (byte plane, four texels per u32) at
+// @group(0) @binding(4) — the repel force + contact glow below.
 //
 // Life cycle: a particle is DEAD when age >= lifespan (a zeroed buffer is all
 // dead). Each frame a dead particle rolls a hash against emission_prob; on a
@@ -35,6 +37,10 @@ struct Particle {
     // Body slot index (0..4) stored as f32; the render shader rounds it back
     // to index the per-slot color array.
     slot: f32,
+    // Accumulated bioluminescent glow (contact/flare/motion terms), decayed
+    // per frame; render.wgsl reads it as a brightness multiplier (1 + glow).
+    glow: f32,
+    _pad: f32,
 };
 
 // Plan B contract shape: mask-UV position (0..1, y down) + outward unit
@@ -89,11 +95,11 @@ struct SimParams {
     // rejection sampler below accepts almost exclusively moving-boundary
     // points. First tail scalar at byte offset 400.
     edge_motion_bias: f32,
-    // Radiance-rework tail (repel / contact-glow / flare / motion gains plus
-    // the beat flare-wave lanes). Declared here for layout parity with the
-    // Rust `RadianceSimParamsGpu`; the kernel consumes them in Tasks 2-3.
-    // WGSL uniform scalar arrays have 16-byte stride, so the Rust `[f32; 8]`
-    // wave lanes mirror as two `vec4<f32>` each. Struct total 496 bytes.
+    // Radiance-rework tail: repel / contact-glow / flare / motion gains plus
+    // the beat flare-wave lanes, layout-parity with the Rust
+    // `RadianceSimParamsGpu`. WGSL uniform scalar arrays have 16-byte
+    // stride, so the Rust `[f32; 8]` wave lanes mirror as two `vec4<f32>`
+    // each. Struct total 496 bytes.
     repel_strength: f32,
     repel_radius_px: f32,
     contact_glow: f32,
@@ -111,6 +117,15 @@ struct SimParams {
 @group(0) @binding(1) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(2) var<storage, read> edges: array<EdgePoint>;
 @group(0) @binding(3) var<storage, read> edge_motion: array<f32>;
+// Packed signed distance field: one byte per 256^2 mask texel, four texels
+// per u32 word (see field_signed_px). 128 = boundary, above = outside the
+// body, below = inside. Uploaded generation-gated by field_upload.rs.
+@group(0) @binding(4) var<storage, read> field: array<u32>;
+
+// Mask square dimension (CPU MASK_SIZE) and the signed encoding's full-range
+// distance (CPU DIST_MAX_TEXELS): byte 255 = +160 texels, byte 0 ~= -160.
+const MASK_DIM: i32 = 256;
+const FIELD_DIST_MAX_TEXELS: f32 = 160.0;
 
 // How strongly a particle inside an impulse radius couples to the limb
 // velocity, per second. 6.0 means a particle sitting on a limb reaches ~the
@@ -203,6 +218,27 @@ fn mask_dir_to_world(dir: vec2<f32>) -> vec2<f32> {
     return d / len;
 }
 
+// Signed distance at a mask texel, in world px (positive outside the body).
+fn field_signed_px(t: vec2<i32>) -> f32 {
+    let c = clamp(t, vec2<i32>(0), vec2<i32>(MASK_DIM - 1));
+    let i = u32(c.y * MASK_DIM + c.x);
+    let byte = (field[i >> 2u] >> ((i & 3u) * 8u)) & 0xffu;
+    let texels = (f32(byte) - 128.0) / 127.0 * FIELD_DIST_MAX_TEXELS;
+    // World px per mask texel: the fit-to-height mapping (uv_to_world.y
+    // spans MASK_DIM texels vertically).
+    return texels * params.uv_to_world.y / f32(MASK_DIM);
+}
+
+// World position -> mask texel (inverse of mask_uv_to_world).
+fn world_to_texel(pos: vec2<f32>) -> vec2<i32> {
+    var u = pos.x / params.uv_to_world.x + 0.5;
+    if (params.mirror == 1u) {
+        u = 1.0 - u;
+    }
+    let v = 0.5 - pos.y / params.uv_to_world.y;
+    return vec2<i32>(vec2<f32>(u, v) * f32(MASK_DIM));
+}
+
 // Pick the spawn slot from the fade-weighted emission CDF: the first entry
 // the roll falls under. Returns 4 (invalid) when every weight is zero, which
 // the caller treats as "no live body — stay dead".
@@ -275,6 +311,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         p.position = mask_uv_to_world(e.pos) + n * params.spawn_offset;
         p.velocity = n * speed;
         p.age = 0.0;
+        p.glow = 0.0;
         p.lifespan = life;
         p.seed = rand01(hash2(idx, 2246822519u));
         p.slot = f32(slot);
@@ -309,6 +346,31 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let w = 1.0 - smoothstep(0.0, max(imp.radius, 1.0), dist);
         accel = accel + imp.velocity * (imp.gain * w * IMPULSE_COUPLING);
     }
+
+    // Silhouette repel + contact glow: signed field, positive outside.
+    // Central-difference gradient in world space; inside the body the
+    // interior chamfer keeps the ascent direction pointing at the nearest
+    // boundary, so overlap corrects smoothly instead of trapping.
+    var glow = p.glow * params.glow_decay_baked;
+    if (params.edge_count > 0u && params.repel_strength > 0.0) {
+        let t = world_to_texel(p.position);
+        let d = field_signed_px(t);
+        if (d < params.repel_radius_px) {
+            let gx = field_signed_px(t + vec2<i32>(1, 0)) - field_signed_px(t - vec2<i32>(1, 0));
+            // Mask y is down, world y is up: flip the y difference.
+            let gy = field_signed_px(t - vec2<i32>(0, 1)) - field_signed_px(t + vec2<i32>(0, 1));
+            let g = vec2<f32>(gx, gy);
+            let glen = length(g);
+            if (glen > 1e-4) {
+                // 1 at the boundary (and everywhere inside), 0 at the radius.
+                let falloff = 1.0 - clamp(d, 0.0, params.repel_radius_px) / params.repel_radius_px;
+                accel = accel + (g / glen) * (params.repel_strength * falloff);
+                glow = glow + params.contact_glow * falloff * params.dt;
+            }
+        }
+        // Flare-wave + motion glow land in Tasks 3-4.
+    }
+    p.glow = min(glow, 4.0);
 
     p.velocity = p.velocity + accel * params.dt;
     // Framerate-independent drag, baked CPU-side as pow(retention, dt).

@@ -1,33 +1,42 @@
-//! Silhouette distance field: a per-frame 256² chamfer distance transform of
-//! the person mask, feeding the particle compute kernel.
+//! Silhouette distance field: a per-body-frame 256² **signed** chamfer
+//! distance transform of the person mask, feeding the particle compute
+//! kernel.
 //!
-//! The kernel needs "distance from the silhouette" at every particle to repel
-//! grains around the body and to drive the in-medium beat flare-wave (a
-//! brightening front that sweeps outward keeping the body's shape). This
-//! module computes that distance on the CPU with a classic two-pass 3×3
-//! chamfer transform over the same 256² mask the silhouette fill samples, and
-//! publishes it as an `R8Unorm` texture (`0..1` = `0..`[`DIST_MAX_TEXELS`]
-//! texels). 256² is 65k texels; the two passes cost a fraction of a
-//! millisecond and run only when [`SilhouetteEdges::generation`] advances
-//! (~30 Hz body frames, not render frames). (Task 2 turns this into a *signed*
-//! field reaching the kernel through a storage buffer; Task 1 only re-points
-//! the consumer.)
+//! The kernel needs "signed distance from the silhouette" at every particle:
+//! positive outside the body (the repel falloff and the beat flare-wave's
+//! travel coordinate), negative inside (so the ascent direction — the
+//! +gradient — leads out of the body everywhere and overlap corrects
+//! smoothly instead of trapping). This module computes both half-transforms
+//! on the CPU with the classic two-pass 3×3 chamfer relaxation over the same
+//! 256² mask the silhouette fill samples — one seeded from the body, one
+//! from its complement — and packs them into a single byte plane (`128` =
+//! boundary; see [`signed_chamfer`]) published through
+//! [`RadianceDistanceField::signed`]. The render world copies it
+//! generation-gated into the compute pipeline's persistent field storage
+//! buffer (`compute::field_upload`, the `edge_upload` shape). 256² is 65k
+//! texels; the relaxation passes cost a fraction of a millisecond and run
+//! only when [`SilhouetteEdges::generation`] advances (~30 Hz body frames,
+//! not render frames).
 //!
-//! Historically this fed a fullscreen beat-contour overlay shader; that
-//! overlay was retired and its energy moved into the particle world.
+//! Historically this was an unsigned field published as an `R8Unorm` texture
+//! for a fullscreen beat-contour overlay shader; that overlay was retired
+//! and its energy moved into the particle world.
 //!
-//! Hot-path posture: the scratch buffer and output image are allocated once
-//! at sketch spawn; [`update_distance_field`] mutates them in place and
+//! Hot-path posture: the scratch and output buffers are allocated once at
+//! sketch spawn; [`update_distance_field`] mutates them in place and
 //! allocates nothing.
 
 use bevy::image::Image;
 use bevy::prelude::*;
 use wc_core::input::body::{MaskTexture, SilhouetteEdges, MASK_CHANNELS, MASK_SIZE};
 
-/// Distance value (in mask texels) that maps to 1.0 in the `R8Unorm` output.
-/// 160 texels is ~0.63 of the mask square — at a 1080-px-tall window that is
-/// ~675 px of wave travel before the field saturates, with ~2.6 px of
-/// quantization per R8 step (well under the wave's ~60 px width).
+/// Distance (in mask texels) that maps to the full byte range on either side
+/// of the signed encoding's `128` boundary bias: exterior distances encode
+/// as `128 + d/DIST_MAX_TEXELS·127`, interior as `128 − d/DIST_MAX_TEXELS·127`
+/// (one scale both sides). 160 texels is ~0.63 of the mask square — at a
+/// 1080-px-tall window that is ~675 px of wave travel before the field
+/// saturates, with ~2.6 texels (≈5–11 px world) of quantization per byte
+/// step — inside the flare band's and repel radius's resolution needs.
 pub const DIST_MAX_TEXELS: f32 = 160.0;
 
 /// Mask coverage threshold for "inside the body" (the body-tracking
@@ -42,39 +51,118 @@ const DIAG_COST: u32 = 4;
 /// "Infinite" seed for texels with no body anywhere near.
 const FAR: u32 = u32::MAX / 2;
 
-/// Owns the distance-field texture + scratch. Inserted at Radiance spawn,
-/// removed at exit (with the pulse overlay retired, this resource is now the
-/// image handle's sole owner; dropped on exit — mechanism 1, entity/resource
-/// owned).
+/// Owns the packed signed-field bytes + chamfer scratch. Inserted at
+/// Radiance spawn, removed at exit. A plain CPU resource: the GPU copy lives
+/// in the compute pipeline's persistent field buffer, refilled
+/// generation-gated by `compute::field_upload` (stable `BufferId` — the
+/// bind-group cache never keys or invalidates on the field).
 #[derive(Resource)]
 pub struct RadianceDistanceField {
-    /// The published `R8Unorm` 256² distance texture.
-    pub image: Handle<Image>,
-    /// Preallocated chamfer scratch (one `u32` per texel).
+    /// The packed signed field (`MASK_SIZE²` bytes, one per texel; `128` =
+    /// boundary, above = outside the body, below = inside — see
+    /// [`signed_chamfer`]).
+    pub signed: Vec<u8>,
+    /// Recompute counter consumed by the render-world extract
+    /// (`compute::field_upload::extract_distance_field`). Starts at 0 and
+    /// bumps once per recompute; the extract's `u64::MAX` sentinel is
+    /// distinct, so the first computed field always uploads.
+    pub generation: u64,
+    /// Preallocated exterior-chamfer scratch (one `u32` per texel; body = 0
+    /// seed).
     scratch: Vec<u32>,
-    /// Last [`SilhouetteEdges::generation`] the field was computed for.
+    /// Preallocated interior-chamfer scratch (the complement seed).
+    scratch_in: Vec<u32>,
+    /// Last [`SilhouetteEdges::generation`] the field was computed for
+    /// (recompute gate; `u64::MAX` = never computed).
     last_generation: u64,
 }
 
 impl RadianceDistanceField {
-    /// Wrap a freshly-allocated image handle with zeroed scratch.
+    /// Zeroed field + scratch; the first body frame computes the real field.
     #[must_use]
-    pub fn new(image: Handle<Image>) -> Self {
+    pub fn new() -> Self {
         Self {
-            image,
+            signed: vec![0; MASK_SIZE * MASK_SIZE],
+            generation: 0,
             scratch: vec![0; MASK_SIZE * MASK_SIZE],
+            scratch_in: vec![0; MASK_SIZE * MASK_SIZE],
             last_generation: u64::MAX,
         }
     }
 }
 
+impl Default for RadianceDistanceField {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Combine two seeded chamfer scratches into the packed signed byte field:
+/// relax both (exterior scratch: body = 0; interior scratch: complement =
+/// 0), then encode per texel around the `128` boundary bias — exterior
+/// distances rise above 128, interior distances fall below it, one
+/// [`DIST_MAX_TEXELS`] scale on both sides. Pure over the buffers for
+/// testability; the system seeds directly from the RGBA mask
+/// ([`update_distance_field`]), the test-facing [`signed_chamfer_from_mask`]
+/// seeds from a single-channel mask. All buffers must be `MASK_SIZE²` long.
+pub fn signed_chamfer(scratch_out: &mut [u32], scratch_in: &mut [u32], out: &mut [u8]) {
+    debug_assert_eq!(scratch_out.len(), MASK_SIZE * MASK_SIZE);
+    debug_assert_eq!(scratch_in.len(), MASK_SIZE * MASK_SIZE);
+    debug_assert_eq!(out.len(), MASK_SIZE * MASK_SIZE);
+    chamfer_relax(scratch_out);
+    chamfer_relax(scratch_in);
+    #[allow(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "d/3 <= ~2*MASK_SIZE texels, exact in f32; clamped \
+                  into u8 range before the cast"
+    )]
+    for ((&s_out, &s_in), o) in scratch_out
+        .iter()
+        .zip(scratch_in.iter())
+        .zip(out.iter_mut())
+    {
+        let d_out = s_out as f32 / ORTHO_COST as f32; // texels
+        let d_in = s_in as f32 / ORTHO_COST as f32;
+        // Body texels (exterior distance 0) carry the negated interior
+        // distance; everything else carries the exterior distance.
+        let signed = if d_out > 0.0 { d_out } else { -d_in };
+        *o = (128.0 + signed / DIST_MAX_TEXELS * 127.0).clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// Seed both scratches from a **single-channel** mask (body =
+/// `>= MASK_INSIDE_THRESHOLD`, interior scratch inverted) and run
+/// [`signed_chamfer`]. Test-facing pure wrapper; all four buffers must be
+/// `MASK_SIZE²` long.
+pub fn signed_chamfer_from_mask(
+    mask: &[u8],
+    scratch_out: &mut [u32],
+    scratch_in: &mut [u32],
+    out: &mut [u8],
+) {
+    debug_assert_eq!(mask.len(), MASK_SIZE * MASK_SIZE);
+    for ((s_out, s_in), &m) in scratch_out
+        .iter_mut()
+        .zip(scratch_in.iter_mut())
+        .zip(mask.iter())
+    {
+        let inside = m >= MASK_INSIDE_THRESHOLD;
+        *s_out = if inside { 0 } else { FAR };
+        *s_in = if inside { FAR } else { 0 };
+    }
+    signed_chamfer(scratch_out, scratch_in, out);
+}
+
 /// Two-pass 3-4 chamfer distance transform: `out[i]` = distance from texel
 /// `i` to the nearest body texel (`mask >= MASK_INSIDE_THRESHOLD`), in
 /// units of [`DIST_MAX_TEXELS`] mapped to `0..=255`. Body-interior texels
-/// are 0. Pure over the buffers for testability; `mask` here is
-/// **single-channel** (`MASK_SIZE²` bytes) — the system seeds directly from
-/// the RGBA image with an all-channel union instead (see
-/// [`update_distance_field`]). `scratch`/`out` must be `MASK_SIZE²` long.
+/// are 0. The legacy **unsigned** encoding, kept for its tests and any
+/// exterior-only consumer; the kernel consumes the signed path above. Pure
+/// over the buffers for testability; `mask` here is **single-channel**
+/// (`MASK_SIZE²` bytes). `scratch`/`out` must be `MASK_SIZE²` long.
 pub fn chamfer_distance(mask: &[u8], scratch: &mut [u32], out: &mut [u8]) {
     debug_assert_eq!(mask.len(), MASK_SIZE * MASK_SIZE);
     debug_assert_eq!(scratch.len(), MASK_SIZE * MASK_SIZE);
@@ -87,15 +175,36 @@ pub fn chamfer_distance(mask: &[u8], scratch: &mut [u32], out: &mut [u8]) {
     chamfer_from_seeded(scratch, out);
 }
 
-/// `Update` (gated `in_state(AppState::Radiance)`, before the pulse driver):
-/// recompute the distance field when a new body frame has arrived
+/// The two chamfer relaxation passes plus the legacy unsigned normalization
+/// over an already-seeded scratch (see [`chamfer_distance`], which seeds and
+/// then calls this). The signed path shares the relaxation via the private
+/// `chamfer_relax` helper and applies its biased encoding instead.
+pub fn chamfer_from_seeded(scratch: &mut [u32], out: &mut [u8]) {
+    chamfer_relax(scratch);
+    #[allow(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "d/3 <= ~2*MASK_SIZE texels, exact in f32; clamped \
+                  into u8 range before the cast"
+    )]
+    for (&d, o) in scratch.iter().zip(out.iter_mut()) {
+        // Body texels (d == 0) map to 0 through the same formula.
+        let texels = d as f32 / ORTHO_COST as f32;
+        *o = (texels / DIST_MAX_TEXELS * 255.0).clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// `Update` (gated `in_state(AppState::Radiance)`, before the beat-wave
+/// clock): recompute the signed field when a new body frame has arrived
 /// (generation-gated, like the edge upload). Skips cleanly when any surface
 /// is missing (headless tests, feature-reduced harnesses).
 pub fn update_distance_field(
     edges: Option<Res<'_, SilhouetteEdges>>,
     mask: Option<Res<'_, MaskTexture>>,
     field: Option<ResMut<'_, RadianceDistanceField>>,
-    mut images: ResMut<'_, Assets<Image>>,
+    images: Res<'_, Assets<Image>>,
 ) {
     let (Some(edges), Some(mask), Some(mut field)) = (edges, mask, field) else {
         return;
@@ -105,46 +214,36 @@ pub fn update_distance_field(
     }
     field.last_generation = edges.generation;
 
-    // The mask image (read) and the output image (written) live in the same
-    // `Assets<Image>` store, which cannot hand out overlapping borrows. The
-    // seed pass is the only step that needs the mask, so: seed the scratch
-    // from a short-lived mask borrow, then run the relaxation passes into
-    // the output image under a second borrow. `mem::take` frees the scratch
-    // from `field` so both borrows stay disjoint; no bytes are copied and
-    // nothing allocates.
-    let mut scratch = std::mem::take(&mut field.scratch);
-    let field_handle = field.image.clone();
+    let Some(mask_data) = images.get(&mask.0).and_then(|m| m.data.as_ref()) else {
+        return;
+    };
+    // With the output now a plain CPU byte plane (no second `Assets<Image>`
+    // borrow), the old borrow dance is gone: split-borrow the resource's
+    // fields directly and work fully in place.
+    let field = &mut *field;
+    // The mask is RGBA (channel i = body slot i): seed "inside" from the
+    // UNION of all slot channels, so the field wraps every tracked dancer's
+    // silhouette, not just the primary's. The interior scratch takes the
+    // complement seed in the same pass.
+    for ((s_out, s_in), texel) in field
+        .scratch
+        .iter_mut()
+        .zip(field.scratch_in.iter_mut())
+        .zip(mask_data.chunks_exact(MASK_CHANNELS))
     {
-        let Some(mask_data) = images.get(&mask.0).and_then(|m| m.data.as_ref()) else {
-            field.scratch = scratch;
-            return;
-        };
-        // The mask is RGBA (channel i = body slot i): seed "inside" from the
-        // UNION of all slot channels, so beat waves emanate from every
-        // tracked dancer's silhouette, not just the primary's.
-        for (s, texel) in scratch
-            .iter_mut()
-            .zip(mask_data.chunks_exact(MASK_CHANNELS))
-        {
-            *s = if texel.iter().any(|&c| c >= MASK_INSIDE_THRESHOLD) {
-                0
-            } else {
-                FAR
-            };
-        }
+        let inside = texel.iter().any(|&c| c >= MASK_INSIDE_THRESHOLD);
+        *s_out = if inside { 0 } else { FAR };
+        *s_in = if inside { FAR } else { 0 };
     }
-    if let Some(mut out_image) = images.get_mut(&field_handle) {
-        if let Some(out_data) = out_image.data.as_mut() {
-            chamfer_from_seeded(&mut scratch, out_data);
-        }
-    }
-    field.scratch = scratch;
+    signed_chamfer(&mut field.scratch, &mut field.scratch_in, &mut field.signed);
+    field.generation = field.generation.wrapping_add(1);
 }
 
-/// The two chamfer relaxation passes over an already-seeded scratch (see
-/// [`chamfer_distance`], which seeds and then calls this; the system seeds
-/// directly from the borrowed mask to avoid staging a copy of the bytes).
-pub fn chamfer_from_seeded(scratch: &mut [u32], out: &mut [u8]) {
+/// The forward + backward 3-4 chamfer relaxation passes in place, leaving
+/// raw chamfer units ([`ORTHO_COST`] per orthogonal texel step) in
+/// `scratch`. Seeded texels (0) are the sources; everything else relaxes
+/// toward its cheapest seeded neighbor.
+fn chamfer_relax(scratch: &mut [u32]) {
     // Forward pass.
     for y in 0..MASK_SIZE {
         for x in 0..MASK_SIZE {
@@ -169,13 +268,12 @@ pub fn chamfer_from_seeded(scratch: &mut [u32], out: &mut [u8]) {
             scratch[i] = d;
         }
     }
-    // Backward pass + normalization.
+    // Backward pass.
     for y in (0..MASK_SIZE).rev() {
         for x in (0..MASK_SIZE).rev() {
             let i = y * MASK_SIZE + x;
             let mut d = scratch[i];
             if d == 0 {
-                out[i] = 0;
                 continue;
             }
             if x + 1 < MASK_SIZE {
@@ -192,18 +290,6 @@ pub fn chamfer_from_seeded(scratch: &mut [u32], out: &mut [u8]) {
                 }
             }
             scratch[i] = d;
-            #[allow(
-                clippy::as_conversions,
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                clippy::cast_precision_loss,
-                reason = "d/3 <= ~2*MASK_SIZE texels, exact in f32; clamped \
-                          into u8 range before the cast"
-            )]
-            {
-                let texels = d as f32 / ORTHO_COST as f32;
-                out[i] = (texels / DIST_MAX_TEXELS * 255.0).clamp(0.0, 255.0) as u8;
-            }
         }
     }
 }
@@ -270,5 +356,51 @@ mod tests {
         let d10 = f32::from(out[(127 + 10) * MASK_SIZE + 64]);
         let expect = 10.0 / DIST_MAX_TEXELS * 255.0;
         assert!((d10 - expect).abs() <= 2.0, "{d10} vs {expect}");
+    }
+
+    #[test]
+    fn signed_field_is_biased_at_128() {
+        // Half-plane body (rows 0..128): outside grows above 128 with the
+        // 3-4 chamfer scale, inside falls below 128 with the same scale.
+        let mut mask = vec![0_u8; MASK_SIZE * MASK_SIZE];
+        for y in 0..128 {
+            for x in 0..MASK_SIZE {
+                mask[y * MASK_SIZE + x] = 255;
+            }
+        }
+        let mut s_out = vec![0_u32; MASK_SIZE * MASK_SIZE];
+        let mut s_in = vec![0_u32; MASK_SIZE * MASK_SIZE];
+        let mut out = vec![0_u8; MASK_SIZE * MASK_SIZE];
+        signed_chamfer_from_mask(&mask, &mut s_out, &mut s_in, &mut out);
+
+        let outside10 = f32::from(out[(127 + 10) * MASK_SIZE + 64]);
+        let expect_out = 128.0 + 10.0 / DIST_MAX_TEXELS * 127.0;
+        assert!(
+            (outside10 - expect_out).abs() <= 2.0,
+            "{outside10} vs {expect_out}"
+        );
+        let inside10 = f32::from(out[(127 - 10) * MASK_SIZE + 64]);
+        let expect_in = 128.0 - 10.0 / DIST_MAX_TEXELS * 127.0;
+        assert!(
+            (inside10 - expect_in).abs() <= 2.0,
+            "{inside10} vs {expect_in}"
+        );
+    }
+
+    #[test]
+    fn signed_field_interior_gradient_points_at_the_boundary() {
+        // Deep interior reads lower than shallow interior: the kernel's
+        // ascent direction (+gradient) leads OUT of the body everywhere.
+        let mut mask = vec![0_u8; MASK_SIZE * MASK_SIZE];
+        for y in 0..128 {
+            for x in 0..MASK_SIZE {
+                mask[y * MASK_SIZE + x] = 255;
+            }
+        }
+        let mut s_out = vec![0_u32; MASK_SIZE * MASK_SIZE];
+        let mut s_in = vec![0_u32; MASK_SIZE * MASK_SIZE];
+        let mut out = vec![0_u8; MASK_SIZE * MASK_SIZE];
+        signed_chamfer_from_mask(&mask, &mut s_out, &mut s_in, &mut out);
+        assert!(out[40 * MASK_SIZE + 64] < out[120 * MASK_SIZE + 64]);
     }
 }

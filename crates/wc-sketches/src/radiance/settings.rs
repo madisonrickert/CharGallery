@@ -210,6 +210,52 @@ pub struct RadianceSettings {
     #[serde(default = "default_edge_motion_bias")]
     pub edge_motion_bias: f32,
 
+    /// Silhouette repel acceleration at the body boundary, world px/s²: the
+    /// signed-field force that makes particles flow AROUND the dancer
+    /// instead of across. 0 disables the repel (and, with it, the whole
+    /// field-sampling block in the kernel — contact and flare glow
+    /// included), so it doubles as the field A/B switch.
+    #[setting(
+        default = 900.0_f32,
+        min = 0.0_f32,
+        max = 3000.0_f32,
+        step = 50.0_f32,
+        label = "Silhouette repel",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_repel_strength")]
+    pub repel_strength: f32,
+
+    /// Repel influence radius outside the boundary, world px (the falloff
+    /// reaches zero here; inside the body the force is always full).
+    #[setting(
+        default = 70.0_f32,
+        min = 1.0_f32,
+        max = 300.0_f32,
+        step = 5.0_f32,
+        label = "Repel radius (px)",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_repel_radius")]
+    pub repel_radius: f32,
+
+    /// Contact glow: brightness added per second to particles pressed
+    /// against the silhouette boundary (falloff-weighted — the
+    /// bioluminescent "touch lights the water" response). 0 disables.
+    #[setting(
+        default = 1.2_f32,
+        min = 0.0_f32,
+        max = 8.0_f32,
+        step = 0.1_f32,
+        label = "Contact glow",
+        section = "Simulation",
+        category = Dev
+    )]
+    #[serde(default = "default_contact_glow")]
+    pub contact_glow: f32,
+
     /// Per-body hue spread, in fractions of a full hue turn per slot: each
     /// tracked dancer's color identity is the palette hue rotated by
     /// `slot × spread`, so multiple dancers read as distinct-but-harmonious
@@ -574,6 +620,15 @@ fn default_background_subdue() -> f32 {
 fn default_edge_motion_bias() -> f32 {
     0.5
 }
+fn default_repel_strength() -> f32 {
+    900.0
+}
+fn default_repel_radius() -> f32 {
+    70.0
+}
+fn default_contact_glow() -> f32 {
+    1.2
+}
 fn default_hue_spread() -> f32 {
     0.13
 }
@@ -692,6 +747,9 @@ mod tests {
         assert!((d.ejecta_amount - default_ejecta_amount()).abs() < f32::EPSILON);
         assert!((d.background_subdue - default_background_subdue()).abs() < f32::EPSILON);
         assert!((d.edge_motion_bias - default_edge_motion_bias()).abs() < f32::EPSILON);
+        assert!((d.repel_strength - default_repel_strength()).abs() < f32::EPSILON);
+        assert!((d.repel_radius - default_repel_radius()).abs() < f32::EPSILON);
+        assert!((d.contact_glow - default_contact_glow()).abs() < f32::EPSILON);
         assert!((d.hue_spread - default_hue_spread()).abs() < f32::EPSILON);
         assert_eq!(d.sparkle_count, default_sparkle_count());
         assert_eq!(d.palette, default_palette());

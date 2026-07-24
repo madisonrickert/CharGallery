@@ -8,14 +8,16 @@
 //!    does not propagate (the established landmine — see
 //!    `particles/compute.rs`).
 //! 2. [`extract_silhouette_edges`] copies the edge list generation-gated
-//!    (see `edge_upload`).
+//!    (see `edge_upload`); `extract_distance_field` does the same for the
+//!    signed distance field (see `field_upload`).
 //! 3. `init_radiance_pipeline` (`RenderStartup`) builds the bind-group
 //!    layout, queues the compute pipeline, and allocates the persistent
-//!    uniform buffer (496 B `SimParams`) and the persistent edge storage
+//!    uniform buffer (496 B `SimParams`), the persistent edge storage
 //!    buffers (`MAX_EDGE_POINTS` × 16 B points + `MAX_EDGE_POINTS` × 4 B
-//!    motion weights) once — never per frame.
-//! 4. `prepare_radiance_bind_group` (`PrepareBindGroups`, after the edge
-//!    upload) writes this frame's uniforms and builds (or reuses) the single
+//!    motion weights), and the persistent signed-field buffer (`MASK_SIZE²`
+//!    bytes) once — never per frame.
+//! 4. `prepare_radiance_bind_group` (`PrepareBindGroups`, after the edge and
+//!    field uploads) writes this frame's uniforms and builds (or reuses) the single
 //!    bind group, cached in [`RadianceBindGroupCache`] keyed on the particle
 //!    buffer's [`BufferId`] (bounded by construction: one slot, replaced on
 //!    change, and *cleared* by the removal companion on sketch exit so the
@@ -49,9 +51,10 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue};
 use bevy::render::storage::GpuShaderBuffer;
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
-use wc_core::input::body::{EdgePoint, MAX_EDGE_POINTS};
+use wc_core::input::body::{EdgePoint, MASK_SIZE, MAX_EDGE_POINTS};
 
 use super::edge_upload::{extract_silhouette_edges, upload_silhouette_edges, ExtractedEdges};
+use super::field_upload::{extract_distance_field, upload_distance_field, ExtractedField};
 use super::sim_params::{RadianceSimParams, RadianceSimParamsGpu};
 
 /// Workgroup width; must match `@workgroup_size(64)` in
@@ -74,6 +77,10 @@ const EDGES_BUFFER_SIZE: u64 = (MAX_EDGE_POINTS * std::mem::size_of::<EdgePoint>
 /// one `f32` weight per edge point, index-parallel with the edge buffer).
 const EDGE_MOTION_BUFFER_SIZE: u64 = (MAX_EDGE_POINTS * std::mem::size_of::<f32>()) as u64;
 
+/// Signed-distance-field buffer size in bytes: one byte per mask texel
+/// (`MASK_SIZE²`), read by the kernel as an `array<u32>` of 4-packed bytes.
+const FIELD_BUFFER_SIZE: u64 = (MASK_SIZE * MASK_SIZE) as u64;
+
 /// Registers extraction (+ removal companion), the edge upload, pipeline
 /// init, per-frame prepare, and the dispatch for the Radiance aura.
 ///
@@ -91,12 +98,14 @@ impl Plugin for RadianceComputePlugin {
         };
 
         render_app.init_resource::<ExtractedEdges>();
+        render_app.init_resource::<ExtractedField>();
         render_app.init_resource::<RadianceBindGroupCache>();
         render_app.add_systems(
             ExtractSchedule,
             (
                 remove_radiance_sim_params_if_absent,
                 extract_silhouette_edges,
+                extract_distance_field,
             ),
         );
 
@@ -106,6 +115,7 @@ impl Plugin for RadianceComputePlugin {
                 Render,
                 (
                     upload_silhouette_edges,
+                    upload_distance_field,
                     prepare_radiance_bind_group.run_if(resource_exists::<RadianceSimParams>),
                 )
                     .chain()
@@ -126,7 +136,7 @@ pub struct RadiancePipeline {
     bind_group_layout_descriptor: BindGroupLayoutDescriptor,
     /// Handle into Bevy's [`PipelineCache`].
     pipeline_id: CachedComputePipelineId,
-    /// Persistent `UNIFORM | COPY_DST` buffer for the 416-byte sim params;
+    /// Persistent `UNIFORM | COPY_DST` buffer for the 496-byte sim params;
     /// refilled each frame via `write_buffer` (no realloc).
     sim_params_buffer: Buffer,
     /// Persistent `STORAGE | COPY_DST` buffer of `MAX_EDGE_POINTS` edge
@@ -137,6 +147,14 @@ pub struct RadiancePipeline {
     /// motion weights (`f32`, index-parallel with `edges_buffer`); same
     /// generation-gated refill and stable-`BufferId` discipline.
     pub edge_motion_buffer: Buffer,
+    /// Persistent `STORAGE | COPY_DST` buffer of the packed signed distance
+    /// field (`MASK_SIZE²` bytes, kernel-side `array<u32>`); refilled
+    /// generation-gated by `field_upload`, same stable-`BufferId`
+    /// discipline. A default all-zero buffer decodes as "deep interior
+    /// everywhere", but the kernel skips every field consumer when
+    /// `edge_count == 0` (no silhouette ⇒ no field reads), so the
+    /// uninitialized state is unreachable.
+    pub field_buffer: Buffer,
 }
 
 /// Per-frame bind group + dispatch size, consumed by `radiance_compute`.
@@ -147,7 +165,7 @@ pub struct RadiancePipeline {
 #[derive(Resource)]
 pub struct RadianceComputeBindGroup {
     /// sim uniform (0), particle storage rw (1), edge storage ro (2),
-    /// edge-motion storage ro (3).
+    /// edge-motion storage ro (3), signed-field storage ro (4).
     bind_group: BindGroup,
     /// `ceil(particle_count / WORKGROUP_SIZE)`.
     dispatch_size: u32,
@@ -218,6 +236,17 @@ fn init_radiance_pipeline(
                 },
                 count: None,
             },
+            // binding 4 — packed signed distance field, read-only.
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
         ],
     );
 
@@ -250,6 +279,12 @@ fn init_radiance_pipeline(
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    let field_buffer = render_device.create_buffer(&BufferDescriptor {
+        label: Some("radiance_signed_distance_field"),
+        size: FIELD_BUFFER_SIZE, // (MASK_SIZE * MASK_SIZE) as u64, one byte per texel
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
     commands.insert_resource(RadiancePipeline {
         bind_group_layout_descriptor,
@@ -257,6 +292,7 @@ fn init_radiance_pipeline(
         sim_params_buffer,
         edges_buffer,
         edge_motion_buffer,
+        field_buffer,
     });
 }
 
@@ -321,6 +357,10 @@ fn prepare_radiance_bind_group(
                     BindGroupEntry {
                         binding: 3,
                         resource: pipeline.edge_motion_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 4,
+                        resource: pipeline.field_buffer.as_entire_binding(),
                     },
                 ],
             );
@@ -435,7 +475,8 @@ mod tests {
     }
 
     /// Binding 0's `min_binding_size` is the exact 496-byte layout, and the
-    /// edge + edge-motion buffers hold the full contract capacity.
+    /// edge + edge-motion + signed-field buffers hold the full contract
+    /// capacity.
     #[test]
     fn buffer_size_constants_match_contracts() {
         assert_eq!(SIM_PARAMS_SIZE.get(), 496);
@@ -448,6 +489,10 @@ mod tests {
             EDGE_MOTION_BUFFER_SIZE,
             (MAX_EDGE_POINTS as u64) * 4,
             "one f32 motion weight per edge point"
+        );
+        assert_eq!(
+            FIELD_BUFFER_SIZE, 65_536,
+            "one byte per 256^2 mask texel"
         );
     }
 

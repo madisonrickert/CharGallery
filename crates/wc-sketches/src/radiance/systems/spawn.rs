@@ -113,15 +113,13 @@ pub fn ensure_body_surfaces(
 #[allow(
     clippy::too_many_arguments,
     reason = "a Bevy spawn system's parameters are its data dependencies; the \
-              sparkle quad adds its material Assets and the distance-field \
-              image store"
+              sparkle quad adds its material Assets"
 )]
 pub fn spawn_radiance(
     settings: Res<'_, RadianceSettings>,
     mask: Res<'_, MaskTexture>,
     mut buffers: ResMut<'_, Assets<ShaderBuffer>>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
-    mut images: ResMut<'_, Assets<Image>>,
     mut particle_materials: ResMut<'_, Assets<RadianceMaterial>>,
     mut silhouette_materials: ResMut<'_, Assets<RadianceSilhouetteMaterial>>,
     mut sparkle_materials: ResMut<'_, Assets<RadianceSparkleMaterial>>,
@@ -185,22 +183,6 @@ pub fn spawn_radiance(
         GlobalTransform::default(),
         Visibility::default(),
     ));
-    // Silhouette distance field: R8Unorm 256², seeded saturated (255 = no
-    // body anywhere) so waves are invisible until the first real body frame
-    // computes the field. MAIN_WORLD (CPU chamfer writes) + RENDER_WORLD
-    // (shader samples); Bevy re-uploads on mutation.
-    let distance_image = images.add(Image::new_fill(
-        Extent3d {
-            width: MASK_SIZE_U32,
-            height: MASK_SIZE_U32,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &[255u8],
-        TextureFormat::R8Unorm,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    ));
-
     // Extremity-sparkle quad above the billboards (z 3.0, additive). Both
     // sparkles spawn off; `sparkle::update_radiance_sparkles` drives them.
     commands.spawn((
@@ -233,7 +215,11 @@ pub fn spawn_radiance(
     commands.insert_resource(RadianceState::default());
     commands.insert_resource(RadianceBeatWaves::default());
     commands.insert_resource(RadianceSparkles::default());
-    commands.insert_resource(RadianceDistanceField::new(distance_image));
+    // Signed silhouette distance field: a plain CPU resource (byte plane +
+    // chamfer scratch, allocated once here); the render world copies it into
+    // the compute pipeline's persistent field buffer generation-gated
+    // (compute::field_upload).
+    commands.insert_resource(RadianceDistanceField::new());
 }
 
 /// The first-frame particle material: base palette identity at phase 0 so
@@ -430,7 +416,7 @@ mod tests {
         let buffers = app.world().resource::<Assets<ShaderBuffer>>();
         let buffer = buffers.get(&handle).expect("particle buffer present");
         let data = buffer.data.as_ref().expect("cpu seed present");
-        assert_eq!(data.len(), 12_000 * 32, "32-byte particles at full count");
+        assert_eq!(data.len(), 12_000 * 40, "40-byte particles at full count");
         assert!(data.iter().all(|&b| b == 0), "zeroed = all dead");
 
         // Three draw entities (silhouette + billboards + sparkle quad) under

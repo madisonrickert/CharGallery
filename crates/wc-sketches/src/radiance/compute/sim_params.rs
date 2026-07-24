@@ -11,7 +11,7 @@ use bevy::render::extract_resource::ExtractResource;
 use bevy::render::storage::ShaderBuffer;
 use bytemuck::{Pod, Zeroable};
 
-/// One aura particle. 32 bytes, matching the WGSL `struct Particle` in both
+/// One aura particle. 40 bytes, matching the WGSL `struct Particle` in both
 /// radiance shaders.
 ///
 /// A particle is **dead** when `age >= lifespan`; `Zeroable::zeroed()` (age 0,
@@ -34,11 +34,22 @@ pub struct RadianceParticle {
     pub seed: f32,
     /// Body slot index (`0..4`) this particle spawned from, stored as `f32`
     /// (the struct is homogeneous f32; the render shader rounds it back to an
-    /// index into the per-slot color array). Doubles as the layout padding
-    /// that rounds the struct to a multiple of its 8-byte alignment (the WGSL
-    /// storage-address-space array-stride rule); a zeroed buffer reads slot 0,
+    /// index into the per-slot color array). A zeroed buffer reads slot 0,
     /// which is harmless because zeroed particles are dead.
     pub slot: f32,
+    /// Accumulated bioluminescent glow (contact/flare/motion terms), written
+    /// and decayed by the kernel each frame; the render shader reads it as a
+    /// brightness multiplier (`1 + glow`). Zeroed on respawn.
+    pub glow: f32,
+    /// Padding to the 40-byte stride: the WGSL storage-address-space
+    /// array-stride rule requires a multiple of the struct's 8-byte
+    /// alignment (the `vec2<f32>` members), which the 9 scalar lanes alone
+    /// (36 bytes) would violate.
+    #[allow(
+        clippy::pub_underscore_fields,
+        reason = "GPU struct layout padding must be pub for bytemuck"
+    )]
+    pub _pad: f32,
 }
 
 /// One limb impulse slot — the fixed-slot idiom of the shared particle
@@ -193,7 +204,11 @@ pub struct RadianceSimParamsGpu {
 }
 
 const _: () = {
-    assert!(std::mem::size_of::<RadianceParticle>().is_multiple_of(16));
+    // Particle is a storage-buffer element: its stride must be a multiple of
+    // the struct's 8-byte alignment (vec2<f32> members), not of 16 — 40
+    // bytes qualifies. Impulse (uniform array element) and the uniform
+    // struct itself keep the stricter 16-byte rule.
+    assert!(std::mem::size_of::<RadianceParticle>().is_multiple_of(8));
     assert!(std::mem::size_of::<RadianceImpulse>().is_multiple_of(16));
     assert!(std::mem::size_of::<RadianceSimParamsGpu>().is_multiple_of(16));
 };
@@ -241,7 +256,9 @@ mod tests {
         assert_eq!(std::mem::offset_of!(RadianceParticle, lifespan), 20);
         assert_eq!(std::mem::offset_of!(RadianceParticle, seed), 24);
         assert_eq!(std::mem::offset_of!(RadianceParticle, slot), 28);
-        assert_eq!(std::mem::size_of::<RadianceParticle>(), 32);
+        assert_eq!(std::mem::offset_of!(RadianceParticle, glow), 32);
+        assert_eq!(std::mem::offset_of!(RadianceParticle, _pad), 36);
+        assert_eq!(std::mem::size_of::<RadianceParticle>(), 40);
     }
 
     /// A zeroed particle is dead (age 0 >= lifespan 0): the spawn buffer

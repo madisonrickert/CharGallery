@@ -36,6 +36,10 @@ struct Particle {
     lifespan: f32,
     seed: f32,
     slot: f32,
+    // Kernel-accumulated bioluminescent glow (contact/flare/motion terms);
+    // consumed below as a brightness multiplier (1 + glow).
+    glow: f32,
+    _pad: f32,
 };
 
 struct AuraUniform {
@@ -141,10 +145,11 @@ fn vertex(
     out.uv = c.zw;
     out.alpha = alpha;
     // Per-slot color identity through the temperature ramp; fast particles
-    // burn brighter (the streaks must clear the bloom knee).
+    // burn brighter (the streaks must clear the bloom knee), and the
+    // kernel's glow lane (contact/flare/motion) multiplies on top.
     let slot = min(u32(p.slot + 0.5), 3u);
     let lf = p.age / max(p.lifespan, 1e-4);
-    out.rgb = flame_color(u.slot_colors[slot].rgb, lf) * (1.0 + sfac * SPEED_BRIGHTNESS);
+    out.rgb = flame_color(u.slot_colors[slot].rgb, lf) * (1.0 + sfac * SPEED_BRIGHTNESS) * (1.0 + p.glow);
     // Sparkle: a per-particle deterministic flicker, amplitude = highs drive
     // (u.params.z), phase from the respawn seed.
     out.flicker = 1.0 + u.params.z * 0.6 * sin(u.params.w * 21.0 + p.seed * TAU);
