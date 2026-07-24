@@ -2,9 +2,9 @@
 
 Programmatic control of an OBSBOT camera (Tiny 2 Lite at the last deployment)
 so its on-device AI stops fighting the app's own MediaPipe tracking. Behind
-the `obsbot-camera-control` cargo feature on `wc-core`; real device IO is
-Windows-only (the deployment target) — every other platform compiles a
-documented no-op facade so CI's `--all-features` stays green.
+the `obsbot-camera-control` cargo feature on `wc-core`; real device IO runs
+on Windows and macOS — Linux compiles a documented no-op facade so CI's
+`--all-features` stays green.
 
 ## What it does
 
@@ -115,8 +115,8 @@ choreography code.
   contained) and links `windows/win64-release/libdev.lib`, Windows +
   feature only; stages the runtime DLLs (below).
 - `crates/wc-core/src/input/obsbot/` — Bevy plugin, status resource,
-  settings, worker thread (`platform/windows.rs`), no-op facade
-  (`platform/stub.rs`).
+  settings, worker thread (`platform/libdev.rs`, Windows + macOS), no-op
+  facade (`platform/stub.rs`).
 
 ## Deploy notes
 
@@ -128,8 +128,18 @@ choreography code.
   into the dist folder when the feature was compiled (a feature-off build
   ships neither), and the MSI harvests the staged dir. Mind the license
   caveat below before shipping a feature-on MSI publicly.
-- The feature is **not** in `default`; enable it on the app build that runs
-  with the OBSBOT connected.
+- **macOS: dylib via rpath.** Dev/test builds resolve the vendored
+  `libdev.dylib` through the vendor rpath entries in `.cargo/config.toml`
+  (nothing staged); `cargo xtask bundle-mac` ships a copy at
+  `Contents/MacOS/libdev.dylib`. Quit OBSBOT Center while the app runs:
+  it holds the camera's AVFoundation configuration lock (observed
+  2026-07-23: the app's idle capture-throttle is blocked with an
+  `avf: lockForConfiguration failed` warning while Center is open) and its
+  device-control channel is redundant once the app takes control.
+- The feature is a **target-table default** of the waveconductor crate on
+  Windows and macOS (decided 2026-07-23) — plain `cargo build -p
+  waveconductor` / `cargo rund` carry it. The persisted **Take control**
+  toggle is the runtime off-switch; Linux builds compile the no-op facade.
 - Device enumeration is asynchronous (~3 s after SDK init); the worker also
   rescans on hotplug events and on a 5 s backoff, so plugging the camera in
   after launch is fine.
@@ -144,9 +154,15 @@ i.e. the vendored drop looks like an internal/partner build of the SDK.
 release ships these headers or binaries.** Local/gig use on our own hardware
 is the current scope.
 
+**Decision 2026-07-23 (pre-release):** accepted — release artifacts may
+embed the vendored SDK binaries while the project is pre-release and its
+artifacts serve our own hardware (the feature is now a Windows/macOS
+target-table default, so every bundle ships them). Revisit and clear
+terms with OBSBOT before any public or client-facing distribution.
+
 ## Hardware smoke test
 
-With a camera plugged in:
+With a camera plugged in (Windows or macOS — both link the real backend):
 
 ```
 cargo test -p wc-core --features obsbot-camera-control obsbot_hardware_smoke -- --ignored --nocapture
@@ -155,6 +171,14 @@ cargo test -p wc-core --features obsbot-camera-control obsbot_hardware_smoke -- 
 Ignored by default (needs hardware). It inits the SDK, takes control (the
 gimbal should physically recenter), holds 2 s, releases (AI/gestures back
 on), and prints every return code.
+
+The framing test exercises the manual controls end to end: it takes control,
+tilts/pans the gimbal, zooms in, narrows the FOV, recenters, then restores
+AI/gestures on the shutdown drop.
+
+```
+cargo test -p wc-core --features obsbot-camera-control obsbot_hardware_framing -- --ignored --nocapture
+```
 
 ## If SDK control fails (fallback)
 

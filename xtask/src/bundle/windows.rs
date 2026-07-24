@@ -143,7 +143,7 @@ fn assemble(
     })?;
 
     // Vendored Leap runtime next to the .exe (adjacent-DLL resolution).
-    common::copy_leap_lib(leap_lib, &app_dir.join(LEAP_LIB))?;
+    common::copy_vendored_lib(leap_lib, &app_dir.join(LEAP_LIB))?;
 
     // Stage the ONNX Runtime DirectML DLLs that ORT's build script drops next to
     // the release binary (present only when `hand-tracking-mediapipe` is compiled

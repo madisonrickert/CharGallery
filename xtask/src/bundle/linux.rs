@@ -121,7 +121,7 @@ fn assemble(
     common::set_executable(&dst_bin)?;
 
     // Vendored Leap runtime sits next to the binary; `$ORIGIN` resolves it.
-    common::copy_leap_lib(leap_lib, &app_dir.join(LEAP_LIB))?;
+    common::copy_vendored_lib(leap_lib, &app_dir.join(LEAP_LIB))?;
 
     // Recursive assets/ copy.
     let dst_assets = app_dir.join("assets");

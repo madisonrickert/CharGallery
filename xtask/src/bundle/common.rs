@@ -83,18 +83,17 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> Result<u64, Box<dyn std::error::E
     Ok(count)
 }
 
-/// Copy the vendored `LeapC` runtime library at `src` to `dst`, following the
-/// source if it is a symlink so the destination is a real file.
+/// Copy a vendored native library at `src` to `dst`, following the source if it
+/// is a symlink so the destination is a real file.
 ///
 /// The vendor tree can carry the unversioned name as a symlink to the versioned
 /// one; reading the bytes (rather than a symlink-preserving `copy`) keeps the
 /// staged folder self-contained without requiring symlink support from every
 /// tool that unpacks the archive.
-pub fn copy_leap_lib(src: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn copy_vendored_lib(src: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if !src.exists() {
         return Err(format!(
-            "bundle: vendored LeapC library not found at {}; \
-             restore the vendor/leapc tree",
+            "bundle: vendored library not found at {}; restore the vendor tree",
             src.display()
         )
         .into());

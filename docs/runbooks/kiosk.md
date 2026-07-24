@@ -49,9 +49,10 @@ Interruptions:
 
 Audio / camera:
 - Pin the intended output device as Windows default before launch.
-- OBSBOT: the app takes control of the camera itself when built with
-  `obsbot-camera-control` (see docs/runbooks/obsbot.md); otherwise disable
-  its on-device AI in OBSBOT Center once (persists on-device).
+- OBSBOT: the app takes control of the camera itself by default
+  (`obsbot-camera-control` is a Windows/macOS target-table default; see
+  docs/runbooks/obsbot.md). The Camera-tab "Take control" toggle is the
+  off-switch if OBSBOT Center should own the camera instead.
 - Ultraleap: Gemini tracking service set to start automatically.
 
 App configuration:

@@ -9,6 +9,7 @@
 //!     ├── MacOS/waveconductor         (release binary, mode 0o755)
 //!     ├── MacOS/libLeapC.6.dylib      (vendored Leap SDK runtime)
 //!     ├── MacOS/libLeapC.dylib        (unversioned alias, resolves @loader_path)
+//!     ├── MacOS/libdev.dylib          (vendored OBSBOT libdev SDK runtime)
 //!     ├── Resources/WaveConductor.icns (app icon, generated from the source PNG)
 //!     ├── Resources/assets/           (workspace assets/, recursive copy)
 //!     ├── Info.plist                  (generated XML property list)
@@ -117,6 +118,11 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     // 2b. Copy the vendored Leap SDK dylib next to the binary so that the
     //     binary's `@loader_path/libLeapC.6.dylib` rpath resolves at launch.
     copy_leap_dylib(&root, &macos_dir)?;
+
+    // 2b-bis. Copy the vendored OBSBOT libdev dylib next to the binary; the
+    //     macOS binary always links it (obsbot-camera-control target-table
+    //     default) and resolves it via the @loader_path rpath entry.
+    copy_libdev_dylib(&root, &macos_dir)?;
 
     // 2c. Recursively copy the workspace assets/ tree into Resources/assets/.
     //     The runtime resolver `asset_root()` in wc-core/src/platform/assets.rs
@@ -347,6 +353,42 @@ pub fn leap_vendor_subdir(arch: &str) -> Option<&'static str> {
     }
 }
 
+/// Map a Rust target architecture name to the vendor subdirectory that holds
+/// the prebuilt OBSBOT libdev dylib for that architecture.
+///
+/// Returns `None` for architectures that have no vendored libdev copy.
+/// Covered by unit tests in the `tests` module.
+pub fn libdev_vendor_subdir(arch: &str) -> Option<&'static str> {
+    match arch {
+        "aarch64" => Some("arm64-release"),
+        "x86_64" => Some("x86_64-release"),
+        _ => None,
+    }
+}
+
+/// Copy the vendored OBSBOT libdev dylib into `dst_dir` (normally
+/// `Contents/MacOS/`) so the binary's `@loader_path` rpath entry resolves its
+/// `@rpath/libdev.dylib` install name at launch. The macOS release binary
+/// always links libdev (`obsbot-camera-control` is a waveconductor
+/// target-table default), so a missing dylib is a hard bundling error — the
+/// app would die in dyld at launch.
+fn copy_libdev_dylib(root: &Path, dst_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let arch = std::env::consts::ARCH;
+    let subdir = libdev_vendor_subdir(arch).ok_or_else(|| {
+        format!(
+            "bundle-mac: no vendored OBSBOT libdev for architecture '{arch}'; \
+             add a vendor/libdev/macos/ directory for it"
+        )
+    })?;
+    let src = root
+        .join("vendor")
+        .join("libdev")
+        .join("macos")
+        .join(subdir)
+        .join("libdev.dylib");
+    common::copy_vendored_lib(&src, &dst_dir.join("libdev.dylib"))
+}
+
 /// Copy the vendored Leap SDK dylib files into `dst_dir` (normally
 /// `Contents/MacOS/`) so that the binary's `@loader_path/libLeapC.6.dylib`
 /// rpath entry resolves at launch.
@@ -369,7 +411,7 @@ fn copy_leap_dylib(root: &Path, dst_dir: &Path) -> Result<(), Box<dyn std::error
     let vendor_dir = root.join("vendor").join("leapc").join(subdir);
 
     for name in &["libLeapC.6.dylib", "libLeapC.dylib"] {
-        common::copy_leap_lib(&vendor_dir.join(name), &dst_dir.join(name))?;
+        common::copy_vendored_lib(&vendor_dir.join(name), &dst_dir.join(name))?;
     }
 
     Ok(())
@@ -420,6 +462,32 @@ mod tests {
             None,
             "empty string must return None"
         );
+    }
+
+    // ---- libdev_vendor_subdir -------------------------------------------------
+
+    #[test]
+    fn libdev_vendor_subdir_aarch64() {
+        assert_eq!(
+            libdev_vendor_subdir("aarch64"),
+            Some("arm64-release"),
+            "aarch64 must map to the vendored arm64-release dir"
+        );
+    }
+
+    #[test]
+    fn libdev_vendor_subdir_x86_64() {
+        assert_eq!(
+            libdev_vendor_subdir("x86_64"),
+            Some("x86_64-release"),
+            "x86_64 must map to the vendored x86_64-release dir"
+        );
+    }
+
+    #[test]
+    fn libdev_vendor_subdir_unsupported_returns_none() {
+        assert_eq!(libdev_vendor_subdir("riscv64"), None);
+        assert_eq!(libdev_vendor_subdir(""), None);
     }
 
     // ---- plist ---------------------------------------------------------------
