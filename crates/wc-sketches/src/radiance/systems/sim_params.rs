@@ -435,6 +435,10 @@ pub fn bake_radiance_sim(
 ) {
     let dt = dt.min(DT_CAP);
     let sensitivity = settings.audio_sensitivity.max(0.0);
+    // "Beat pulses": the operator master over the beat-synchronized visuals.
+    // Scales the flare-wave brightness and the beat-burst factor below; 0
+    // silences both without touching the fine-grained Dev gains.
+    let pulse_master = settings.pulse_intensity.max(0.0);
     // Advance the slow per-aggregate running means the band drives are
     // normalized by (room-adaptive contrast expansion — see `band_drive`).
     let (bass_raw, highs_raw) = band_aggregates(audio);
@@ -504,10 +508,16 @@ pub fn bake_radiance_sim(
     state.prev_beat = audio.beat_confidence;
     if rising {
         let boost = burst_boost(state.est_alive, count_f, settings.burst_boost_cap);
-        out.emission_prob = (out.emission_prob
-            * (1.0 + settings.burst_scale * audio.beat_confidence * boost))
-            .clamp(0.0, 1.0);
-        out.burst_speed += BURST_SPEED * settings.burst_scale * audio.beat_confidence;
+        // Spec contract: the burst is "scaled by the bass-weighted beat
+        // strength". beat_confidence snaps to 1.0 at every rising edge, so
+        // on its own it carries no weight — the old overlay's drive shape
+        // supplies it (the 0.35 floor keeps soft beats visible, the bass
+        // body carries the rest). pulse_master is the operator's "Beat
+        // pulses" knob.
+        let bass_weight = 0.35 + 0.65 * state.bass_drive;
+        let burst = settings.burst_scale * pulse_master * audio.beat_confidence * bass_weight;
+        out.emission_prob = (out.emission_prob * (1.0 + burst * boost)).clamp(0.0, 1.0);
+        out.burst_speed += BURST_SPEED * burst;
     }
     out.buoyancy = settings.buoyancy * drive.buoyancy_mul * beat_swell;
     out.flow_strength = settings.flow_strength * drive.turbulence_mul;
@@ -545,7 +555,8 @@ pub fn bake_radiance_sim(
     // Flare-wave gains: the kernel brightens particles as the beat waves
     // (baked by `pulse::advance_beat_waves` into the wave lanes) pass their
     // exterior distance. The band floors at 1 px (it divides the Gaussian).
-    out.flare_gain = settings.flare_gain.max(0.0);
+    // The operator's "Beat pulses" master rides on the Dev gain.
+    out.flare_gain = settings.flare_gain.max(0.0) * pulse_master;
     out.flare_band_px = settings.flare_band.max(1.0);
     // Motion glow: the impulse loop's disturbance-is-luminous coupling.
     out.motion_glow = settings.motion_glow.max(0.0);

@@ -427,8 +427,11 @@ pub struct RadianceSettings {
     #[serde(default = "default_fit_to_height")]
     pub fit_to_height: bool,
 
-    /// Strength of the beat-synchronized light pulses that radiate outward
-    /// from the dancer. Scales the pulse brightness; 0 disables spawning.
+    /// Operator master over the beat-synchronized visuals: scales the
+    /// in-medium flare-wave brightness (on top of the Dev `flare_gain`) and
+    /// the density-adaptive beat burst; 0 disables the beat flare + burst
+    /// outright. The Dev knobs (`flare_gain`, `flare_band`, `burst_scale`,
+    /// `burst_boost_cap`) remain the fine-grained gains underneath.
     #[setting(
         default = 1.0_f32,
         min = 0.0_f32,

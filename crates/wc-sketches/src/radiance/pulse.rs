@@ -31,6 +31,7 @@ use bevy::prelude::*;
 use wc_core::audio::input::AudioAnalysis;
 
 use super::compute::sim_params::RadianceSimParams;
+use super::systems::sim_params::RadianceState;
 
 /// Fixed wave slot count (the CPU ring buffer size).
 pub const MAX_PULSES: usize = 6;
@@ -131,14 +132,19 @@ pub fn step_pulses(
 pub fn advance_beat_waves(
     time: Res<'_, Time>,
     audio: Option<Res<'_, AudioAnalysis>>,
+    state: Option<Res<'_, RadianceState>>,
     mut waves: ResMut<'_, RadianceBeatWaves>,
     mut sim: ResMut<'_, RadianceSimParams>,
     mut settled_dead: Local<'_, bool>,
 ) {
     let dt = time.delta_secs().min(PULSE_DT_CAP);
     let audio_frame = audio.map_or_else(AudioAnalysis::neutral, |a| *a);
-    // Strength: the bass-weighted beat lane, exactly the old overlay's drive.
-    let strength = (audio_frame.beat_confidence * 0.6 + 0.4).min(1.0);
+    // Strength: the old overlay's bass-weighted drive — beat TIMING comes
+    // from the confidence edge (in `step_pulses`), wave WEIGHT from the bass
+    // body; the 0.35 floor keeps soft beats visible. An absent state
+    // (headless harnesses) reads as zero bass drive, i.e. the floor.
+    let bass_drive = state.map_or(0.0, |s| s.bass_drive);
+    let strength = (0.35 + 0.65 * bass_drive).clamp(0.0, 1.0);
     step_pulses(
         &mut waves,
         dt,
