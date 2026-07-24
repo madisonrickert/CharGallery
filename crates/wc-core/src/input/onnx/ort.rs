@@ -49,8 +49,22 @@ use crate::settings::HandTrackingBackend;
 /// (no GPU EP for this target, or the EP failed to register and fell back).
 pub(crate) const BACKEND_CPU: &str = "ort/CPU";
 /// Backend label when the macOS `CoreML` execution provider registered.
+///
+/// Off this label's home target, the only non-test consumer is the
+/// feature-gated hand provider's `combined_backend` diagnostics — a build
+/// with `hand-tracking-mediapipe` off (e.g. a body-tracking-only dependent)
+/// would otherwise flag the cross-platform label vocabulary as dead.
+#[cfg_attr(
+    not(any(target_os = "macos", feature = "hand-tracking-mediapipe")),
+    allow(dead_code, reason = "cross-platform backend-label vocabulary")
+)]
 pub(crate) const BACKEND_COREML: &str = "ort/CoreML";
 /// Backend label when the Windows `DirectML` execution provider registered.
+/// Same off-target posture as [`BACKEND_COREML`].
+#[cfg_attr(
+    not(any(target_os = "windows", feature = "hand-tracking-mediapipe")),
+    allow(dead_code, reason = "cross-platform backend-label vocabulary")
+)]
 pub(crate) const BACKEND_DIRECTML: &str = "ort/DirectML";
 
 /// `ort`-backed inference for one ONNX model stage.
