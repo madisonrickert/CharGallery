@@ -378,7 +378,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let gx = field_signed_px(t + vec2<i32>(1, 0)) - field_signed_px(t - vec2<i32>(1, 0));
             // Mask y is down, world y is up: flip the y difference.
             let gy = field_signed_px(t - vec2<i32>(0, 1)) - field_signed_px(t + vec2<i32>(0, 1));
-            let g = vec2<f32>(gx, gy);
+            var g = vec2<f32>(gx, gy);
+            // The differences live in texel space but g is applied as a
+            // world-space direction: world_to_texel flips u under mirror, so
+            // a texel-space +x step is a world-space -x step — negate g.x,
+            // exactly as mask_dir_to_world negates its x scale.
+            if (params.mirror == 1u) {
+                g.x = -g.x;
+            }
             let glen = length(g);
             if (glen > 1e-4) {
                 // 1 at the boundary (and everywhere inside), 0 at the radius.
