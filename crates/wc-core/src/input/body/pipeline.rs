@@ -174,6 +174,24 @@ const CLAIM_DENY_WINDOW: Duration = Duration::from_secs(2);
 /// spots than it has candidates.
 const CLAIM_DENIAL_SLOTS: usize = MAX_PERSON_CANDIDATES;
 
+/// Consecutive presence-collapses (with no passing frame between) after
+/// which an occupancy's reservation is abandoned outright instead of
+/// reserved again.
+///
+/// Reservation re-acquisition deliberately bypasses the claim gate — a
+/// returning person must keep their slot without re-earning admission. A
+/// person-shaped object that once flukes past [`RESERVE_MIN_ACTIVE`] turns
+/// that bypass into a spin: reserve → re-acquire → landmark inference →
+/// presence collapse, every detector pass, indefinitely (observed overnight
+/// 2026-07-24: ~3,580 laps in 5.5 h with a coat rack in the dark). Three
+/// consecutive collapses without one presence-passing frame falsifies the
+/// returning-person hypothesis — a real returner passes the gate on
+/// re-entry, and a marginal-but-real one resets the count with any single
+/// pass. Abandonment releases the slot and stamps the spot into the
+/// [`ClaimGate`] denial list, so the spin throttles to the claim-gate
+/// cadence instead.
+const RESERVE_STRIKE_LIMIT: u8 = 3;
+
 /// Active-track count at or below which every track runs landmark/mask
 /// inference every frame; above it the pipeline interleaves round-robin,
 /// running this many tracks per frame (see the module doc's inference
@@ -459,6 +477,11 @@ struct SlotTrack {
     active_since: Duration,
     /// [`SlotPhase::Reserved`] expiry.
     reserved_until: Duration,
+    /// Consecutive presence-collapses with no passing frame between (see
+    /// [`RESERVE_STRIKE_LIMIT`]). Reset by any presence-passing inference
+    /// and by [`Self::release`]; survives Reserved→Active re-acquisition,
+    /// which is exactly the loop it exists to break.
+    presence_strikes: u8,
     /// This slot's aux alignment-row filter (reset on every fresh track).
     aux_filter: AuxRoiFilter,
     /// This slot's mask warp/temporal-blend state (owns 3×256 KB f32).
@@ -478,6 +501,7 @@ impl SlotTrack {
             lost_at: Duration::ZERO,
             active_since: Duration::ZERO,
             reserved_until: Duration::ZERO,
+            presence_strikes: 0,
             aux_filter: AuxRoiFilter::new(),
             mask: MaskProcessor::new(),
             frame: SlotFrame::default(),
@@ -515,6 +539,7 @@ impl SlotTrack {
         self.roi = None;
         self.frame = SlotFrame::default();
         self.mask.reset();
+        self.presence_strikes = 0;
     }
 }
 
@@ -533,6 +558,37 @@ fn log_slot_loss(slot: &SlotTrack, idx: usize, cause: &str) {
         // info, so keep the per-graze churn out of the operator log.
         tracing::debug!(slot = idx, cause, "body slot: lost, freed (young)");
     }
+}
+
+/// Presence-gate failure handling for one slot: count the strike; at
+/// [`RESERVE_STRIKE_LIMIT`] consecutive collapses abandon the reservation
+/// outright (released, spot denied — the reserve → re-acquire spin-breaker);
+/// below it, [`SlotTrack::lose`] as before, denying the spot when the loss
+/// was a young claim dying at the admission gate (the signature of a
+/// person-shaped static object fooling the detector — see
+/// [`CLAIM_DENY_WINDOW`]). `release()` keeps the anchor, so it still names
+/// the spot for the denial in both branches.
+fn handle_presence_collapse(
+    slot: &mut SlotTrack,
+    claim_gate: &mut ClaimGate,
+    slot_idx: usize,
+    now: Duration,
+) {
+    slot.presence_strikes = slot.presence_strikes.saturating_add(1);
+    if slot.presence_strikes >= RESERVE_STRIKE_LIMIT {
+        slot.release();
+        claim_gate.deny_near(slot.anchor, now);
+        tracing::info!(
+            slot = slot_idx,
+            "body slot: reservation abandoned (presence strikes)"
+        );
+        return;
+    }
+    slot.lose(now);
+    if slot.phase == SlotPhase::Free {
+        claim_gate.deny_near(slot.anchor, now);
+    }
+    log_slot_loss(slot, slot_idx, "presence collapsed");
 }
 
 /// Pre-claim debounce + post-collapse cooldown for Free-slot claims.
@@ -1279,20 +1335,12 @@ impl PosePipeline {
             config.presence_release
         };
         if picked.confidence < gate {
-            // Presence collapsed: the person left this crop.
-            slot.lose(now);
-            if slot.phase == SlotPhase::Free {
-                // The claim died young at the admission gate — the signature
-                // of a person-shaped static object fooling the detector.
-                // Suppress re-claims at this spot briefly, or the
-                // claim/inference/collapse cycle spins at the scan cadence
-                // (see [`CLAIM_DENY_WINDOW`]). `release()` keeps the anchor,
-                // so it still names the spot here.
-                claim_gate.deny_near(slot.anchor, now);
-            }
-            log_slot_loss(slot, slot_idx, "presence collapsed");
+            handle_presence_collapse(slot, claim_gate, slot_idx, now);
             return Ok(());
         }
+        // Presence passed: any single passing frame re-earns the occupancy's
+        // benefit of the doubt (see [`RESERVE_STRIKE_LIMIT`]).
+        slot.presence_strikes = 0;
 
         // Heatmap landmark refinement (upstream `RefineLandmarksFromHeatmap`),
         // in crop space before projection and the aux filter. Copy the raw
@@ -3122,5 +3170,137 @@ mod tests {
             2,
             "the lapsed window permits exactly one more claim attempt"
         );
+    }
+
+    /// The reservation spin-breaker: a mature occupancy whose reservation is
+    /// re-acquired and presence-collapsed [`RESERVE_STRIKE_LIMIT`] times in a
+    /// row (no passing frame between) is abandoned outright — released, spot
+    /// denied — instead of lapping reserve → re-acquire forever (the
+    /// coat-rack loop the overnight 2026-07-24 soak logged ~3,580 times).
+    #[test]
+    fn reservation_spin_abandons_after_consecutive_presence_strikes() {
+        struct SharedInference(std::sync::Arc<std::sync::Mutex<Vec<Tensor>>>);
+        impl ModelInference for SharedInference {
+            fn run(
+                &mut self,
+                _input: &Tensor,
+                out: &mut Vec<Tensor>,
+            ) -> Result<(), InferenceError> {
+                out.clone_from(&self.0.lock().expect("outputs lock"));
+                Ok(())
+            }
+        }
+        let ms = Duration::from_millis;
+        let lm = std::sync::Arc::new(std::sync::Mutex::new(confident_landmark_outputs_aux(
+            150.0, 128.0, 150.0, 0.0,
+        )));
+        let mut p = PosePipeline::new(
+            Box::new(StaticInference {
+                outputs: hot_person_detector_outputs(),
+            }),
+            Box::new(SharedInference(std::sync::Arc::clone(&lm))),
+            PoseConfig::default(),
+        );
+        let frame = solid_frame();
+        seed_claim_gate(&mut p, &frame, ms(0));
+        p.process(&frame, ms(16), false, None).expect("claim");
+        assert_eq!(p.slots[0].phase, SlotPhase::Active);
+
+        // Mature the occupancy past RESERVE_MIN_ACTIVE with passing frames.
+        for t in [216_u64, 416, 700] {
+            p.process(&frame, ms(t), false, None).expect("track");
+        }
+        assert_eq!(p.slots[0].phase, SlotPhase::Active);
+
+        // Presence dies and stays dead: collapse #1 reserves (mature)…
+        *lm.lock().expect("lock") = low_confidence_landmark_outputs();
+        p.process(&frame, ms(730), false, None).expect("strike 1");
+        assert_eq!(
+            p.slots[0].phase,
+            SlotPhase::Reserved,
+            "first collapse reserves"
+        );
+        // …the hot detector re-acquires the reservation and collapses again…
+        p.process(&frame, ms(746), false, None).expect("strike 2");
+        assert_eq!(
+            p.slots[0].phase,
+            SlotPhase::Reserved,
+            "second collapse reserves"
+        );
+        // …and the third consecutive collapse abandons instead of reserving.
+        p.process(&frame, ms(762), false, None).expect("strike 3");
+        assert_eq!(
+            p.slots[0].phase,
+            SlotPhase::Free,
+            "the strike limit must abandon the reservation"
+        );
+        // The spot is denied: the still-hot detector cannot re-claim inside
+        // the deny window…
+        for t in (800_u64..2600).step_by(300) {
+            p.process(&frame, ms(t), false, None).expect("denied pass");
+            assert_eq!(p.diagnostics().active_tracks, 0, "denied at t={t}");
+        }
+        // …and a real (presence-passing) person claims cleanly once it lapses.
+        *lm.lock().expect("lock") = confident_landmark_outputs_aux(150.0, 128.0, 150.0, 0.0);
+        p.process(&frame, ms(2800), false, None).expect("re-seed");
+        p.process(&frame, ms(2816), false, None).expect("re-claim");
+        assert_eq!(
+            p.slots[0].phase,
+            SlotPhase::Active,
+            "recovery after the denial"
+        );
+    }
+
+    /// One presence-passing frame resets the strike count: a real person
+    /// flapping in marginal light (collapse, pass, collapse, pass, …) keeps
+    /// their reservation indefinitely — only *consecutive* collapses abandon.
+    #[test]
+    fn a_passing_frame_resets_presence_strikes() {
+        struct SharedInference(std::sync::Arc<std::sync::Mutex<Vec<Tensor>>>);
+        impl ModelInference for SharedInference {
+            fn run(
+                &mut self,
+                _input: &Tensor,
+                out: &mut Vec<Tensor>,
+            ) -> Result<(), InferenceError> {
+                out.clone_from(&self.0.lock().expect("outputs lock"));
+                Ok(())
+            }
+        }
+        let ms = Duration::from_millis;
+        let good = || confident_landmark_outputs_aux(150.0, 128.0, 150.0, 0.0);
+        let lm = std::sync::Arc::new(std::sync::Mutex::new(good()));
+        let mut p = PosePipeline::new(
+            Box::new(StaticInference {
+                outputs: hot_person_detector_outputs(),
+            }),
+            Box::new(SharedInference(std::sync::Arc::clone(&lm))),
+            PoseConfig::default(),
+        );
+        let frame = solid_frame();
+        seed_claim_gate(&mut p, &frame, ms(0));
+        p.process(&frame, ms(16), false, None).expect("claim");
+        for t in [216_u64, 416, 700] {
+            p.process(&frame, ms(t), false, None).expect("track");
+        }
+
+        // Three collapses, each healed by a passing re-acquisition between:
+        // the strike count never reaches the limit.
+        for (dead, alive) in [(730_u64, 746), (930, 946), (1130, 1146)] {
+            *lm.lock().expect("lock") = low_confidence_landmark_outputs();
+            p.process(&frame, ms(dead), false, None).expect("collapse");
+            assert_eq!(
+                p.slots[0].phase,
+                SlotPhase::Reserved,
+                "a healed occupancy must reserve, not abandon (t={dead})"
+            );
+            *lm.lock().expect("lock") = good();
+            p.process(&frame, ms(alive), false, None).expect("heal");
+            assert_eq!(
+                p.slots[0].phase,
+                SlotPhase::Active,
+                "re-acquired (t={alive})"
+            );
+        }
     }
 }
