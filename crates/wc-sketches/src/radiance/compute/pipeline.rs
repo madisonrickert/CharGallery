@@ -11,7 +11,7 @@
 //!    (see `edge_upload`).
 //! 3. `init_radiance_pipeline` (`RenderStartup`) builds the bind-group
 //!    layout, queues the compute pipeline, and allocates the persistent
-//!    uniform buffer (416 B `SimParams`) and the persistent edge storage
+//!    uniform buffer (496 B `SimParams`) and the persistent edge storage
 //!    buffers (`MAX_EDGE_POINTS` × 16 B points + `MAX_EDGE_POINTS` × 4 B
 //!    motion weights) once — never per frame.
 //! 4. `prepare_radiance_bind_group` (`PrepareBindGroups`, after the edge
@@ -58,7 +58,7 @@ use super::sim_params::{RadianceSimParams, RadianceSimParamsGpu};
 /// `assets/shaders/radiance/simulate.wgsl`.
 const WORKGROUP_SIZE: u32 = 64;
 
-/// `RadianceSimParamsGpu` byte size (416) for binding 0's `min_binding_size`.
+/// `RadianceSimParamsGpu` byte size (496) for binding 0's `min_binding_size`.
 /// The `panic!` is inside a `const`, so a zero-sized regression fails at
 /// compile time.
 const SIM_PARAMS_SIZE: NonZeroU64 =
@@ -434,11 +434,11 @@ mod tests {
         app.update();
     }
 
-    /// Binding 0's `min_binding_size` is the exact 416-byte layout, and the
+    /// Binding 0's `min_binding_size` is the exact 496-byte layout, and the
     /// edge + edge-motion buffers hold the full contract capacity.
     #[test]
     fn buffer_size_constants_match_contracts() {
-        assert_eq!(SIM_PARAMS_SIZE.get(), 416);
+        assert_eq!(SIM_PARAMS_SIZE.get(), 496);
         assert_eq!(
             EDGES_BUFFER_SIZE,
             (MAX_EDGE_POINTS as u64) * 16,

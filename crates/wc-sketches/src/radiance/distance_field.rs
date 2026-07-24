@@ -1,16 +1,20 @@
 //! Silhouette distance field: a per-frame 256² chamfer distance transform of
-//! the person mask, feeding the beat-wave shader.
+//! the person mask, feeding the particle compute kernel.
 //!
-//! The beat pulses render as *contour waves of the dancer's silhouette* —
-//! light fronts that detach from the body's edge and travel outward keeping
-//! the body's shape (nested outlines), not circles around a point. The
-//! fragment shader needs "distance from the silhouette" at every pixel; this
-//! module computes it on the CPU with a classic two-pass 3×3 chamfer
-//! transform over the same 256² mask the silhouette fill samples, and
+//! The kernel needs "distance from the silhouette" at every particle to repel
+//! grains around the body and to drive the in-medium beat flare-wave (a
+//! brightening front that sweeps outward keeping the body's shape). This
+//! module computes that distance on the CPU with a classic two-pass 3×3
+//! chamfer transform over the same 256² mask the silhouette fill samples, and
 //! publishes it as an `R8Unorm` texture (`0..1` = `0..`[`DIST_MAX_TEXELS`]
 //! texels). 256² is 65k texels; the two passes cost a fraction of a
 //! millisecond and run only when [`SilhouetteEdges::generation`] advances
-//! (~30 Hz body frames, not render frames).
+//! (~30 Hz body frames, not render frames). (Task 2 turns this into a *signed*
+//! field reaching the kernel through a storage buffer; Task 1 only re-points
+//! the consumer.)
+//!
+//! Historically this fed a fullscreen beat-contour overlay shader; that
+//! overlay was retired and its energy moved into the particle world.
 //!
 //! Hot-path posture: the scratch buffer and output image are allocated once
 //! at sketch spawn; [`update_distance_field`] mutates them in place and
@@ -39,8 +43,8 @@ const DIAG_COST: u32 = 4;
 const FAR: u32 = u32::MAX / 2;
 
 /// Owns the distance-field texture + scratch. Inserted at Radiance spawn,
-/// removed at exit (the image handle is this resource's only owner besides
-/// the pulse material, both dropped on exit — mechanism 1, entity/resource
+/// removed at exit (with the pulse overlay retired, this resource is now the
+/// image handle's sole owner; dropped on exit — mechanism 1, entity/resource
 /// owned).
 #[derive(Resource)]
 pub struct RadianceDistanceField {

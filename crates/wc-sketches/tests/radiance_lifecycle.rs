@@ -106,9 +106,6 @@ fn radiance_test_app() -> App {
     app.add_plugins(Material2dPlugin::<RadianceMaterial>::default());
     app.add_plugins(Material2dPlugin::<RadianceSilhouetteMaterial>::default());
     app.add_plugins(Material2dPlugin::<
-        wc_sketches::radiance::pulse::RadiancePulseMaterial,
-    >::default());
-    app.add_plugins(Material2dPlugin::<
         wc_sketches::radiance::sparkle::RadianceSparkleMaterial,
     >::default());
     app.add_plugins(RadianceComputePlugin);
@@ -158,8 +155,8 @@ fn enter_radiance_spawns_root_and_requests() {
         .iter(app.world())
         .count();
     assert_eq!(
-        root_count, 4,
-        "silhouette + billboards + beat-pulse quad + sparkle quad should all be spawned under RadianceRoot"
+        root_count, 3,
+        "silhouette + billboards + sparkle quad should all be spawned under RadianceRoot"
     );
     assert!(
         app.world().get_resource::<AudioCaptureRequest>().is_some(),

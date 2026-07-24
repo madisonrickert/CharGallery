@@ -1,67 +1,49 @@
-//! Beat-pulse layer: waves of HDR light that radiate outward from the
-//! dancer's silhouette edge on every detected beat.
+//! Beat-wave clock: a fixed ring of expanding wavefronts, one born on every
+//! detected beat, whose current radius + age-decayed strength bake into the
+//! sim uniform for the in-medium flare-wave (`simulate.wgsl`, the Task 3
+//! kernel consumer).
 //!
 //! ## Data flow
 //!
 //! The analysis engine's debounced beat lane (`AudioAnalysis::beat_confidence`
 //! snaps to 1.0 on a beat and decays exponentially) is the strongest signal a
-//! party-room mic delivers, and this module is its dedicated visual consumer.
-//! Each rising edge spawns one wave into a fixed ring buffer of
-//! [`MAX_PULSES`] slots ([`RadiancePulses`]). A fullscreen additive quad
-//! ([`RadiancePulseMaterial`], z 2.0, over the billboards) renders every live
-//! slot in `shaders/radiance/pulse.wgsl` as an expanding **iso-distance
-//! contour of the silhouette**: the shader samples the chamfer distance
-//! field (`super::distance_field`) and lights the band where
-//! `distance-from-body ≈ wave radius`, so the front detaches from the
-//! dancer's outline and travels outward *keeping the body's shape* — nested
-//! silhouettes of light, not circles around a point. At age 0 the band sits
-//! at distance 0: the body itself flashes on the beat, then the contour
-//! peels off and radiates. Wave strength is **bass-weighted** (the beat lane
-//! times the wave, the bass drive weights it), wave color is the
-//! fade-weighted blend of the present bodies' identity colors, and the
-//! master brightness rides the union presence fade so a wave can never
-//! outlive the last figure (see [`union_fade`]).
+//! party-room mic delivers, and this module is its dedicated consumer. Each
+//! rising edge spawns one wave into a fixed ring buffer of [`MAX_PULSES`]
+//! slots ([`RadianceBeatWaves`]); [`advance_beat_waves`] ages every slot and
+//! writes its radius (`age ×`[`PULSE_SPEED_PX_S`]) and age-decayed strength
+//! into the sim uniform's `wave_radius_px` / `wave_strength` lanes. The
+//! particle kernel brightens each particle as a wave front passes its exterior
+//! distance, so the flare travels *through the medium* instead of over it.
+//!
+//! Historically this drove a fullscreen additive silhouette-contour overlay
+//! quad; that overlay was retired and its energy moved into the particle world.
 //!
 //! ## Hot-path invariants
 //!
-//! Fixed-size arrays throughout: per-frame work is a slot walk plus one
-//! uniform re-prepare (the `drive_radiance_materials` cost class). Nothing
-//! allocates after spawn. During the attract screensaver the mic is paused →
-//! `beat_confidence` holds 0 → no spawns; residual waves fade within
-//! [`PULSE_LIFETIME_S`] and the master lane is dimmed by the screensaver fade.
-//! When the packed uniform contributes exactly zero light — master 0 (nobody
-//! tracked, e.g. all night in the attract screensaver) or every slot dead —
-//! the driver hides the fullscreen quad ([`pulse_uniform_dead`]), so the
-//! additive full-window fragment pass is skipped instead of adding zeros.
+//! Fixed-size arrays throughout: per-frame work is a slot walk plus the wave
+//! lane bake, and nothing allocates after spawn. During Idle/Screensaver the
+//! mic is paused → `beat_confidence` holds 0 → no spawns; residual waves keep
+//! expanding and fade within [`PULSE_LIFETIME_S`]. Once every slot is dead and
+//! the zeros have been written once, the driver stops touching the sim
+//! resource (the `frozen_secs` stop-dirtying contract).
 
-use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
-use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
-};
-use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 use wc_core::audio::input::AudioAnalysis;
-use wc_core::input::body::{BodyTrackingState, MASK_SIZE};
-use wc_core::lifecycle::screensaver::fade::ScreensaverFade;
 
-use super::distance_field::DIST_MAX_TEXELS;
-use super::render::slot_identity_colors;
-use super::settings::RadianceSettings;
-use super::systems::sim_params::RadianceState;
-use super::systems::spawn::RadianceRoot;
+use super::compute::sim_params::RadianceSimParams;
 
-/// Fixed pulse slot count (uniform array size; WGSL mirrors it).
+/// Fixed wave slot count (the CPU ring buffer size).
 pub const MAX_PULSES: usize = 6;
-/// Wave expansion speed, world px/s. The front clears a 1080-px-tall screen
-/// from the silhouette in under a second — one wave is still visibly
-/// travelling when the next beat lands at dance tempi, layering nested
-/// silhouette contours.
+/// Wave expansion speed, world px/s. One wave is still travelling when the
+/// next beat lands at dance tempi, so multiple flare fronts sweep the medium
+/// at once.
 pub const PULSE_SPEED_PX_S: f32 = 650.0;
-/// Base gaussian band half-width, world px (widens as the wave ages).
+/// Default flare-band half-width, world px — the Gaussian half-band of the
+/// in-medium flare front. Task 3's `flare_band` Dev default inherits it.
 pub const PULSE_WIDTH_PX: f32 = 60.0;
-/// Seconds until a pulse slot is dead (the shader also fades a tail window
-/// ending here, so the cutoff is invisible).
+/// Seconds until a wave slot is dead. The CPU age-decay (`exp(-age · 1.8)` in
+/// [`advance_beat_waves`]) dims the strength smoothly to near-zero well before
+/// this cutoff, so the hard cutoff is invisible.
 pub const PULSE_LIFETIME_S: f32 = 1.6;
 /// `beat_confidence` rising-edge threshold that fires a wave. Confidence
 /// snaps to 1.0 on a beat and decays with a 0.3 s time constant, so at the
@@ -76,9 +58,12 @@ const PULSE_DT_CAP: f32 = 0.05;
 pub struct PulseSlot {
     /// Seconds since the beat that spawned it (`>= PULSE_LIFETIME_S` = dead).
     pub age: f32,
-    /// Brightness scale in `0..1` (onset-derived at spawn).
+    /// Brightness scale in `0..1` (beat-derived at spawn).
     pub strength: f32,
-    /// Linear-HDR wave color (palette-derived at spawn).
+    /// Linear-HDR color carried per slot. The in-medium flare has no color of
+    /// its own (it brightens the particle's existing hue), so this is
+    /// currently unused; the slot keeps the field so [`step_pulses`] stays
+    /// shape-compatible.
     pub color: Vec4,
 }
 
@@ -93,10 +78,10 @@ impl Default for PulseSlot {
     }
 }
 
-/// CPU pulse state: a fixed ring buffer of slots plus the beat edge tracker.
-/// Inserted on Radiance entry, removed on exit.
+/// CPU beat-wave state: a fixed ring buffer of slots plus the beat edge
+/// tracker. Inserted on Radiance entry, removed on exit.
 #[derive(Resource, Clone, Copy, Debug, Default)]
-pub struct RadiancePulses {
+pub struct RadianceBeatWaves {
     /// The slots; spawning overwrites round-robin (oldest-first by index).
     pub slots: [PulseSlot; MAX_PULSES],
     /// Next slot index to overwrite.
@@ -105,129 +90,11 @@ pub struct RadiancePulses {
     prev_beat: f32,
 }
 
-/// The uniform block the contour-wave shader consumes. WGSL struct parity is
-/// by convention (arrays of vec4, stride 16).
-#[derive(ShaderType, Clone, Copy, Debug)]
-pub struct RadiancePulseUniform {
-    /// Per slot: x = age s, y = strength (0 = dead), zw unused.
-    pub pulses: [Vec4; MAX_PULSES],
-    /// Per slot: rgb = linear-HDR wave color, w unused.
-    pub colors: [Vec4; MAX_PULSES],
-    /// x = master intensity (pulse setting × screensaver-fade dim),
-    /// y = expansion speed px/s, z = base band width px, w = lifetime s.
-    pub params: Vec4,
-    /// Distance-field mapping: x = mirror (1 = flip), y = fit-to-height
-    /// aspect (`window_w/window_h`; 1 = full-window stretch), z = world px
-    /// per mask texel, w = [`DIST_MAX_TEXELS`] (R8 denormalization).
-    pub mapping: Vec4,
-}
-
-impl Default for RadiancePulseUniform {
-    /// All slots dead, canonical speed/width/lifetime, master 0.
-    fn default() -> Self {
-        Self {
-            pulses: [Vec4::ZERO; MAX_PULSES],
-            colors: [Vec4::ZERO; MAX_PULSES],
-            params: Vec4::new(0.0, PULSE_SPEED_PX_S, PULSE_WIDTH_PX, PULSE_LIFETIME_S),
-            mapping: Vec4::new(1.0, 1.0, 4.0, DIST_MAX_TEXELS),
-        }
-    }
-}
-
-/// Fullscreen additive material drawing every live silhouette-contour wave
-/// (fragment-only; the default `Material2d` vertex shader supplies UVs).
-#[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
-pub struct RadiancePulseMaterial {
-    /// The 256² `R8Unorm` silhouette distance field
-    /// (`super::distance_field` recomputes it per body frame).
-    #[texture(0)]
-    #[sampler(1)]
-    pub distance_field: Handle<Image>,
-    /// The packed pulse state for this frame.
-    #[uniform(2)]
-    pub pulses: RadiancePulseUniform,
-}
-
-impl Material2d for RadiancePulseMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/radiance/pulse.wgsl".into()
-    }
-
-    /// `Blend` routes into `Transparent2d`; [`Self::specialize`] then makes
-    /// it pure additive (the `RadianceMaterial` recipe).
-    fn alpha_mode(&self) -> AlphaMode2d {
-        AlphaMode2d::Blend
-    }
-
-    /// Override the color-target blend to pure additive `(One, One)` so the
-    /// waves accumulate HDR light into bloom instead of alpha-occluding (the
-    /// shared `render::override_additive_blend` recipe — a code span, not a
-    /// link: the helper is `pub(crate)` and this doc is public).
-    fn specialize(
-        descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
-        _key: Material2dKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        super::render::override_additive_blend(descriptor);
-        Ok(())
-    }
-}
-
-/// Sample the three-stop palette gradient at `t` (the CPU twin of the render
-/// shader's `gradient`).
-#[must_use]
-pub fn gradient_sample(stops: &[Vec4; 3], t: f32) -> Vec4 {
-    let t = t.clamp(0.0, 1.0);
-    if t < 0.5 {
-        stops[0].lerp(stops[1], t * 2.0)
-    } else {
-        stops[1].lerp(stops[2], (t - 0.5) * 2.0)
-    }
-}
-
-/// Raw per-slot fade vector — **no** phantom fallback (unlike
-/// `render::slot_fades`): unoccupied slots are 0, so the union below reads
-/// exactly "how present is anybody".
-#[must_use]
-pub fn raw_slot_fades(body: Option<&BodyTrackingState>) -> Vec4 {
-    let mut fades = Vec4::ZERO;
-    if let Some(state) = body {
-        for b in state.iter_bodies() {
-            if b.slot < 4 {
-                fades[b.slot] = b.fade.clamp(0.0, 1.0);
-            }
-        }
-    }
-    fades
-}
-
-/// The union presence envelope: the maximum fade across occupied slots. The
-/// pulse master rides it so beat waves can never outlive the last figure —
-/// when the final dancer's fade releases, the residual waves dim with it,
-/// and an empty room's stale distance field can never flash ghost contours.
-#[must_use]
-pub fn union_fade(fades: Vec4) -> f32 {
-    fades.x.max(fades.y).max(fades.z).max(fades.w)
-}
-
-/// Fade-weighted blend of the present bodies' identity colors — the wave
-/// color of a mixed floor is the palette blend of everyone dancing. Falls
-/// back to `fallback` when nobody carries fade (the wave then rides the
-/// plain palette, e.g. the synthetic/phantom writers).
-#[must_use]
-pub fn blend_present_colors(colors: [Vec4; 4], fades: Vec4, fallback: Vec4) -> Vec4 {
-    let sum = fades.x + fades.y + fades.z + fades.w;
-    if sum <= f32::EPSILON {
-        return fallback;
-    }
-    (colors[0] * fades.x + colors[1] * fades.y + colors[2] * fades.z + colors[3] * fades.w) / sum
-}
-
 /// Advance every slot by `dt` and spawn one wave on a rising beat edge.
 /// Returns `true` when a wave was spawned. Pure over its inputs so the
 /// beat-edge/round-robin behavior is unit-testable without an app.
 pub fn step_pulses(
-    pulses: &mut RadiancePulses,
+    pulses: &mut RadianceBeatWaves,
     dt: f32,
     beat_confidence: f32,
     spawn_enabled: bool,
@@ -251,152 +118,63 @@ pub fn step_pulses(
     true
 }
 
-/// Pack the CPU slots into the shader uniform. `master` is the pulse
-/// setting × the screensaver-fade dim; dead slots pack zero strength so the
-/// shader skips them. `px_per_texel` converts field texels to world px
-/// (`uv_to_world.y / MASK_SIZE`); `fit_aspect`/`mirror` mirror the
-/// silhouette material's mask mapping so wave and fill agree per pixel.
-#[must_use]
-pub fn pack_pulse_uniform(
-    pulses: &RadiancePulses,
-    master: f32,
-    mirror: bool,
-    fit_aspect: f32,
-    px_per_texel: f32,
-) -> RadiancePulseUniform {
-    let mut uniform = RadiancePulseUniform {
-        params: Vec4::new(
-            master.max(0.0),
-            PULSE_SPEED_PX_S,
-            PULSE_WIDTH_PX,
-            PULSE_LIFETIME_S,
-        ),
-        mapping: Vec4::new(
-            f32::from(u8::from(mirror)),
-            fit_aspect,
-            px_per_texel,
-            DIST_MAX_TEXELS,
-        ),
-        ..RadiancePulseUniform::default()
-    };
-    for (i, slot) in pulses.slots.iter().enumerate() {
-        let live = slot.age < PULSE_LIFETIME_S && slot.strength > 0.0;
-        uniform.pulses[i] = Vec4::new(slot.age, if live { slot.strength } else { 0.0 }, 0.0, 0.0);
-        uniform.colors[i] = slot.color;
-    }
-    uniform
-}
-
-/// True when the packed uniform contributes exactly zero light: the master
-/// lane is zero (pulse setting off, full screensaver dim, or nobody carries
-/// presence fade) or every wave slot packs dead. The shader multiplies its
-/// whole output by `params.x` and skips zero-strength slots, so this
-/// predicate is exact — hiding the quad on it is output-identical.
-#[must_use]
-pub fn pulse_uniform_dead(uniform: &RadiancePulseUniform) -> bool {
-    uniform.params.x <= 0.0 || uniform.pulses.iter().all(|slot| slot.y <= 0.0)
-}
-
-/// `Update` (gated `in_state(AppState::Radiance)`, like the material driver,
-/// so residual waves keep fading through Idle/Screensaver): advance + spawn
-/// waves from the beat lane and pack the uniform into the pulse material.
-/// Hides the fullscreen quad while the uniform is fully dead (see
-/// [`pulse_uniform_dead`]) so the additive pass costs nothing when it would
-/// draw nothing.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Bevy system — each param is a distinct ECS resource/query the driver packs"
-)]
-pub fn update_radiance_pulses(
+/// `Update` (gated `in_state(AppState::Radiance)` — Idle and the screensaver
+/// included, so a wave that is mid-flight when the dancer leaves keeps
+/// expanding and fades out instead of freezing as a bright ring on the
+/// surviving particles): advance the ring, spawn on a rising beat edge, and
+/// bake every slot's current radius + strength into the sim uniform.
+///
+/// Writes only the wave fields of `RadianceSimParamsGpu` — the Active-only
+/// baker owns everything else, so the two writers never conflict. During
+/// Idle the mic is paused (`beat_confidence` holds 0) so no new waves spawn;
+/// ages still advance here.
+pub fn advance_beat_waves(
     time: Res<'_, Time>,
-    window: Single<'_, '_, &Window>,
-    settings: Res<'_, RadianceSettings>,
-    state: Res<'_, RadianceState>,
-    fade: Res<'_, ScreensaverFade>,
     audio: Option<Res<'_, AudioAnalysis>>,
-    body: Option<Res<'_, BodyTrackingState>>,
-    mut pulses: ResMut<'_, RadiancePulses>,
-    mut quads: Query<
-        '_,
-        '_,
-        (
-            &bevy::sprite_render::MeshMaterial2d<RadiancePulseMaterial>,
-            &mut Visibility,
-        ),
-        With<RadianceRoot>,
-    >,
-    mut materials: ResMut<'_, Assets<RadiancePulseMaterial>>,
+    mut waves: ResMut<'_, RadianceBeatWaves>,
+    mut sim: ResMut<'_, RadianceSimParams>,
+    mut settled_dead: Local<'_, bool>,
 ) {
     let dt = time.delta_secs().min(PULSE_DT_CAP);
     let audio_frame = audio.map_or_else(AudioAnalysis::neutral, |a| *a);
-
-    // Wave color: the fade-weighted palette blend of the present bodies'
-    // identity colors (one dancer = their color; a mixed floor = the blend),
-    // falling back to slot 0's identity for the body-less writers.
-    let slot_colors = slot_identity_colors(
-        settings.palette,
-        state.hue_phase,
-        settings.hue_spread,
-        fade.alpha(),
-    );
-    let fades = raw_slot_fades(body.as_deref());
-    let color = blend_present_colors(slot_colors, fades, slot_colors[0]);
-
-    // Strength is bass-weighted (the spec's "big pulses follow the beat" —
-    // beat timing from the confidence edge, wave WEIGHT from the bass body);
-    // the 0.35 floor keeps soft beats visible.
-    let strength = (0.35 + 0.65 * state.bass_drive).clamp(0.0, 1.0);
-    let spawn_enabled =
-        settings.pulse_intensity > 0.0 && audio_frame.active && settings.audio_sensitivity > 0.0;
+    // Strength: the bass-weighted beat lane, exactly the old overlay's drive.
+    let strength = (audio_frame.beat_confidence * 0.6 + 0.4).min(1.0);
     step_pulses(
-        &mut pulses,
+        &mut waves,
         dt,
         audio_frame.beat_confidence,
-        spawn_enabled,
+        true,
         strength,
-        color,
+        Vec4::ONE, // color is unused by the in-medium flare; slot keeps the field
     );
-
-    // Same mask-mapping terms the silhouette material packs, so the wave's
-    // distance lookup agrees with the rendered fill per pixel.
-    let h = window.height().max(1.0);
-    let fit_aspect = if settings.fit_to_height {
-        window.width() / h
-    } else {
-        1.0
-    };
-    #[allow(
-        clippy::as_conversions,
-        clippy::cast_precision_loss,
-        reason = "MASK_SIZE = 256, exact in f32"
-    )]
-    let px_per_texel = h / MASK_SIZE as f32;
-
-    // Master rides the screensaver dim AND the union presence fade: waves
-    // never outlive the last figure (see `union_fade`).
-    let master = settings.pulse_intensity * (1.0 - fade.alpha()) * union_fade(fades);
-    let uniform = pack_pulse_uniform(&pulses, master, settings.mirror, fit_aspect, px_per_texel);
-    // Fully-dead uniform → hide the quad (skip the full-window additive
-    // pass); assign only on change so visibility change detection stays quiet.
-    let desired = if pulse_uniform_dead(&uniform) {
-        Visibility::Hidden
-    } else {
-        Visibility::Visible
-    };
-    for (handle, mut visibility) in &mut quads {
-        if let Some(mut material) = materials.get_mut(&handle.0) {
-            material.pulses = uniform;
-        }
-        if *visibility != desired {
-            *visibility = desired;
-        }
+    // Settle guard: once every slot is dead AND the zeros have been written
+    // once, stop touching the sim resource — an Idle frame with no residual
+    // waves must not re-dirty `RadianceSimParams` every tick (the
+    // `frozen_secs` clamp's stop-dirtying contract; see its field doc).
+    let any_live = waves
+        .slots
+        .iter()
+        .any(|s| s.age < PULSE_LIFETIME_S && s.strength > 0.0);
+    if !any_live && *settled_dead {
+        return;
+    }
+    *settled_dead = !any_live;
+    for (i, slot) in waves.slots.iter().enumerate() {
+        let live = slot.age < PULSE_LIFETIME_S && slot.strength > 0.0;
+        sim.params.wave_radius_px[i] = slot.age * PULSE_SPEED_PX_S;
+        sim.params.wave_strength[i] = if live {
+            // Age decay: the old contour pass's exp(-age * 1.8) dimming,
+            // now also the guard against the saturation-shell sync flash.
+            slot.strength * (-slot.age * 1.8).exp()
+        } else {
+            0.0
+        };
     }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "test assertions")]
 mod tests {
     use super::*;
 
@@ -404,7 +182,7 @@ mod tests {
     /// tail and a held-high value do not retrigger; the next beat does.
     #[test]
     fn beat_edge_spawns_once_per_beat() {
-        let mut pulses = RadiancePulses::default();
+        let mut pulses = RadianceBeatWaves::default();
         let dt = 1.0 / 60.0;
         let c = Vec4::ONE;
         assert!(step_pulses(&mut pulses, dt, 1.0, true, 0.8, c));
@@ -431,7 +209,7 @@ mod tests {
     /// Spawns overwrite round-robin without disturbing other slots' ages.
     #[test]
     fn spawns_rotate_through_slots() {
-        let mut pulses = RadiancePulses::default();
+        let mut pulses = RadianceBeatWaves::default();
         for i in 0..MAX_PULSES + 2 {
             // Drop confidence to re-arm the edge, then beat. Tag each spawn
             // by strength so wrap-around is observable.
@@ -459,212 +237,11 @@ mod tests {
         }
     }
 
-    /// Disabled spawning (pulse setting 0 / inactive audio) never fires.
+    /// Disabled spawning (beat lane silent / inactive audio) never fires.
     #[test]
     fn disabled_spawning_never_fires() {
-        let mut pulses = RadiancePulses::default();
+        let mut pulses = RadianceBeatWaves::default();
         assert!(!step_pulses(&mut pulses, 0.01, 1.0, false, 1.0, Vec4::ONE));
         assert!(pulses.slots.iter().all(|s| s.strength.abs() < f32::EPSILON));
-    }
-
-    /// Dead and expired slots pack zero strength; live slots carry theirs;
-    /// the mapping lane carries the mask-transform terms.
-    #[test]
-    fn pack_zeroes_dead_slots_and_carries_mapping() {
-        let mut pulses = RadiancePulses::default();
-        step_pulses(&mut pulses, 0.01, 1.0, true, 0.9, Vec4::ONE);
-        let packed = pack_pulse_uniform(&pulses, 1.5, true, 1.78, 4.2);
-        assert!(
-            (packed.pulses[0].y - 0.9).abs() < f32::EPSILON,
-            "live slot keeps strength"
-        );
-        for slot in &packed.pulses[1..] {
-            assert!(slot.y.abs() < f32::EPSILON, "dead slots pack zero strength");
-        }
-        assert!(
-            (packed.params.x - 1.5).abs() < f32::EPSILON,
-            "master in params.x"
-        );
-        assert!((packed.mapping.x - 1.0).abs() < f32::EPSILON, "mirror flag");
-        assert!((packed.mapping.y - 1.78).abs() < f32::EPSILON, "fit aspect");
-        assert!(
-            (packed.mapping.z - 4.2).abs() < f32::EPSILON,
-            "px per texel"
-        );
-        assert!(
-            (packed.mapping.w - DIST_MAX_TEXELS).abs() < f32::EPSILON,
-            "denormalization"
-        );
-        // Age past the lifetime: packs dead.
-        for _ in 0..200 {
-            step_pulses(&mut pulses, 0.05, 0.0, true, 0.9, Vec4::ONE);
-        }
-        let packed = pack_pulse_uniform(&pulses, 1.0, false, 1.0, 4.0);
-        assert!(
-            packed.pulses[0].y.abs() < f32::EPSILON,
-            "expired slot packs dead"
-        );
-    }
-
-    /// Union fade is the max across occupied slots; raw fades carry no
-    /// phantom fallback (empty state = 0 — the ghost-wave suppressor).
-    #[test]
-    fn union_fade_tracks_occupied_slots_only() {
-        use wc_core::input::body::{BodyTrackingState, TrackedBody};
-        assert!(union_fade(raw_slot_fades(None)).abs() < f32::EPSILON);
-        let empty = BodyTrackingState::default();
-        assert!(
-            union_fade(raw_slot_fades(Some(&empty))).abs() < f32::EPSILON,
-            "no bodies -> no pulse master (unlike the fill's phantom fallback)"
-        );
-        let mut state = BodyTrackingState::default();
-        state.bodies[2] = Some(TrackedBody {
-            slot: 2,
-            present: false, // fading out
-            fade: 0.4,
-            ..TrackedBody::default()
-        });
-        let fades = raw_slot_fades(Some(&state));
-        assert_eq!(fades, Vec4::new(0.0, 0.0, 0.4, 0.0));
-        assert!((union_fade(fades) - 0.4).abs() < f32::EPSILON);
-    }
-
-    /// Wave color is the fade-weighted blend of present identities; nobody
-    /// present falls back to the given color.
-    #[test]
-    fn blend_present_colors_weights_by_fade() {
-        let colors = [
-            Vec4::new(1.0, 0.0, 0.0, 1.0),
-            Vec4::new(0.0, 1.0, 0.0, 1.0),
-            Vec4::ZERO,
-            Vec4::ZERO,
-        ];
-        let fallback = Vec4::new(0.5, 0.5, 0.5, 1.0);
-        assert_eq!(
-            blend_present_colors(colors, Vec4::ZERO, fallback),
-            fallback,
-            "nobody present -> fallback"
-        );
-        let blended = blend_present_colors(colors, Vec4::new(1.0, 1.0, 0.0, 0.0), fallback);
-        assert!((blended.x - 0.5).abs() < 1e-6 && (blended.y - 0.5).abs() < 1e-6);
-        let solo = blend_present_colors(colors, Vec4::new(0.3, 0.0, 0.0, 0.0), fallback);
-        assert_eq!(solo, colors[0], "solo dancer keeps their exact identity");
-    }
-
-    /// The uniform's WGSL layout size: `PulseUniform` in `pulse.wgsl` is
-    /// `pulses: array<vec4, 6>` (96 B) + `colors: array<vec4, 6>` (96 B) +
-    /// `params: vec4` (16 B) + `mapping: vec4` (16 B) = 224 B. Struct parity
-    /// with the hand-written WGSL is by convention, so this locks the Rust
-    /// side's size against silent field drift.
-    #[test]
-    fn pulse_uniform_size_matches_wgsl() {
-        assert_eq!(
-            <RadiancePulseUniform as bevy::render::render_resource::ShaderType>::min_size().get(),
-            224,
-            "RadiancePulseUniform must stay (6 + 6 + 1 + 1) vec4s"
-        );
-    }
-
-    /// The dead predicate is exact against the shader's contribution: zero
-    /// master or all-dead slots is dead; a live slot under a live master is
-    /// not.
-    #[test]
-    fn dead_predicate_matches_shader_contribution() {
-        // Default: master 0 AND all slots dead.
-        assert!(pulse_uniform_dead(&RadiancePulseUniform::default()));
-        // Live master, all slots dead → still dead.
-        let mut pulses = RadiancePulses::default();
-        let packed = pack_pulse_uniform(&pulses, 1.0, false, 1.0, 4.0);
-        assert!(pulse_uniform_dead(&packed), "no live wave -> dead");
-        // Live master + one live wave → alive.
-        step_pulses(&mut pulses, 0.01, 1.0, true, 0.9, Vec4::ONE);
-        let packed = pack_pulse_uniform(&pulses, 1.0, false, 1.0, 4.0);
-        assert!(!pulse_uniform_dead(&packed), "live wave + master -> alive");
-        // Zero master kills it regardless of live slots.
-        let packed = pack_pulse_uniform(&pulses, 0.0, false, 1.0, 4.0);
-        assert!(pulse_uniform_dead(&packed), "master 0 -> dead");
-    }
-
-    /// The driver hides the quad while the uniform is fully dead (nobody
-    /// tracked → master 0) and shows it again once a live wave rides a live
-    /// presence fade.
-    #[test]
-    fn driver_flips_quad_visibility_on_dead_uniform() {
-        use bevy::asset::AssetPlugin;
-        use bevy::ecs::system::RunSystemOnce;
-        use wc_core::input::body::{BodyTrackingState, TrackedBody};
-
-        let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default()));
-        app.init_asset::<RadiancePulseMaterial>();
-        app.world_mut().spawn(Window::default());
-        app.insert_resource(RadianceSettings::default());
-        app.insert_resource(RadianceState::default());
-        app.insert_resource(wc_core::lifecycle::screensaver::fade::ScreensaverFade::default());
-        app.insert_resource(RadiancePulses::default());
-        let material = app
-            .world_mut()
-            .resource_mut::<Assets<RadiancePulseMaterial>>()
-            .add(RadiancePulseMaterial {
-                distance_field: Handle::default(),
-                pulses: RadiancePulseUniform::default(),
-            });
-        let quad = app
-            .world_mut()
-            .spawn((
-                RadianceRoot,
-                bevy::sprite_render::MeshMaterial2d(material),
-                Visibility::default(),
-            ))
-            .id();
-
-        // Nobody tracked: master 0 → hidden.
-        app.world_mut()
-            .run_system_once(update_radiance_pulses)
-            .expect("driver runs");
-        assert_eq!(
-            *app.world().entity(quad).get::<Visibility>().expect("vis"),
-            Visibility::Hidden,
-            "dead uniform must hide the quad"
-        );
-
-        // A present body + a live wave → visible again.
-        let mut body = BodyTrackingState::default();
-        body.bodies[0] = Some(TrackedBody {
-            slot: 0,
-            present: true,
-            fade: 1.0,
-            ..TrackedBody::default()
-        });
-        app.insert_resource(body);
-        {
-            let mut pulses = app.world_mut().resource_mut::<RadiancePulses>();
-            step_pulses(&mut pulses, 0.01, 1.0, true, 0.9, Vec4::ONE);
-        }
-        app.world_mut()
-            .run_system_once(update_radiance_pulses)
-            .expect("driver runs again");
-        assert_eq!(
-            *app.world().entity(quad).get::<Visibility>().expect("vis"),
-            Visibility::Visible,
-            "live wave + presence must re-show the quad"
-        );
-    }
-
-    /// Gradient sampling hits the stops at 0 / 0.5 / 1 and clamps outside.
-    #[test]
-    fn gradient_sample_interpolates_three_stops() {
-        let stops = [
-            Vec4::new(1.0, 0.0, 0.0, 1.0),
-            Vec4::new(0.0, 1.0, 0.0, 1.0),
-            Vec4::new(0.0, 0.0, 1.0, 1.0),
-        ];
-        assert_eq!(gradient_sample(&stops, 0.0), stops[0]);
-        assert_eq!(gradient_sample(&stops, 0.5), stops[1]);
-        assert_eq!(gradient_sample(&stops, 1.0), stops[2]);
-        assert_eq!(gradient_sample(&stops, -1.0), stops[0]);
-        assert_eq!(gradient_sample(&stops, 2.0), stops[2]);
-        let q = gradient_sample(&stops, 0.25);
-        assert!((q.x - 0.5).abs() < 1e-6 && (q.y - 0.5).abs() < 1e-6);
     }
 }

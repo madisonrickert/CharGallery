@@ -87,8 +87,24 @@ struct SimParams {
     impulses: array<Impulse, MAX_IMPULSES>,
     // Motion-emission bias 0..1: 0 = uniform edge pick, 1 = the respawn
     // rejection sampler below accepts almost exclusively moving-boundary
-    // points. Tail scalar at byte offset 400 (the struct rounds to 416).
+    // points. First tail scalar at byte offset 400.
     edge_motion_bias: f32,
+    // Radiance-rework tail (repel / contact-glow / flare / motion gains plus
+    // the beat flare-wave lanes). Declared here for layout parity with the
+    // Rust `RadianceSimParamsGpu`; the kernel consumes them in Tasks 2-3.
+    // WGSL uniform scalar arrays have 16-byte stride, so the Rust `[f32; 8]`
+    // wave lanes mirror as two `vec4<f32>` each. Struct total 496 bytes.
+    repel_strength: f32,
+    repel_radius_px: f32,
+    contact_glow: f32,
+    glow_decay_baked: f32,
+    flare_gain: f32,
+    flare_band_px: f32,
+    motion_glow: f32,
+    wave_radius_a: vec4<f32>,
+    wave_radius_b: vec4<f32>,
+    wave_strength_a: vec4<f32>,
+    wave_strength_b: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;

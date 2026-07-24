@@ -77,9 +77,13 @@ pub const MAX_IMPULSES: usize = 8;
 /// exactly; the layout is `#[repr(C)]` so `bytemuck::bytes_of` produces the
 /// correct byte sequence. The scalar header totals 144 bytes — a 16-byte
 /// multiple — so the `impulses` array (16-byte-aligned per WGSL uniform
-/// rules, 32-byte stride) begins aligned at offset 144 and ends at 400,
-/// where the `edge_motion_bias` tail scalar + 12 pad bytes round the struct
-/// to the uniform 16-byte multiple. Total size 416.
+/// rules, 32-byte stride) begins aligned at offset 144 and ends at 400. The
+/// tail packs `edge_motion_bias` plus seven Radiance-rework gain scalars
+/// (repel / contact-glow / flare / motion) from offset 400 to 432, then two
+/// `[f32; 8]` beat-wave arrays (`wave_radius_px` at 432, `wave_strength` at
+/// 464) — each mirrored on the WGSL side as two `vec4<f32>` because uniform
+/// scalar arrays have 16-byte stride. Total size 496, already a 16-byte
+/// multiple, so no trailing pad.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct RadianceSimParamsGpu {
@@ -165,14 +169,27 @@ pub struct RadianceSimParamsGpu {
     /// Motion-emission bias `0..=1` (the `edge_motion_bias` setting, clamped
     /// by the baker): 0 = uniform edge pick, 1 = respawns re-roll up to 3
     /// times toward moving-boundary points (see the rejection sampler in
-    /// `simulate.wgsl`).
+    /// `simulate.wgsl`). Offset 400, unchanged.
     pub edge_motion_bias: f32,
-    /// Padding rounding the struct to a 16-byte multiple (WGSL uniform rule).
-    #[allow(
-        clippy::pub_underscore_fields,
-        reason = "GPU struct layout padding must be pub for bytemuck"
-    )]
-    pub _pad: [f32; 3],
+    /// Silhouette repel acceleration at the boundary, world px/s².
+    pub repel_strength: f32,
+    /// Repel influence radius outside the boundary, world px.
+    pub repel_radius_px: f32,
+    /// Glow added per second at the boundary (falloff-weighted).
+    pub contact_glow: f32,
+    /// Per-frame glow retention, baked CPU-side as `GLOW_PER_SECOND.powf(dt)`.
+    pub glow_decay_baked: f32,
+    /// Flare brightness gain as a beat wave passes a particle.
+    pub flare_gain: f32,
+    /// Gaussian half-band of the flare front, world px.
+    pub flare_band_px: f32,
+    /// Glow gain coupling to the limb-impulse weight (motion disturbance).
+    pub motion_glow: f32,
+    /// Per-wave current radius, world px (mirrors WGSL `wave_radius_a/_b`,
+    /// two `vec4<f32>` — uniform scalar arrays have 16-byte stride).
+    pub wave_radius_px: [f32; 8],
+    /// Per-wave strength (0 = dead slot), age-decayed CPU-side.
+    pub wave_strength: [f32; 8],
 }
 
 const _: () = {
@@ -186,7 +203,7 @@ const _: () = {
 /// the Cymatics F2 lesson).
 ///
 /// The `paused` / `frozen_secs` pair lives on the extract copy only — it is
-/// **not** part of [`RadianceSimParamsGpu`], so the 416-byte uniform layout
+/// **not** part of [`RadianceSimParamsGpu`], so the 496-byte uniform layout
 /// and its parity tests are untouched.
 #[derive(Resource, Clone, ExtractResource)]
 pub struct RadianceSimParams {
@@ -294,17 +311,46 @@ mod tests {
             std::mem::offset_of!(RadianceSimParamsGpu, edge_motion_bias),
             400
         );
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, repel_strength),
+            404
+        );
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, repel_radius_px),
+            408
+        );
+        assert_eq!(std::mem::offset_of!(RadianceSimParamsGpu, contact_glow), 412);
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, glow_decay_baked),
+            416
+        );
+        assert_eq!(std::mem::offset_of!(RadianceSimParamsGpu, flare_gain), 420);
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, flare_band_px),
+            424
+        );
+        assert_eq!(std::mem::offset_of!(RadianceSimParamsGpu, motion_glow), 428);
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, wave_radius_px),
+            432
+        );
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, wave_strength),
+            464
+        );
+        assert_eq!(std::mem::size_of::<RadianceSimParamsGpu>(), 496);
     }
 
-    /// Locks the "header 144 bytes, total 416" claim to the real const, so a
+    /// Locks the "header 144 bytes, total 496" claim to the real const, so a
     /// change to `MAX_IMPULSES` cannot silently shift the size expectations.
     #[test]
     fn sim_params_size_tracks_max_impulses() {
         const HEADER_BYTES: usize = 144;
         const IMPULSE_STRIDE: usize = 32;
-        // edge_motion_bias + 12 pad bytes rounding the struct to the WGSL
-        // uniform 16-byte multiple.
-        const TAIL_BYTES: usize = 16;
+        // edge_motion_bias + 7 gain scalars (8 total = 32 B) + two [f32; 8]
+        // wave-lane arrays (64 B), offsets 400..496; no trailing pad because
+        // 496 is already a 16-byte multiple.
+        const TAIL_BYTES: usize = 96;
         assert_eq!(
             std::mem::size_of::<RadianceSimParamsGpu>(),
             HEADER_BYTES + MAX_IMPULSES * IMPULSE_STRIDE + TAIL_BYTES

@@ -52,8 +52,10 @@ pub mod compute;
 // rationale).
 #[cfg(feature = "body-tracking-mediapipe")]
 pub mod distance_field;
-// Beat-pulse layer (waves of light radiating from the silhouette's edge on
-// detected beats). Consumes `distance_field` above, gated identically.
+// Beat-wave clock: a ring of expanding wavefronts (one per detected beat)
+// whose radius + strength bake into the sim uniform for the in-medium
+// flare-wave. Consumes `distance_field` above (and, via the uniform, the
+// compute kernel), gated identically.
 #[cfg(feature = "body-tracking-mediapipe")]
 pub mod pulse;
 pub mod render;
@@ -213,26 +215,27 @@ impl Plugin for RadiancePlugin {
         );
 
         // Silhouette distance field: recomputed per body frame
-        // (generation-gated), consumed by the beat-wave shader. Ordered
-        // before the pulse driver so a fresh mask's field is live the same
-        // frame its wave brightness updates.
+        // (generation-gated), consumed by the compute kernel. Ordered before
+        // the beat-wave clock so a fresh mask's field is live the same frame
+        // the wave lanes update.
         #[cfg(feature = "body-tracking-mediapipe")]
         app.add_systems(
             Update,
             distance_field::update_distance_field
-                .before(pulse::update_radiance_pulses)
+                .before(pulse::advance_beat_waves)
                 .run_if(in_state(AppState::Radiance)),
         );
 
-        // Beat-pulse driver: spawns silhouette-contour waves on the analysis
-        // engine's beat lane and packs the wave uniform. Gated `in_state`
+        // Beat-wave clock: spawns a wave on each rising beat edge and bakes
+        // every slot's radius + age-decayed strength into the sim uniform's
+        // wave lanes (the kernel's in-medium flare-wave). Gated `in_state`
         // like the material driver so residual waves keep fading through
         // Idle/Screensaver (no new waves spawn there — the mic is paused
         // and beat_confidence holds 0).
         #[cfg(feature = "body-tracking-mediapipe")]
         app.add_systems(
             Update,
-            pulse::update_radiance_pulses.run_if(in_state(AppState::Radiance)),
+            pulse::advance_beat_waves.run_if(in_state(AppState::Radiance)),
         );
 
         // Extremity-sparkle driver: oscillation tracker + mirrored star
