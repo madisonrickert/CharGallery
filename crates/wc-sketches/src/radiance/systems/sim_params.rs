@@ -414,6 +414,13 @@ pub fn weights_to_cdf(weights: [f32; MAX_TRACKED_BODIES]) -> [f32; MAX_TRACKED_B
               burst measures fullness against, instead of duplicating the \
               kernel-uniform write"
 )]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one baker, two writers (Condition A1): the linear write of \
+              every kernel-uniform lane is the single source of truth for \
+              the audio/body -> sim derivation; splitting it would scatter \
+              the lane order the WGSL struct mirrors"
+)]
 pub fn bake_radiance_sim(
     settings: &RadianceSettings,
     audio: &AudioAnalysis,
