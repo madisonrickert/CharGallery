@@ -9,7 +9,8 @@
 // capacity; the CPU packs per-slot (start, count) ranges so indexing
 // `start + hash % count` never leaves a slot's live prefix. Reads the packed
 // signed silhouette distance field (byte plane, four texels per u32) at
-// @group(0) @binding(4) — the repel force + contact glow below.
+// @group(0) @binding(4) — the repel force, contact glow, and flare-wave
+// below, each gated on its own gain.
 //
 // Life cycle: a particle is DEAD when age >= lifespan (a zeroed buffer is all
 // dead). Each frame a dead particle rolls a hash against emission_prob; on a
@@ -367,14 +368,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         glow = glow + params.motion_glow * imp.gain * w * params.dt;
     }
 
-    // Silhouette repel + contact glow: signed field, positive outside.
-    // Central-difference gradient in world space; inside the body the
-    // interior chamfer keeps the ascent direction pointing at the nearest
-    // boundary, so overlap corrects smoothly instead of trapping.
-    if (params.edge_count > 0u && params.repel_strength > 0.0) {
+    // Silhouette field couplings (repel force, contact glow, beat flare):
+    // signed field, positive outside. Each term gates on its OWN gain so any
+    // one lane can be A/B'd alone; the texel lookup + signed distance are
+    // shared, computed once when any lane is live.
+    let field_live = params.repel_strength > 0.0
+        || params.contact_glow > 0.0
+        || params.flare_gain > 0.0;
+    if (params.edge_count > 0u && field_live) {
         let t = world_to_texel(p.position);
         let d = field_signed_px(t);
-        if (d < params.repel_radius_px) {
+        // Repel + contact glow share the boundary falloff and the central-
+        // difference gradient (worth its four extra field taps only when one
+        // of the two is live); inside the body the interior chamfer keeps
+        // the ascent direction pointing at the nearest boundary, so overlap
+        // corrects smoothly instead of trapping.
+        if ((params.repel_strength > 0.0 || params.contact_glow > 0.0)
+            && d < params.repel_radius_px) {
             let gx = field_signed_px(t + vec2<i32>(1, 0)) - field_signed_px(t - vec2<i32>(1, 0));
             // Mask y is down, world y is up: flip the y difference.
             let gy = field_signed_px(t - vec2<i32>(0, 1)) - field_signed_px(t + vec2<i32>(0, 1));
@@ -398,14 +408,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         // exterior distance. Strength is age-decayed CPU-side (also kills
         // the saturation-shell sync flash); the shell itself is suppressed
         // outright: beyond it every particle reads the same clamped d.
-        let d_ext = max(d, 0.0);
-        if (params.flare_gain > 0.0 && d_ext < FIELD_DIST_MAX_TEXELS * params.uv_to_world.y / f32(MASK_DIM) - params.flare_band_px) {
-            var flare = 0.0;
-            for (var w = 0u; w < 4u; w = w + 1u) {
-                flare = flare + wave_term(params.wave_radius_a[w], params.wave_strength_a[w], d_ext);
-                flare = flare + wave_term(params.wave_radius_b[w], params.wave_strength_b[w], d_ext);
+        if (params.flare_gain > 0.0) {
+            // Pillarbox extension: with fit-to-height on a wide window the
+            // mask square (|world x| <= uv_to_world.x / 2) ends before the
+            // window does, and the clamped texel lookup freezes d at the
+            // square's vertical edge — the flare front would halt on an
+            // invisible line there. From beyond that edge the nearest
+            // silhouette point sits overshoot px away horizontally and
+            // edge_d px away within the edge column, at right angles, so
+            // the exterior distance extends in quadrature (the retired
+            // overlay shader's over_texels handling, ported into the
+            // kernel). overshoot is 0 everywhere inside the square, leaving
+            // the plain clamped distance.
+            let overshoot = max(0.0, abs(p.position.x) - 0.5 * params.uv_to_world.x);
+            let edge_d = max(d, 0.0);
+            let d_ext = sqrt(edge_d * edge_d + overshoot * overshoot);
+            if (d_ext < FIELD_DIST_MAX_TEXELS * params.uv_to_world.y / f32(MASK_DIM) - params.flare_band_px) {
+                var flare = 0.0;
+                for (var w = 0u; w < 4u; w = w + 1u) {
+                    flare = flare + wave_term(params.wave_radius_a[w], params.wave_strength_a[w], d_ext);
+                    flare = flare + wave_term(params.wave_radius_b[w], params.wave_strength_b[w], d_ext);
+                }
+                glow = glow + params.flare_gain * flare * params.dt;
             }
-            glow = glow + params.flare_gain * flare * params.dt;
         }
     }
     p.glow = min(glow, 4.0);

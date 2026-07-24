@@ -212,9 +212,10 @@ pub struct RadianceSettings {
 
     /// Silhouette repel acceleration at the body boundary, world px/s²: the
     /// signed-field force that makes particles flow AROUND the dancer
-    /// instead of across. 0 disables the repel (and, with it, the whole
-    /// field-sampling block in the kernel — contact and flare glow
-    /// included), so it doubles as the field A/B switch.
+    /// instead of across. 0 disables the repel force only — the kernel
+    /// gates each field term (repel, contact glow, flare) on its own gain,
+    /// so contact glow and the flare lane keep sampling the field and any
+    /// one lane can be A/B'd alone.
     #[setting(
         default = 900.0_f32,
         min = 0.0_f32,
