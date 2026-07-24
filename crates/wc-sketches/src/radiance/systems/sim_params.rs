@@ -404,7 +404,8 @@ pub fn weights_to_cdf(weights: [f32; MAX_TRACKED_BODIES]) -> [f32; MAX_TRACKED_B
 /// kernel uniform: audio-scaled emission/buoyancy/turbulence, the
 /// beat-weighted swell, the onset ejecta lane, the per-slot edge ranges +
 /// fade-weighted emission CDF (multi-body budget apportioning), the
-/// mask-UV→world transform for the current window + mirror setting, and up
+/// mask-UV→world transform for the current window + mirror setting, the
+/// window half-extent the kernel's off-screen cull bounds against, and up
 /// to [`MAX_IMPULSES`] limb impulse slots fanned across every present body.
 #[allow(
     clippy::cast_possible_truncation,
@@ -621,6 +622,19 @@ pub fn bake_radiance_sim(
     // `uv_to_world` or its silhouette-shader mirror, so this one line keeps
     // them consistent.
     out.uv_to_world = mask_fit_rect(window_size, mask_frame_aspect, settings.frame_fit).to_array();
+
+    // Window half-extent for the kernel's off-screen cull. World space is
+    // Camera2d units with the origin at CENTRE, so the visible rect is
+    // exactly ±half on each axis. This is a *separate* lane from
+    // `uv_to_world` on purpose: that one is the camera frame's mapped rect,
+    // which on a display whose aspect differs from the camera's is much
+    // larger than the window (the installation maps 3413×1920 world px
+    // behind a 1080×1920 panel), and the cull needs the window, not the
+    // frame. Floored at 1 px per axis like `mask_fit_rect` does, so a
+    // zero/degenerate window never publishes a bound that would cull the
+    // whole field — the kernel additionally treats a zero half-extent as
+    // "cull disabled".
+    out.window_half_px = [window_size.x.max(1.0) * 0.5, window_size.y.max(1.0) * 0.5];
 
     // Limb impulses from the smoothed landmark velocities.
     bake_impulses(bodies, settings.mirror, &mut state.impulse_latch, out);
@@ -1128,6 +1142,66 @@ mod tests {
                 out.uv_to_world
             );
         }
+    }
+
+    /// The baker publishes the WINDOW half-extent (not the camera frame's
+    /// mapped rect) for the kernel's off-screen cull, and floors a
+    /// degenerate window so the cull bound is never zero-by-accident.
+    #[test]
+    fn bake_publishes_the_window_half_extent() {
+        let cam = 16.0 / 9.0;
+        let win = Vec2::new(1080.0, 1920.0); // the portrait installation
+        let mut state = RadianceState::default();
+        let mut out = RadianceSimParamsGpu::default();
+        bake_radiance_sim(
+            &RadianceSettings::default(),
+            &neutral_audio(),
+            None,
+            [100, 0, 0, 0],
+            cam,
+            120_000,
+            win,
+            1.0 / 60.0,
+            0.0,
+            &mut state,
+            &mut out,
+        );
+        assert!(
+            (out.window_half_px[0] - 540.0).abs() < 1e-3
+                && (out.window_half_px[1] - 960.0).abs() < 1e-3,
+            "{:?}",
+            out.window_half_px
+        );
+        // The point of the separate lane: on this aspect mismatch the camera
+        // frame's mapped rect is much wider than the window, so the cull
+        // could not have used `uv_to_world` as a proxy.
+        assert!(
+            out.uv_to_world[0] > out.window_half_px[0] * 2.0,
+            "frame rect {:?} should overflow the window",
+            out.uv_to_world
+        );
+
+        // Degenerate window (a minimized/pre-layout frame): floored to a
+        // positive bound rather than published as zero.
+        let mut zero_out = RadianceSimParamsGpu::default();
+        bake_radiance_sim(
+            &RadianceSettings::default(),
+            &neutral_audio(),
+            None,
+            [100, 0, 0, 0],
+            cam,
+            120_000,
+            Vec2::ZERO,
+            1.0 / 60.0,
+            0.0,
+            &mut state,
+            &mut zero_out,
+        );
+        assert!(
+            zero_out.window_half_px[0] > 0.0 && zero_out.window_half_px[1] > 0.0,
+            "{:?}",
+            zero_out.window_half_px
+        );
     }
 
     /// Sensitivity 0 (or silent input) is the exact neutral drive: every

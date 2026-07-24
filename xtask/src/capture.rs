@@ -69,6 +69,23 @@ const BLACK_LUMA_THRESHOLD: f64 = 1.0;
 /// the case where a screenshot observer never fires.
 const LAUNCH_TIMEOUT_SECS: u64 = 90;
 
+/// Relative tolerance for the captured-vs-requested window aspect check
+/// (1% = `0.01`). The comparison is deliberately on *aspect*, not on absolute
+/// size: a window is created in LOGICAL pixels and the framebuffer we screenshot
+/// is physical, so an honest capture on a `2x` (Retina / high-DPI) display comes
+/// back at exactly twice the requested width and height — same aspect. A window
+/// the OS had to *clamp* to fit the display shrinks one axis more than the
+/// other, which always moves the aspect. The tolerance absorbs the ±1 px
+/// rounding a fractional scale factor (e.g. Windows at `1.5x`) can introduce.
+const ASPECT_TOLERANCE: f64 = 0.01;
+
+/// The app's startup window size in logical pixels when a scenario pins no
+/// `resolution`. Mirrors `window_resolution()` in
+/// `crates/waveconductor/src/main.rs`; kept here so the window guard can check
+/// unpinned scenarios too. If the app's default ever changes, change it here as
+/// well — a stale value shows up as a loud aspect mismatch, not a silent pass.
+const DEFAULT_WINDOW: (u32, u32) = (1280, 720);
+
 /// Arguments for the capture subcommand.
 #[derive(ClapArgs)]
 #[allow(
@@ -132,7 +149,19 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     let report = analyze(&root, name, scenario, &out_dir)?;
 
+    // Window-clamp guard: the captured PNGs are the ground truth for what the
+    // window actually was. A mismatch invalidates the whole run, so it is
+    // checked before baselines can be blessed and before the pass verdict.
+    let window = check_window(scenario, &report);
+    let clamped = window.as_ref().filter(|w| !w.aspect_ok);
+
     if args.update_baselines {
+        // Blessing a clamped capture poisons the baseline exactly like an
+        // all-black frame does (see `update_baselines`): every honest future
+        // capture would then diff against a wrong-shaped PNG.
+        if let Some(w) = clamped {
+            return Err(window_clamp_error(name, w).into());
+        }
         update_baselines(&root, name, scenario, &out_dir, &report, args.allow_black)?;
         if args.json {
             println!("{{\"scenario\":\"{name}\",\"updated_baselines\":true}}");
@@ -142,11 +171,14 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let passed = report.frames.iter().all(|f| f.passed);
+    let passed = report.frames.iter().all(|f| f.passed) && clamped.is_none();
     if args.json {
-        print_json_report(name, &out_dir, &report);
+        print_json_report(name, &out_dir, &report, window.as_ref(), passed);
     } else {
-        print_human_report(name, &report);
+        print_human_report(name, &report, window.as_ref());
+    }
+    if let Some(w) = clamped {
+        return Err(window_clamp_error(name, w).into());
     }
     if passed {
         Ok(())
@@ -210,6 +242,53 @@ pub fn debug_env_pairs(merged: &BTreeMap<String, String>) -> Vec<(String, String
 /// `#[cfg(debug_assertions)]`-gated in the app, like the rest of `WC_CAPTURE`).
 pub fn resolution_env(scenario: &Scenario) -> Option<String> {
     scenario.resolution.map(|[w, h]| format!("{w}x{h}"))
+}
+
+/// The window size a scenario asks for, in logical pixels: its `resolution`
+/// field when present, otherwise the app's [`DEFAULT_WINDOW`]. This is the
+/// reference the window guard compares the captured framebuffer against.
+pub fn requested_window(scenario: &Scenario) -> (u32, u32) {
+    scenario.resolution.map_or(DEFAULT_WINDOW, |[w, h]| (w, h))
+}
+
+/// Aspect ratio (width / height) of a window/framebuffer size. `None` for a
+/// zero height, which has no defined aspect (a degenerate size the caller
+/// treats as a mismatch rather than dividing by zero).
+fn aspect_ratio(size: (u32, u32)) -> Option<f64> {
+    if size.1 == 0 {
+        return None;
+    }
+    Some(f64::from(size.0) / f64::from(size.1))
+}
+
+/// Whether a captured framebuffer preserves the requested window's aspect
+/// ratio within `tolerance` (a relative fraction of the requested aspect, e.g.
+/// `0.01` for 1%).
+///
+/// This is the whole window-clamp guard in one predicate. It must be
+/// aspect-based rather than size-based because the requested size is LOGICAL
+/// and the captured framebuffer is PHYSICAL: on a `2x` display an honest
+/// capture of a 1280x720 request comes back 2560x1440 (aspect unchanged), while
+/// a window the OS shrank to fit the display changes shape (the observed case:
+/// a 1080x1920 request captured as 2160x1976 — the height was clamped, the
+/// width was not, and a 0.5625 portrait aspect became a 1.09 near-square).
+///
+/// A zero dimension on either side is reported as a mismatch: there is no
+/// aspect to compare, and a zero-sized request or capture is itself a fault
+/// worth failing on.
+pub fn aspect_matches(requested: (u32, u32), captured: (u32, u32), tolerance: f64) -> bool {
+    // Screen out degenerate sizes on the integers, before any division: this
+    // also guarantees `want` below is non-zero, so the relative error is well
+    // defined.
+    if requested.0 == 0 || requested.1 == 0 || captured.0 == 0 || captured.1 == 0 {
+        return false;
+    }
+    let (Some(want), Some(got)) = (aspect_ratio(requested), aspect_ratio(captured)) else {
+        return false;
+    };
+    // Relative error, so the tolerance means the same thing for a 0.5625
+    // portrait aspect as for a 1.7778 landscape one.
+    (got - want).abs() / want <= tolerance
 }
 
 // ---- private orchestration helpers --------------------------------------
@@ -326,6 +405,10 @@ struct FrameReport {
     metrics: FrameMetrics,
     mean_abs_diff: Option<f64>,
     passed: bool,
+    /// Decoded PNG dimensions `(width, height)` in physical pixels — the
+    /// ground truth for how big the app's window actually was, read back from
+    /// the file rather than trusted from the launch env (see [`check_window`]).
+    size: (u32, u32),
     current_path: PathBuf,
     baseline_path: Option<PathBuf>,
 }
@@ -390,6 +473,8 @@ fn analyze(
             metrics: fm,
             mean_abs_diff,
             passed,
+            // Straight from the decoded PNG — no extra IO, no extra dependency.
+            size: current.dimensions(),
             current_path,
             baseline_path: baseline_ref,
         });
@@ -401,6 +486,92 @@ fn analyze(
     f.write_all(serde_json::to_string_pretty(&metrics_out)?.as_bytes())?;
 
     Ok(Report { frames })
+}
+
+/// Outcome of the requested-vs-realized window check for a capture run.
+struct WindowCheck {
+    /// Window size the scenario asked for, in logical pixels.
+    requested: (u32, u32),
+    /// Realized framebuffer size read back from a captured PNG, in physical
+    /// pixels. On a high-DPI display this is legitimately a whole multiple of
+    /// `requested`.
+    captured: (u32, u32),
+    /// Frame index `captured` was read from — the first offending frame when
+    /// the aspect is wrong, otherwise the first captured frame.
+    frame: u32,
+    /// True when `captured` preserves `requested`'s aspect within
+    /// [`ASPECT_TOLERANCE`].
+    aspect_ok: bool,
+}
+
+/// Compare what the scenario asked the window to be against what the app
+/// actually rendered, using the captured PNGs as ground truth.
+///
+/// The OS silently clamps a window that does not fit the attached display, and
+/// nothing in the launch path notices: the app starts, renders, screenshots,
+/// and exits cleanly at the wrong size. Every `*-portrait` scenario is exposed
+/// to this — a 1080x1920 request needs a 2160x3840 physical framebuffer at
+/// `2x`, which no ordinary display can host — so without this check a portrait
+/// regression test can validate a near-square window and report PASS.
+///
+/// Returns `None` only when the report has no frames at all (a scenario's
+/// `frames` list is non-empty by schema, so this is defensive).
+fn check_window(scenario: &Scenario, report: &Report) -> Option<WindowCheck> {
+    let requested = requested_window(scenario);
+    // Prefer the first *offending* frame: a mid-run window change (a resize, a
+    // display re-enumerating) would otherwise be masked by a good frame 0.
+    let offender = report
+        .frames
+        .iter()
+        .find(|f| !aspect_matches(requested, f.size, ASPECT_TOLERANCE));
+    // The frame whose realized size the check reports: the offender when there
+    // is one, else the first frame as the representative size.
+    let sample = offender.or_else(|| report.frames.first())?;
+    Some(WindowCheck {
+        requested,
+        captured: sample.size,
+        frame: sample.frame,
+        aspect_ok: offender.is_none(),
+    })
+}
+
+/// Render a size as `WxH (aspect A)` for operator-facing output; the aspect
+/// reads `n/a` for a degenerate zero-height size.
+fn fmt_size(size: (u32, u32)) -> String {
+    let aspect = aspect_ratio(size).map_or_else(|| "n/a".to_string(), |a| format!("{a:.4}"));
+    format!("{}x{} (aspect {aspect})", size.0, size.1)
+}
+
+/// The operator-facing failure for a clamped (wrong-aspect) capture: what was
+/// asked for, what was rendered, the likely cause, and the fix.
+fn window_clamp_error(name: &str, check: &WindowCheck) -> String {
+    let (rw, rh) = check.requested;
+    // Relative aspect error as a percentage, for a number the operator can
+    // weigh against the tolerance. `n/a` only for a degenerate zero dimension.
+    let error_pct = match (aspect_ratio(check.requested), aspect_ratio(check.captured)) {
+        (Some(want), Some(got)) if want > 0.0 => {
+            format!("{:.1}%", 100.0 * (got - want).abs() / want)
+        }
+        _ => "n/a".to_string(),
+    };
+    let tolerance_pct = 100.0 * ASPECT_TOLERANCE;
+    // An honest 2x capture, spelled out so the distinction is concrete.
+    let (rw2, rh2) = (rw.saturating_mul(2), rh.saturating_mul(2));
+    format!(
+        "capture: {name} rendered at the wrong aspect ratio — requested {}, captured {} at frame {} \
+         (off by {error_pct}, tolerance {tolerance_pct:.0}%). An honest capture on a scaled \
+         (Retina / high-DPI) display is an exact multiple of the request — {rw}x{rh} at 2x is \
+         {rw2}x{rh2}, same aspect. A CHANGED aspect means the OS clamped the window because it did \
+         not fit the attached display, so this run validated a window shape the scenario never \
+         asked for and nothing captured under it can be trusted (or blessed as a baseline). Fix: \
+         give this scenario a resolution that fits the attached display at its scale factor (halve \
+         both dimensions for a 2x display), or run the capture on a display that can host \
+         {rw}x{rh} at that scale factor. If the display arrangement changed — a rotated/portrait \
+         panel detached, an external unplugged — restore it and re-run.",
+        fmt_size(check.requested),
+        fmt_size(check.captured),
+        check.frame,
+    )
 }
 
 /// Frame indices from `report` whose mean luma falls below `threshold`
@@ -478,8 +649,22 @@ fn print_list(scenarios: &Scenarios, json: bool) {
     }
 }
 
-fn print_human_report(name: &str, report: &Report) {
+fn print_human_report(name: &str, report: &Report, window: Option<&WindowCheck>) {
     println!("CAPTURE {name}");
+    // Window line first: when the aspect is wrong every metric below it is
+    // describing a window shape the scenario never asked for.
+    if let Some(w) = window {
+        println!(
+            "WINDOW   requested {}  captured {}  {}",
+            fmt_size(w.requested),
+            fmt_size(w.captured),
+            if w.aspect_ok {
+                "ok"
+            } else {
+                "ASPECT MISMATCH (window clamped by the display)"
+            },
+        );
+    }
     println!(
         "{:<8} {:<22} {:<10} {:<10} VERDICT",
         "FRAME", "FULL_MEAN(RGB)", "STD", "DIFF"
@@ -523,7 +708,13 @@ fn print_human_report(name: &str, report: &Report) {
     }
 }
 
-fn print_json_report(name: &str, out_dir: &Path, report: &Report) {
+fn print_json_report(
+    name: &str,
+    out_dir: &Path,
+    report: &Report,
+    window: Option<&WindowCheck>,
+    passed: bool,
+) {
     // Hand-rolled JSON so the shape is explicit and stable for the agent.
     let mut frames_json = Vec::new();
     for f in &report.frames {
@@ -552,15 +743,41 @@ fn print_json_report(name: &str, out_dir: &Path, report: &Report) {
         .filter(|f| !f.passed || f.baseline_path.is_none())
         .map(|f| format!("\"{}\"", f.current_path.display()))
         .collect();
-    let passed = report.frames.iter().all(|f| f.passed);
     println!(
-        "{{\"scenario\":\"{}\",\"dir\":\"{}\",\"passed\":{},\"frames\":[{}],\"open_for_review\":[{}]}}",
+        "{{\"scenario\":\"{}\",\"dir\":\"{}\",\"passed\":{},\"window\":{},\"frames\":[{}],\"open_for_review\":[{}]}}",
         name,
         out_dir.display(),
         passed,
+        window_json(window),
         frames_json.join(","),
         open.join(","),
     );
+}
+
+/// The `window` object of the `--json` report: the requested-vs-realized window
+/// geometry and the aspect guard's verdict, so a machine consumer can see a
+/// clamped capture as a field rather than having to parse the error text.
+/// `null` when there was no frame to measure.
+fn window_json(window: Option<&WindowCheck>) -> String {
+    let Some(w) = window else {
+        return "null".to_string();
+    };
+    // `null` aspects only for a degenerate zero-height size.
+    let fmt = |size: (u32, u32)| {
+        aspect_ratio(size).map_or_else(|| "null".to_string(), |a| format!("{a:.4}"))
+    };
+    format!(
+        "{{\"requested\":[{},{}],\"requested_aspect\":{},\"captured\":[{},{}],\"captured_aspect\":{},\"frame\":{},\"aspect_tolerance\":{:.4},\"aspect_ok\":{}}}",
+        w.requested.0,
+        w.requested.1,
+        fmt(w.requested),
+        w.captured.0,
+        w.captured.1,
+        fmt(w.captured),
+        w.frame,
+        ASPECT_TOLERANCE,
+        w.aspect_ok,
+    )
 }
 
 #[cfg(test)]
@@ -640,6 +857,12 @@ mod tests {
     /// meaningfully — the two fields [`near_black_frames`] reads. Other
     /// fields are filled with harmless placeholders.
     fn frame_report(frame: u32, full_mean: [f64; 3]) -> FrameReport {
+        sized_frame_report(frame, full_mean, (1280, 720))
+    }
+
+    /// A [`FrameReport`] with a specific captured `size` — for the window
+    /// guard, which reads `size` (and `frame`) and nothing else.
+    fn sized_frame_report(frame: u32, full_mean: [f64; 3], size: (u32, u32)) -> FrameReport {
         FrameReport {
             frame,
             metrics: FrameMetrics {
@@ -651,6 +874,7 @@ mod tests {
             },
             mean_abs_diff: None,
             passed: true,
+            size,
             current_path: PathBuf::from(format!("frame_{frame:04}.png")),
             baseline_path: None,
         }
@@ -677,5 +901,128 @@ mod tests {
             frames: vec![frame_report(30, [10.0, 10.0, 10.0])],
         };
         assert!(near_black_frames(&report, BLACK_LUMA_THRESHOLD).is_empty());
+    }
+
+    // ---- window-clamp guard ---------------------------------------------
+
+    #[test]
+    fn aspect_matches_exact_size() {
+        // 1x display: captured framebuffer == requested logical size.
+        assert!(aspect_matches((1280, 720), (1280, 720), ASPECT_TOLERANCE));
+        assert!(aspect_matches((1080, 1920), (1080, 1920), ASPECT_TOLERANCE));
+    }
+
+    #[test]
+    fn aspect_matches_honest_hidpi_scale_up() {
+        // 2x display: twice the size, identical aspect — must pass.
+        assert!(aspect_matches((1280, 720), (2560, 1440), ASPECT_TOLERANCE));
+        assert!(aspect_matches((1080, 1920), (2160, 3840), ASPECT_TOLERANCE));
+        // 1.5x (Windows) with the ±1 px rounding a fractional factor gives.
+        assert!(aspect_matches((1280, 720), (1920, 1081), ASPECT_TOLERANCE));
+    }
+
+    #[test]
+    fn aspect_matches_rejects_the_observed_clamp() {
+        // The real regression this guard exists for: `radiance-synthetic-portrait`
+        // asked for 1080x1920 (aspect 0.5625) and the OS clamped the 2x window
+        // to 2160x1976 (aspect ~1.09) — a portrait scenario validating a
+        // near-square window while reporting PASS.
+        let requested = (1080, 1920);
+        let clamped = (2160, 1976);
+        assert!(!aspect_matches(requested, clamped, ASPECT_TOLERANCE));
+    }
+
+    #[test]
+    fn aspect_matches_rejects_degenerate_sizes() {
+        assert!(!aspect_matches((1080, 0), (2160, 3840), ASPECT_TOLERANCE));
+        assert!(!aspect_matches((1080, 1920), (2160, 0), ASPECT_TOLERANCE));
+        assert!(!aspect_matches((0, 1920), (0, 3840), ASPECT_TOLERANCE));
+    }
+
+    #[test]
+    fn aspect_tolerance_admits_small_error_and_rejects_large() {
+        // 0.5% off — inside the 1% tolerance (fractional-scale-factor rounding
+        // lives here). Deliberately not testing exactly 1%: the relative error
+        // of a ratio of integers lands on either side of the constant by a few
+        // ULPs, which says nothing useful about the guard.
+        let square = (1000, 1000);
+        assert!(aspect_matches(square, (1005, 1000), ASPECT_TOLERANCE));
+        // 2% off — outside it.
+        assert!(!aspect_matches(square, (1020, 1000), ASPECT_TOLERANCE));
+    }
+
+    #[test]
+    fn requested_window_falls_back_to_the_app_default() {
+        assert_eq!(requested_window(&scenario()), DEFAULT_WINDOW);
+        let mut s = scenario();
+        s.resolution = Some([1080, 1920]);
+        assert_eq!(requested_window(&s), (1080, 1920));
+    }
+
+    #[test]
+    fn check_window_passes_an_honest_2x_portrait_capture() {
+        let mut s = scenario();
+        s.resolution = Some([1080, 1920]);
+        let report = Report {
+            frames: vec![
+                sized_frame_report(30, [10.0, 10.0, 10.0], (2160, 3840)),
+                sized_frame_report(60, [10.0, 10.0, 10.0], (2160, 3840)),
+            ],
+        };
+        let check = check_window(&s, &report).expect("report has frames");
+        assert!(check.aspect_ok);
+        assert_eq!(check.requested, (1080, 1920));
+        assert_eq!(check.captured, (2160, 3840));
+        assert_eq!(check.frame, 30); // no offender -> the first frame stands in
+    }
+
+    #[test]
+    fn check_window_flags_the_first_clamped_frame() {
+        let mut s = scenario();
+        s.resolution = Some([1080, 1920]);
+        let report = Report {
+            frames: vec![
+                sized_frame_report(30, [10.0, 10.0, 10.0], (2160, 3840)), // honest
+                sized_frame_report(60, [10.0, 10.0, 10.0], (2160, 1976)), // clamped
+            ],
+        };
+        let check = check_window(&s, &report).expect("report has frames");
+        assert!(!check.aspect_ok);
+        assert_eq!(check.frame, 60);
+        assert_eq!(check.captured, (2160, 1976));
+    }
+
+    #[test]
+    fn window_clamp_error_names_the_numbers_and_the_fix() {
+        let check = WindowCheck {
+            requested: (1080, 1920),
+            captured: (2160, 1976),
+            frame: 60,
+            aspect_ok: false,
+        };
+        let msg = window_clamp_error("radiance-synthetic-portrait", &check);
+        assert!(msg.contains("radiance-synthetic-portrait"), "{msg}");
+        assert!(msg.contains("1080x1920"), "{msg}");
+        assert!(msg.contains("2160x1976"), "{msg}");
+        assert!(msg.contains("0.5625"), "{msg}"); // requested aspect
+        assert!(msg.contains("clamped"), "{msg}");
+        assert!(msg.contains("frame 60"), "{msg}");
+    }
+
+    #[test]
+    fn window_json_surfaces_the_verdict_as_a_field() {
+        let check = WindowCheck {
+            requested: (1080, 1920),
+            captured: (2160, 1976),
+            frame: 60,
+            aspect_ok: false,
+        };
+        let json = window_json(Some(&check));
+        assert!(json.contains("\"requested\":[1080,1920]"), "{json}");
+        assert!(json.contains("\"captured\":[2160,1976]"), "{json}");
+        assert!(json.contains("\"requested_aspect\":0.5625"), "{json}");
+        assert!(json.contains("\"aspect_ok\":false"), "{json}");
+        assert!(json.contains("\"frame\":60"), "{json}");
+        assert_eq!(window_json(None), "null");
     }
 }

@@ -60,8 +60,10 @@ active `toggles` object — enough to reproduce the run; `scenario`/`commit` are
 `config = "clean"`).
 
 Exit code: `0` on pass (and for `--list` / `--watch` / a successful
-`--update-baselines`); nonzero when a frame regresses beyond tolerance, or when
-`--update-baselines` is refused by the near-zero-luminance guard (see below).
+`--update-baselines`); nonzero when a frame regresses beyond tolerance, when the
+captured frames come back at the wrong window aspect (the window-clamp guard
+below), or when `--update-baselines` is refused by the near-zero-luminance guard
+(see below).
 Tolerance is mean-abs-diff `<= 6.0` (0..=255 units); a pixel counts as
 "changed" when its max-channel delta exceeds `12`. A frame with no baseline
 yet never regresses — it is reported as `NEW (review)` and added to
@@ -99,7 +101,9 @@ Scenarios defined today:
 The `-portrait` scenarios (and `home`/`home-portrait`) exist to guard the
 deployment's rotated-1080p display orientation: each pins the window to
 1080x1920 via the `resolution` field and reuses its landscape sibling's
-provider/config/debug/frames. Review them for aspect bugs specifically —
+provider/config/debug/frames. **A portrait scenario only means anything if the
+window actually came up portrait** — see the window-clamp guard below, which
+fails the run when it didn't. Review them for aspect bugs specifically —
 stretched/squashed content (circles that render as ellipses, a stretched
 dancer or fractal), layout that assumes landscape (offscreen or clipped UI),
 and post-process effects scaled on the wrong axis.
@@ -266,6 +270,15 @@ app runs normally and is killed by the wall-clock.
   "scenario": "line-synthetic",
   "dir": "target/capture/line-synthetic",
   "passed": true,
+  "window": {
+    "requested": [1280, 720],
+    "requested_aspect": 1.7778,
+    "captured": [2560, 1440],
+    "captured_aspect": 1.7778,
+    "frame": 30,
+    "aspect_tolerance": 0.01,
+    "aspect_ok": true
+  },
   "frames": [
     {
       "frame": 30,
@@ -285,17 +298,26 @@ app runs normally and is killed by the wall-clock.
 Notes:
 - `mean_abs_diff` is `null` when there is no baseline yet; `baseline` is `null`
   in the same case.
-- `passed` (top-level) is the AND of every frame's `passed`. A frame with no
-  baseline counts as passed but still appears in `open_for_review`.
+- `passed` (top-level) is the AND of every frame's `passed` **and**
+  `window.aspect_ok`. A frame with no baseline counts as passed but still
+  appears in `open_for_review`.
+- `window` is the window-clamp guard's verdict (see below): `requested` is the
+  scenario's `resolution` (or the app's 1280x720 default) in *logical* pixels,
+  `captured` is the decoded size of a captured PNG in *physical* pixels, and
+  `frame` is which frame it was read from (the first offending frame when
+  `aspect_ok` is `false`, otherwise the first captured frame). Aspects are
+  `width / height`. `window` is `null` only if no frame could be measured.
+  When `aspect_ok` is `false`, the tool also exits nonzero with the
+  clamp diagnosis on stderr.
 - `open_for_review` lists the frame `current` paths the agent should open and
   judge (regressions + new-baseline frames). Read those PNGs directly.
 - `--list --json` prints a bare JSON array of scenario names, e.g.
   `["line-synthetic","line-synthetic-no-bloom"]`.
 - `--update-baselines --json` prints
   `{"scenario":"<name>","updated_baselines":true}` on success. If the
-  near-zero-luminance guard refuses the update, that's a plain-text error on
-  stderr (like any other xtask failure, e.g. an unknown scenario name) and a
-  nonzero exit — not a JSON payload.
+  near-zero-luminance guard or the window-clamp guard refuses the update,
+  that's a plain-text error on stderr (like any other xtask failure, e.g. an
+  unknown scenario name) and a nonzero exit — not a JSON payload.
 
 The per-frame `metrics.json` sidecar (always written) is a JSON array of
 `{frame, full_mean, center_mean, global_std, delta_prev}`, where `delta_prev` is
@@ -348,6 +370,47 @@ so this trap can't silently commit an all-black PNG as a "baseline" the next
 honest capture could then never match — this is exactly how
 `dots-synthetic/frame_0030.png` was seeded wrong once (commit `b50a9d63`) and
 had to be repaired after the fact (commit `ffd7f3e6`).
+
+## Known environment trap: a clamped window (wrong captured aspect)
+
+A window is created in **logical** pixels and screenshotted in **physical**
+pixels, so on a 2x (Retina) display a scenario asking for `1080x1920` needs a
+`2160x3840` physical framebuffer. No ordinary attached display can host that,
+and the OS silently **clamps** the window to fit. Nothing in the launch path
+notices: the app starts, renders, screenshots, and exits cleanly at the wrong
+size. Measured on this project, `radiance-synthetic-portrait` (`resolution =
+[1080, 1920]`, aspect `0.5625`) captured at **2160x1976** — aspect `1.09`,
+essentially square. Every `*-portrait` scenario was therefore validating a
+non-portrait window while reporting PASS, which is worse than having no
+portrait test at all.
+
+The guard: after capture, the harness reads each captured PNG's real dimensions
+and compares the **aspect** against the scenario's requested `resolution` (or
+the app's 1280x720 default when it pins none), within a **1% relative
+tolerance**. Aspect, not absolute size, is the invariant — an honest high-DPI
+capture is an exact multiple of the request and keeps the aspect (`1280x720` ->
+`2560x1440` at 2x passes); a clamp shrinks one axis more than the other and
+always moves the aspect. On mismatch the subcommand prints the requested and
+captured `WxH` + aspects, the likely cause, and the fix; sets
+`window.aspect_ok: false` in `--json`; exits nonzero; and refuses
+`--update-baselines` (a clamped capture poisons a baseline exactly like an
+all-black frame does).
+
+**When it trips:**
+
+1. Check the display arrangement first. If the scenario used to pass here, a
+   display was probably detached, rotated back, or re-scaled — restore it and
+   re-run. The failure is about *this machine's* displays, not about the sketch.
+2. Otherwise the scenario's `resolution` genuinely doesn't fit the attached
+   display at its scale factor. Either run the capture on a display that can
+   host it (the deployment-class machine with its rotated 1080p panel), or
+   re-fit the scenario to an aspect-equivalent size that does fit — e.g.
+   `540x960` instead of `1080x1920` is the same 9:16 and needs only
+   `1080x1920` physical at 2x. Changing a scenario's `resolution` **invalidates
+   its committed baselines** (the diff reports `INFINITY` on a size mismatch),
+   so re-seed them in the same change.
+3. Do **not** work around it by deleting the `resolution` field: that silently
+   turns a portrait regression test into a second landscape one.
 
 ## Determinism + headless note
 

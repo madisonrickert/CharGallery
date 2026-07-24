@@ -67,6 +67,7 @@ mod tests {
             mask_ema: 0.6,
             one_euro_min_cutoff: 1.0,
             one_euro_beta: 0.05,
+            crop_to_aspect: None,
         });
         world
             .run_system_once(pause_tracking_requests)

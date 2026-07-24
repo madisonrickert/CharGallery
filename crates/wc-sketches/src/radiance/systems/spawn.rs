@@ -41,7 +41,7 @@ use crate::radiance::pulse::RadianceBeatWaves;
 use crate::radiance::render::{
     silhouette_fill_color, RadianceMaterial, RadianceSilhouetteMaterial, QUAD_HALF_PX,
 };
-use crate::radiance::settings::RadianceSettings;
+use crate::radiance::settings::{RadianceFrameFit, RadianceSettings};
 use crate::radiance::sparkle::{RadianceSparkleMaterial, RadianceSparkles};
 use crate::radiance::systems::sim_params::RadianceState;
 
@@ -291,6 +291,7 @@ fn placeholder_silhouette_material(
 /// exactly this reason.
 pub fn insert_tracking_requests(
     settings: Res<'_, RadianceSettings>,
+    window: Single<'_, '_, &Window>,
     mut commands: Commands<'_, '_>,
     // Optional debug toggles (present only when a `WC_DEBUG_*` var is set, and
     // only in debug builds). Placed last so the release signature is unchanged.
@@ -315,7 +316,38 @@ pub fn insert_tracking_requests(
         mask_ema: settings.mask_ema,
         one_euro_min_cutoff: settings.one_euro_min_cutoff,
         one_euro_beta: settings.one_euro_beta,
+        crop_to_aspect: camera_crop_aspect(
+            settings.frame_fit,
+            Vec2::new(window.width(), window.height()),
+        ),
     });
+}
+
+/// The display aspect to pre-crop the camera to, or `None` to leave the
+/// frame whole.
+///
+/// Only [`RadianceFrameFit::FillHeight`] can benefit: it spans the window
+/// height, so on a display **narrower than the camera** — a portrait install
+/// fed by a 16:9 sensor — it pushes the frame's sides off-screen, and every
+/// pixel out there is detector input, mask texels, and particles spent on
+/// nothing (see `wc_core::input::body::pipeline::CropRect`). Cropping at the
+/// source reclaims all of it and hands the full 256² mask to the strip that
+/// is actually visible.
+///
+/// [`RadianceFrameFit::Fit`] deliberately shows the **whole** frame, so
+/// cropping it would destroy exactly the content that mode exists to
+/// preserve — never crop there. A display at or wider than the camera's
+/// aspect is left alone too: `FillHeight` pillarboxes rather than crops
+/// there, so there is nothing to reclaim. The pipeline re-checks the
+/// narrower-than-the-frame condition against the real camera dimensions, so
+/// this can pass the display aspect without knowing the sensor's.
+#[must_use]
+pub fn camera_crop_aspect(fit: RadianceFrameFit, window: Vec2) -> Option<f32> {
+    if fit != RadianceFrameFit::FillHeight {
+        return None;
+    }
+    let aspect = window.x / window.y.max(1.0);
+    (aspect.is_finite() && aspect > 0.0).then_some(aspect)
 }
 
 /// `OnExit(AppState::Radiance)`: drop the sim resources (releasing the
@@ -467,6 +499,41 @@ mod tests {
     }
 
     /// The device name maps empty → system default (None), trimmed → Some.
+    /// The camera pre-crop is gated exactly as the operator specified: only
+    /// in `FillHeight`, and only where it reclaims off-screen pixels.
+    /// `Fit` never crops — it exists to show the whole frame.
+    #[test]
+    fn camera_crop_only_in_fill_height_on_a_narrow_display() {
+        let portrait = Vec2::new(1080.0, 1920.0);
+        let landscape = Vec2::new(1920.0, 1080.0);
+
+        // FillHeight + portrait: crop to the display aspect (9:16).
+        let got = camera_crop_aspect(RadianceFrameFit::FillHeight, portrait);
+        let aspect = got.expect("portrait FillHeight requests a crop");
+        assert!((aspect - 9.0 / 16.0).abs() < 1e-4, "{aspect}");
+
+        // Fit never crops, on any display — cropping would destroy the very
+        // content that mode preserves.
+        assert_eq!(camera_crop_aspect(RadianceFrameFit::Fit, portrait), None);
+        assert_eq!(camera_crop_aspect(RadianceFrameFit::Fit, landscape), None);
+
+        // FillHeight on a landscape display still passes its aspect; the
+        // pipeline declines it because it is no narrower than the sensor.
+        let wide = camera_crop_aspect(RadianceFrameFit::FillHeight, landscape)
+            .expect("landscape still reports its aspect");
+        assert!(
+            wc_core::input::body::pipeline::CropRect::for_frame(1280, 720, Some(wide))
+                .is_full(1280, 720),
+            "a 16:9 display must not crop a 16:9 sensor"
+        );
+
+        // Degenerate window: no crop rather than a nonsense one.
+        assert_eq!(
+            camera_crop_aspect(RadianceFrameFit::FillHeight, Vec2::ZERO),
+            None
+        );
+    }
+
     #[test]
     fn request_maps_device_name() {
         let mut app = test_app();

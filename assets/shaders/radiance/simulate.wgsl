@@ -20,8 +20,10 @@
 // this spawn is a fast "shooting" streak (onset-driven, high normal velocity,
 // short life) or an ordinary flame particle. Alive particles advance under
 // tongue-modulated buoyancy + limb impulses + drag, then are advected along a
-// divergence-free curl-noise flow. There is no OOB teleport — a particle that
-// drifts off-screen simply dies at end of life and respawns on a silhouette.
+// divergence-free curl-noise flow. There is no OOB teleport: a particle that
+// leaves the WINDOW rect (params.window_half_px, margin-expanded) is simply
+// marked dead, and the ordinary emission path respawns it on a silhouette
+// next frame. See OFFSCREEN_CULL_MARGIN and the cull block in main().
 //
 // CPU parity: RadianceSimParamsGpu / RadianceParticle / RadianceImpulse in
 // crates/wc-sketches/src/radiance/compute/sim_params.rs mirror these structs
@@ -101,8 +103,8 @@ struct SimParams {
     // `RadianceSimParamsGpu`. WGSL uniform scalar arrays have 16-byte
     // stride, so the Rust `[f32; 8]` wave lanes mirror as two `vec4<f32>`
     // each. After the wave lanes: the 2026-07-24 calibration lanes
-    // (curl_evolve at 496, impulse_coupling at 500) and a two-lane tail
-    // pad. Struct total 512 bytes.
+    // (curl_evolve at 496, impulse_coupling at 500) and, in the old
+    // two-lane tail pad, window_half_px (504/508). Struct total 512 bytes.
     repel_strength: f32,
     repel_radius_px: f32,
     contact_glow: f32,
@@ -121,7 +123,15 @@ struct SimParams {
     // const, 6.0): how fast a particle inside an impulse radius converges
     // on the limb's velocity without hard-snapping to it.
     impulse_coupling: f32,
-    _pad_tail: vec2<f32>,
+    // Window HALF-extent in world px (width/2, height/2) — the off-screen
+    // cull bound below. World space is Camera2d units with the origin at
+    // CENTRE, so the visible rect is exactly |x| <= window_half_px.x,
+    // |y| <= window_half_px.y. Distinct from uv_to_world, which is the
+    // CAMERA FRAME's mapped rect and can be far larger than the window.
+    // Zero = not yet baked (headless / pre-first-bake) -> cull disabled.
+    // Occupies what used to be _pad_tail (offsets 504/508); struct total is
+    // still 512 bytes.
+    window_half_px: vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;
@@ -143,6 +153,18 @@ const FIELD_DIST_MAX_TEXELS: f32 = 160.0;
 // Ejecta lifespan multiplier: shooting sparks die young, so the streaks stay
 // crisp instead of loitering as slow embers far from the body.
 const EJECTA_LIFE_MUL: f32 = 0.3;
+
+// Off-screen cull slack: a particle must be this multiple of the window
+// half-extent out before it is culled (1.15 = 15% past the edge). The margin
+// is not cosmetic — it buys back two behaviours a hard |pos| > half test
+// would destroy:
+//   1. A particle straddling the window edge (its billboard quad is half on
+//      screen) keeps rendering instead of popping out mid-draw.
+//   2. The curl flow is divergence-free and reverses direction over its own
+//      spatial period, so a particle that drifts a little past the edge is
+//      routinely swept back IN. Killing it at the exact boundary would eat
+//      those returns and thin the visible edge of the aura.
+const OFFSCREEN_CULL_MARGIN: f32 = 1.15;
 
 // PCG-style integer hash (Jarzynski & Olano) — cheap, well-distributed.
 fn pcg(v: u32) -> u32 {
@@ -461,6 +483,35 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             params.curl_octaves,
         );
         p.position = p.position + turb * params.flow_strength * params.dt;
+    }
+
+    // --- Off-screen cull: reclaim invisible budget ---------------------
+    // Radiance maps the camera frame into uv_to_world, which is the CAMERA's
+    // rect, not the window's. Whenever the display aspect differs from the
+    // camera aspect those two disagree badly: the deployment (16:9 camera on
+    // a 9:16 portrait panel, FillHeight) maps a 3413x1920 world rect behind a
+    // 1080x1920 window, so roughly two thirds of the simulated field is off
+    // to the sides where nothing can ever see it. Particles that drift out
+    // there keep integrating forces and keep costing six vertices apiece for
+    // the rest of their lifespan.
+    //
+    // Culling = marking DEAD (age >= lifespan). That is the whole mechanism:
+    // no free list, no compaction, no second buffer. A dead slot is already
+    // the emission path's respawn candidate, so next frame it rolls against
+    // emission_prob and comes back on the silhouette — the budget is not
+    // freed, it is RELOCATED to where the dancer is. Total particle count,
+    // dispatch size and memory are all unchanged.
+    //
+    // The guard matters: window_half_px is zero on a headless run and on any
+    // frame before the first CPU bake. Testing against a zero rect would kill
+    // every particle in the field, so a degenerate half-extent disables the
+    // cull outright rather than culling conservatively.
+    if (params.window_half_px.x > 0.0 && params.window_half_px.y > 0.0) {
+        let bound = params.window_half_px * OFFSCREEN_CULL_MARGIN;
+        // Origin-at-centre world space: outside the rect on EITHER axis.
+        if (abs(p.position.x) > bound.x || abs(p.position.y) > bound.y) {
+            p.age = p.lifespan;
+        }
     }
 
     particles[idx] = p;

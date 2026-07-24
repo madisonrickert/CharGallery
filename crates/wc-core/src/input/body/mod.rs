@@ -156,6 +156,17 @@ pub struct BodyTrackingRequest {
     /// One-Euro landmark filter beta (speed coefficient). Same routing as
     /// [`Self::mask_ema`].
     pub one_euro_beta: f32,
+    /// Display aspect (width / height) the consumer will *fill* with the
+    /// frame, when it wants the camera pre-cropped to it; `None` = never
+    /// crop (see [`pipeline::CropRect`] for the geometry and the rationale).
+    ///
+    /// Set this only when the consumer's fit mode discards the frame's sides
+    /// — a fill-the-height mapping onto a display narrower than the camera.
+    /// The pipeline makes the final call per frame and crops nothing when
+    /// the target is no narrower than the frame itself, so passing the
+    /// display aspect unconditionally is safe but pointless. Read at worker
+    /// (re)start, like [`Self::mask_ema`].
+    pub crop_to_aspect: Option<f32>,
 }
 
 /// One tracked body landmark in mask-UV space.

@@ -314,6 +314,15 @@ pub struct PoseConfig {
     /// cap are never claimable (see `BodyTrackingConfig::max_tracked_bodies`
     /// for the operator knob this mirrors).
     pub max_tracked_bodies: usize,
+    /// Display aspect (width / height) the consumer will letterbox-free
+    /// *fill* with this frame, when it wants the frame pre-cropped to it.
+    /// `None` = never crop (the default and every non-filling consumer).
+    ///
+    /// Set only when the consumer's fit mode discards the frame's sides —
+    /// see [`CropRect::for_frame`], which is also the sole place the decision
+    /// is finally made: a target at or above the frame's own aspect crops
+    /// nothing, because there would be nothing to reclaim.
+    pub crop_to_aspect: Option<f32>,
 }
 
 impl Default for PoseConfig {
@@ -325,7 +334,90 @@ impl Default for PoseConfig {
             mask_ema_alpha: DEFAULT_MASK_EMA_ALPHA,
             disable_heatmap_refine: false,
             max_tracked_bodies: MAX_TRACKED_BODIES,
+            crop_to_aspect: None,
         }
+    }
+}
+
+/// A centred sub-rect of a camera frame, in source pixels — everything the
+/// pipeline treats as "the frame" from square-padding onward.
+///
+/// ## Why crop at the source
+///
+/// The consumer maps the 256² mask onto a rect derived from the frame's
+/// aspect. When its display is *narrower* than the camera (a portrait
+/// install fed by a 16:9 sensor), a fill-the-height mapping pushes the
+/// frame's sides off-screen: on a 9:16 panel roughly two thirds of the frame
+/// is mapped outside the window. Everything that region costs — detector
+/// input area, landmark crops, mask texels, silhouette edge points, and the
+/// particles that spawn from them — is spent on pixels nobody sees.
+///
+/// Cropping here, before the square pad, spends it on what *is* visible
+/// instead: the full 256² mask covers only the on-screen strip (≈3× the
+/// horizontal mask resolution on a 9:16 panel), and the detector sees a
+/// portrait-framed subject rather than one squeezed into a letterbox.
+///
+/// The crop is centred, never scales, and is clamped to the frame, so it is
+/// a pure sub-rect — no resampling, no aspect change beyond the requested
+/// one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CropRect {
+    /// Left edge in source pixels.
+    pub x0: u32,
+    /// Top edge in source pixels.
+    pub y0: u32,
+    /// Crop width in source pixels (≥ 1).
+    pub width: u32,
+    /// Crop height in source pixels (≥ 1).
+    pub height: u32,
+}
+
+impl CropRect {
+    /// The centred crop for `frame` under `crop_to_aspect`
+    /// ([`PoseConfig::crop_to_aspect`]).
+    ///
+    /// Returns the **whole frame** unless the target aspect is finite,
+    /// positive, and strictly narrower than the frame's own — the only case
+    /// where a fill-the-height consumer would have discarded the sides
+    /// anyway. In particular a display matching the camera (16:9 on 16:9) or
+    /// wider than it (ultrawide, which pillarboxes rather than crops) is
+    /// left untouched: cropping there would throw away content the consumer
+    /// was going to show.
+    #[must_use]
+    pub fn for_frame(frame_w: u32, frame_h: u32, crop_to_aspect: Option<f32>) -> Self {
+        let full = Self {
+            x0: 0,
+            y0: 0,
+            width: frame_w.max(1),
+            height: frame_h.max(1),
+        };
+        let Some(target) = crop_to_aspect else {
+            return full;
+        };
+        if !target.is_finite() || target <= 0.0 || frame_w == 0 || frame_h == 0 {
+            return full;
+        }
+        let frame_aspect = dim(frame_w) / dim(frame_h);
+        // A target at or above the frame's aspect reclaims nothing.
+        if target >= frame_aspect {
+            return full;
+        }
+        // Narrower target: keep the full height, trim the width. The floor
+        // (and the clamp) keep the crop inside the frame; `target <
+        // frame_aspect` already guarantees it is narrower.
+        let width = floor_u32(dim(frame_h) * target).clamp(1, frame_w);
+        Self {
+            x0: (frame_w - width) / 2,
+            y0: 0,
+            width,
+            height: frame_h,
+        }
+    }
+
+    /// Whether this rect covers its whole source frame (no crop applied).
+    #[must_use]
+    pub fn is_full(&self, frame_w: u32, frame_h: u32) -> bool {
+        self.x0 == 0 && self.y0 == 0 && self.width == frame_w && self.height == frame_h
     }
 }
 
@@ -759,6 +851,11 @@ pub struct PosePipeline {
     slots: [SlotTrack; MAX_TRACKED_BODIES],
     /// Pre-claim debounce + collapse cooldown for Free-slot claims.
     claim_gate: ClaimGate,
+    /// Last [`CropRect`] applied, so a change (including the first frame) can
+    /// log the realized crop exactly once instead of every frame. Purely
+    /// diagnostic: at an install the operator needs to see whether the
+    /// camera pre-crop engaged, and with what dimensions.
+    last_crop: Option<CropRect>,
     /// Per-slot results of the latest processed frame (what the worker
     /// publishes).
     slot_frames: [SlotFrame; MAX_TRACKED_BODIES],
@@ -810,6 +907,7 @@ impl PosePipeline {
             max_tracked,
             slots: std::array::from_fn(|_| SlotTrack::new()),
             claim_gate: ClaimGate::new(),
+            last_crop: None,
             slot_frames: [SlotFrame::default(); MAX_TRACKED_BODIES],
             next_scan: Duration::ZERO,
             rr_next: 0,
@@ -883,15 +981,22 @@ impl PosePipeline {
             self.process_invalid_frame(now, blend_ratio, payload, diag, frame_start);
             return Ok(());
         }
-        let content = ContentRect::for_frame(frame.width, frame.height);
-        self.last_frame_aspect = dim(frame.width) / dim(frame.height.max(1));
+        // Everything downstream treats the crop as "the frame": the content
+        // rect, the published aspect, and the square pad below all describe
+        // it, so a cropped run is indistinguishable from a camera that
+        // natively delivered that framing. `CropRect::for_frame` returns the
+        // whole frame unless cropping actually reclaims off-screen pixels.
+        let crop = CropRect::for_frame(frame.width, frame.height, self.config.crop_to_aspect);
+        self.log_crop_change(frame, crop);
+        let content = ContentRect::for_frame(crop.width, crop.height);
+        self.last_frame_aspect = dim(crop.width) / dim(crop.height.max(1));
 
         // Square-pad into the reused buffer (taken out so stage methods can
         // borrow it beside &mut self; restored before every return).
         let stage = Instant::now();
         let square = {
             let mut square = std::mem::take(&mut self.square_buf);
-            square_pad_into(frame, &mut square);
+            square_pad_into(frame, crop, &mut square);
             square
         };
         diag.preprocess = stage.elapsed();
@@ -1070,6 +1175,34 @@ impl PosePipeline {
         diag.total = frame_start.elapsed();
         self.last_diagnostics = diag;
         Ok(())
+    }
+
+    /// Transition-only breadcrumb for the camera pre-crop (same discipline as
+    /// the slot-lifecycle lines): at an install the operator needs to confirm
+    /// from the log whether the crop engaged and with what geometry, and a
+    /// per-frame line would drown the session. Fires on the first frame and
+    /// on any later change (a resolution switch, a fit-mode reload).
+    fn log_crop_change(&mut self, frame: &Frame, crop: CropRect) {
+        if self.last_crop == Some(crop) {
+            return;
+        }
+        self.last_crop = Some(crop);
+        if crop.is_full(frame.width, frame.height) {
+            tracing::info!(
+                frame_w = frame.width,
+                frame_h = frame.height,
+                "body camera: full frame (no pre-crop)"
+            );
+        } else {
+            tracing::info!(
+                frame_w = frame.width,
+                frame_h = frame.height,
+                crop_w = crop.width,
+                crop_h = crop.height,
+                crop_x = crop.x0,
+                "body camera: pre-cropped to the display aspect"
+            );
+        }
     }
 
     /// Number of [`SlotPhase::Active`] slots.
@@ -1668,20 +1801,26 @@ fn decode_world_landmarks(raw: &[f32], roi: &RoiRect) -> [Vec3; BODY_LANDMARK_CO
 
 // --- image helpers (adapted from the validated hand pipeline) --------------
 
-/// Square-pad a frame to its larger side (black bars), origin-centred, into a
-/// reused buffer. (Re)allocates only when the side changes.
-fn square_pad_into(frame: &Frame, out: &mut RgbImage) {
-    let side = frame.width.max(frame.height);
+/// Square-pad a frame's [`CropRect`] to the crop's larger side (black bars),
+/// origin-centred, into a reused buffer. (Re)allocates only when the side
+/// changes.
+///
+/// With a full-frame crop this is the original whole-frame pad, byte for
+/// byte. With a narrower crop only that sub-rect is read, so the pad — and
+/// therefore the detector input, every landmark crop, and the mask — sees
+/// only the region the consumer will actually display (see [`CropRect`]).
+fn square_pad_into(frame: &Frame, crop: CropRect, out: &mut RgbImage) {
+    let side = crop.width.max(crop.height);
     if out.width() != side || out.height() != side {
         *out = RgbImage::new(side, side);
     }
-    let ox = (side - frame.width) / 2;
-    let oy = (side - frame.height) / 2;
+    let ox = (side - crop.width) / 2;
+    let oy = (side - crop.height) / 2;
     let w = idx(frame.width);
-    for y in 0..frame.height {
-        let row = idx(y) * w * 3;
-        for x in 0..frame.width {
-            let i = row + idx(x) * 3;
+    for y in 0..crop.height {
+        let row = idx(crop.y0 + y) * w * 3;
+        for x in 0..crop.width {
+            let i = row + idx(crop.x0 + x) * 3;
             out.put_pixel(
                 ox + x,
                 oy + y,
@@ -3031,6 +3170,103 @@ mod tests {
             r_on.landmarks[0].pos.x,
             r_off.landmarks[0].pos.x
         );
+    }
+
+    /// The crop only fires where a fill-the-height consumer would have
+    /// thrown the sides away: a display narrower than the camera. Matched,
+    /// wider, absent, and degenerate targets all leave the frame whole.
+    #[test]
+    fn crop_engages_only_for_a_display_narrower_than_the_camera() {
+        // 1280x720 sensor (16:9), the deployment camera.
+        let (w, h) = (1280_u32, 720_u32);
+        let full = CropRect::for_frame(w, h, None);
+        assert!(full.is_full(w, h), "no target = no crop");
+
+        // 9:16 portrait panel — the deployment display. Keeps full height,
+        // trims width to 720 * 0.5625 = 405, centred.
+        let portrait = CropRect::for_frame(w, h, Some(9.0 / 16.0));
+        assert_eq!(portrait.height, h, "full sensor height is kept");
+        assert_eq!(portrait.width, 405);
+        assert_eq!(portrait.x0, (1280 - 405) / 2, "centred");
+        assert_eq!(portrait.y0, 0);
+        assert!(!portrait.is_full(w, h));
+
+        // Matched 16:9 and wider-than-camera ultrawide: nothing to reclaim
+        // (FillHeight fills or pillarboxes, it never drops the sides).
+        for target in [16.0 / 9.0, 21.0 / 9.0, 32.0 / 9.0] {
+            let r = CropRect::for_frame(w, h, Some(target));
+            assert!(r.is_full(w, h), "target {target} must not crop");
+        }
+
+        // Degenerate targets are ignored rather than trusted.
+        for bad in [0.0_f32, -1.0, f32::NAN, f32::INFINITY] {
+            assert!(
+                CropRect::for_frame(w, h, Some(bad)).is_full(w, h),
+                "target {bad} must not crop"
+            );
+        }
+    }
+
+    /// The cropped run is indistinguishable from a camera that natively
+    /// delivered that framing: the published aspect is the crop's, the
+    /// content rect describes the crop, and tracking still works — the
+    /// person is centred, so the crop keeps them.
+    #[test]
+    fn cropping_publishes_the_crop_aspect_and_still_tracks() {
+        let mut p = PosePipeline::new(
+            Box::new(StaticInference {
+                outputs: hot_person_detector_outputs(),
+            }),
+            Box::new(StaticInference {
+                outputs: confident_landmark_outputs(),
+            }),
+            PoseConfig {
+                // A 9:16 display in front of the 64x48 (4:3) test frame.
+                crop_to_aspect: Some(9.0 / 16.0),
+                ..PoseConfig::default()
+            },
+        );
+        let frame = solid_frame(); // 64x48
+        let mut pl = payload();
+        seed_claim_gate(&mut p, &frame, Duration::from_millis(0));
+        p.process(&frame, Duration::from_millis(16), false, Some(&mut pl))
+            .expect("cropped frame processes");
+        assert!(p.slot_frames()[0].present, "the centred person survives");
+        // 48 * 0.5625 = 27 wide; the payload advertises the CROP's aspect, so
+        // the consumer's fit maps the mask onto exactly its own window.
+        let expect = 27.0 / 48.0;
+        assert!(
+            (pl.frame_aspect - expect).abs() < 1e-3,
+            "payload carries the crop aspect: {} vs {expect}",
+            pl.frame_aspect
+        );
+        // Landmarks stay in-range of the (cropped) mask-UV contract.
+        for lm in &p.slot_frames()[0].landmarks {
+            assert!(lm.pos.x.is_finite() && lm.pos.y.is_finite());
+        }
+    }
+
+    /// A full-frame crop is byte-for-byte the original whole-frame pad — the
+    /// no-crop path cannot drift from the cropping one.
+    #[test]
+    fn full_crop_square_pad_matches_the_uncropped_pad() {
+        let frame = solid_frame();
+        let crop = CropRect::for_frame(frame.width, frame.height, None);
+        let mut a = RgbImage::default();
+        let mut b = RgbImage::default();
+        square_pad_into(&frame, crop, &mut a);
+        square_pad_into(
+            &frame,
+            CropRect {
+                x0: 0,
+                y0: 0,
+                width: frame.width,
+                height: frame.height,
+            },
+            &mut b,
+        );
+        assert_eq!(a.dimensions(), b.dimensions());
+        assert_eq!(a.as_raw(), b.as_raw());
     }
 
     /// Landmark stub that replays fixed outputs while counting invocations —

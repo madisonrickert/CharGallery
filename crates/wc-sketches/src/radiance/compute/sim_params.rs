@@ -96,8 +96,9 @@ pub const MAX_IMPULSES: usize = 8;
 /// `[f32; 8]` beat-wave arrays (`wave_radius_px` at 432, `wave_strength` at
 /// 464) — each mirrored on the WGSL side as two `vec4<f32>` because uniform
 /// scalar arrays have 16-byte stride — then the 2026-07-24 calibration
-/// lanes `curl_evolve` (496) and `impulse_coupling` (500) plus a two-lane
-/// tail pad. Total size 512, a 16-byte multiple.
+/// lanes `curl_evolve` (496) and `impulse_coupling` (500) and, in what used
+/// to be the two-lane tail pad, the off-screen-cull window half-extent
+/// `window_half_px` (504/508). Total size 512, a 16-byte multiple.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct RadianceSimParamsGpu {
@@ -212,13 +213,25 @@ pub struct RadianceSimParamsGpu {
     /// Limb-impulse force coupling (the `impulse_coupling` setting; was the
     /// shader-side `IMPULSE_COUPLING = 6.0` const).
     pub impulse_coupling: f32,
-    /// Tail padding to the 16-byte uniform boundary (two spare lanes for
-    /// future scalars). WGSL mirrors as `_pad_tail: vec2<f32>`.
-    #[allow(
-        clippy::pub_underscore_fields,
-        reason = "GPU struct layout padding must be pub for bytemuck"
-    )]
-    pub _pad_tail: [f32; 2],
+    /// Window HALF-extent in world px (`[width/2, height/2]`) — the
+    /// off-screen particle cull's bound. World space is Camera2d units with
+    /// the ORIGIN AT CENTER, so the visible rect is exactly
+    /// `x ∈ [-window_half_px[0], +window_half_px[0]]`,
+    /// `y ∈ [-window_half_px[1], +window_half_px[1]]`; the kernel kills any
+    /// particle that drifts past that rect scaled by
+    /// `OFFSCREEN_CULL_MARGIN`.
+    ///
+    /// This is deliberately NOT derivable from `uv_to_world`: that lane
+    /// carries the *camera frame's* mapped rect, which on a display whose
+    /// aspect differs from the camera's is much larger than the window (the
+    /// 16:9-camera-on-9:16-panel installation maps 3413×1920 world px behind
+    /// a 1080×1920 window, so ~68% of the simulated field is invisible).
+    ///
+    /// Occupies the two lanes that were the tail pad (offsets 504/508), so
+    /// the struct stays exactly 512 bytes. Zero means "not yet baked"
+    /// (headless / pre-first-bake); the kernel then skips the cull entirely.
+    /// WGSL mirrors as `window_half_px: vec2<f32>`.
+    pub window_half_px: [f32; 2],
 }
 
 const _: () = {
@@ -381,6 +394,12 @@ mod tests {
             std::mem::offset_of!(RadianceSimParamsGpu, impulse_coupling),
             500
         );
+        // The off-screen cull's half-extent took over the old two-lane tail
+        // pad: 504/508, so the total is still 512.
+        assert_eq!(
+            std::mem::offset_of!(RadianceSimParamsGpu, window_half_px),
+            504
+        );
         assert_eq!(std::mem::size_of::<RadianceSimParamsGpu>(), 512);
     }
 
@@ -392,8 +411,8 @@ mod tests {
         const IMPULSE_STRIDE: usize = 32;
         // edge_motion_bias + 7 gain scalars (8 total = 32 B) + two [f32; 8]
         // wave-lane arrays (64 B) at 400..496 + the calibration lanes
-        // (curl_evolve, impulse_coupling) and their two-lane pad (16 B) at
-        // 496..512.
+        // (curl_evolve, impulse_coupling) and the cull's window_half_px
+        // (16 B) at 496..512.
         const TAIL_BYTES: usize = 112;
         assert_eq!(
             std::mem::size_of::<RadianceSimParamsGpu>(),

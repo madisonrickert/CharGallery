@@ -107,6 +107,7 @@ impl Drop for WorkerHandle {
 pub fn load_pose_pipeline(
     model_dir: &Path,
     max_tracked: usize,
+    crop_to_aspect: Option<f32>,
 ) -> Result<(PosePipeline, &'static str), String> {
     // The pose DETECTOR's session excludes the Apple Neural Engine: under
     // ANE-inclusive placement, Core ML miscomputes a varying subset of its
@@ -125,6 +126,7 @@ pub fn load_pose_pipeline(
     let config = PoseConfig {
         disable_heatmap_refine: heatmap_refine_disabled(),
         max_tracked_bodies: max_tracked,
+        crop_to_aspect,
         ..PoseConfig::default()
     };
     Ok((PosePipeline::new(detector, landmark, config), backend))
@@ -1186,8 +1188,8 @@ mod model_tests {
     #[test]
     fn load_pose_pipeline_reports_a_known_backend() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/pose");
-        let (_pipeline, backend) =
-            load_pose_pipeline(&dir, super::super::MAX_TRACKED_BODIES).expect("pipeline builds");
+        let (_pipeline, backend) = load_pose_pipeline(&dir, super::super::MAX_TRACKED_BODIES, None)
+            .expect("pipeline builds");
         // Both models register the CoreML EP on macOS — the detector on
         // Metal-only compute units (`CoremlUnits::NoNeuralEngine`, see
         // `load_pose_pipeline`), the landmark ANE-inclusive. Same label

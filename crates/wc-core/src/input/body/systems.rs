@@ -591,7 +591,11 @@ fn start_worker(
     } else {
         let model_dir = config.model_dir.clone();
         let max_tracked = config.max_tracked_bodies;
-        Box::new(move || load_pose_pipeline(&model_dir, max_tracked))
+        // Rides in from the request like the other worker-start tuning: the
+        // consumer knows its display aspect and fit mode, the pipeline owns
+        // the per-frame decision.
+        let crop_to_aspect = request.crop_to_aspect;
+        Box::new(move || load_pose_pipeline(&model_dir, max_tracked, crop_to_aspect))
     };
 
     let handle = spawn_body_worker(
@@ -767,6 +771,7 @@ mod tests {
             mask_ema: super::super::mask::DEFAULT_MASK_EMA_ALPHA,
             one_euro_min_cutoff: DEFAULT_MIN_CUTOFF,
             one_euro_beta: DEFAULT_BETA,
+            crop_to_aspect: None,
         }
     }
 
@@ -888,6 +893,7 @@ mod tests {
             mask_ema: 0.9,
             one_euro_min_cutoff: 3.5,
             one_euro_beta: 12.0,
+            crop_to_aspect: None,
         });
         // One update is enough for sync_body_tracking to observe the fresh
         // request and call start_worker.
