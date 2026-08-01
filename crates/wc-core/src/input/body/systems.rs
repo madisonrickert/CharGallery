@@ -241,13 +241,22 @@ pub fn restart_worker_on_max_figures_change(
 }
 
 /// `PreUpdate`: reconcile the worker with the request — start on insertion,
-/// stop on removal (join + clear published state), and mirror
-/// `idle_throttle` into the shared tuning cell every frame (one Relaxed
-/// store; unconditional so a rebuilt worker picks the true state up within
-/// one frame, matching the hand provider's mirror rationale).
+/// stop on removal (join + clear published state), and mirror the live
+/// tunables (`idle_throttle` from the request, the operator's camera rotation
+/// from [`crate::settings::body_tracking::BodyTrackingSettings`]) into the
+/// shared tuning cell every frame (Relaxed stores; unconditional so a rebuilt
+/// worker picks the true state up within one frame, matching the hand
+/// provider's mirror rationale).
+///
+/// Camera rotation rides this mirror rather than the request because it is a
+/// property of how the camera is *mounted*, not of what a sketch asked for —
+/// and because hot-applying it costs one store, where routing it through the
+/// request would restart the worker (dropping the camera and re-running model
+/// load) every time the operator tried a different orientation.
 pub fn sync_body_tracking(
     request: Option<Res<'_, BodyTrackingRequest>>,
     config: Res<'_, BodyTrackingConfig>,
+    settings: Option<Res<'_, crate::settings::body_tracking::BodyTrackingSettings>>,
     worker: Res<'_, BodyTrackingWorker>,
     mut state: ResMut<'_, BodyTrackingState>,
     mut edges: ResMut<'_, SilhouetteEdges>,
@@ -256,15 +265,25 @@ pub fn sync_body_tracking(
     let Ok(mut runtime) = worker.runtime.lock() else {
         return;
     };
+    // Absent in minimal (test) worlds that install the tracker without the
+    // settings plugin; an upright camera is the right fallback there.
+    let rotation = settings.map_or_else(Default::default, |s| s.camera_rotation);
     match (request, runtime.is_some()) {
         (Some(req), true) => {
             if let Some(rt) = runtime.as_ref() {
                 rt.tuning.set_idle_throttle(req.idle_throttle);
+                rt.tuning.set_camera_rotation(rotation);
             }
             diagnostics.idle_throttled = req.idle_throttle;
         }
         (Some(req), false) => {
-            *runtime = Some(start_worker(&worker, &config, &req));
+            let rt = start_worker(&worker, &config, &req);
+            // Seed the rotation before the worker's first frame rather than
+            // letting the next frame's mirror correct it — the camera would
+            // otherwise stream a few sideways frames into the detector at
+            // every sketch entry.
+            rt.tuning.set_camera_rotation(rotation);
+            *runtime = Some(rt);
             *diagnostics = BodyTrackingDiagnostics {
                 status: BodyTrackingStatus::Starting,
                 idle_throttled: req.idle_throttle,

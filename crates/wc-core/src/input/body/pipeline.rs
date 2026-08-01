@@ -67,7 +67,11 @@ use super::smoothing::OneEuroFilter;
 use super::transport::{BodyFramePayload, SlotFrame};
 use super::{BodyLandmark, BODY_LANDMARK_COUNT, MASK_CHANNELS, MASK_SIZE, MAX_TRACKED_BODIES};
 use crate::input::capture::Frame;
+// The operator-facing knob and the geometry it drives are the same type. It
+// is defined settings-side because `crate::settings` is unconditional while
+// this whole module is `body-tracking-mediapipe`-gated — see its own docs.
 use crate::input::onnx::{InferenceError, ModelInference, Tensor};
+use crate::settings::body_tracking::CameraRotation;
 
 /// Landmark model input side as `u32` (the warp target).
 const LM_SIZE: u32 = 256;
@@ -323,6 +327,11 @@ pub struct PoseConfig {
     /// is finally made: a target at or above the frame's own aspect crops
     /// nothing, because there would be nothing to reclaim.
     pub crop_to_aspect: Option<f32>,
+    /// Quarter-turn applied to every frame before the crop (see
+    /// [`CameraRotation`]). This is the *fallback*: when a
+    /// [`BodyLiveTuning`] cell is attached, its value wins, so the operator
+    /// can turn the camera without a worker restart.
+    pub camera_rotation: CameraRotation,
 }
 
 impl Default for PoseConfig {
@@ -335,6 +344,7 @@ impl Default for PoseConfig {
             disable_heatmap_refine: false,
             max_tracked_bodies: MAX_TRACKED_BODIES,
             crop_to_aspect: None,
+            camera_rotation: CameraRotation::None,
         }
     }
 }
@@ -437,15 +447,22 @@ pub struct BodyLiveTuning {
     idle_throttle: AtomicBool,
     /// [`PoseConfig::mask_ema_alpha`] as `f32` bits.
     mask_ema_alpha: AtomicU32,
+    /// [`PoseConfig::camera_rotation`] as clockwise degrees (see
+    /// [`CameraRotation::to_degrees`]). Live so the operator can re-mount or
+    /// re-orient the camera mid-session and see the result immediately — a
+    /// worker restart would drop the camera and re-run model load.
+    camera_rotation: AtomicU32,
 }
 
 impl BodyLiveTuning {
-    /// Build a tuning cell. The idle flag starts cleared (full rate).
+    /// Build a tuning cell. The idle flag starts cleared (full rate) and the
+    /// camera unrotated.
     #[must_use]
     pub fn new(mask_ema_alpha: f32) -> Self {
         Self {
             idle_throttle: AtomicBool::new(false),
             mask_ema_alpha: AtomicU32::new(mask_ema_alpha.to_bits()),
+            camera_rotation: AtomicU32::new(CameraRotation::None.to_degrees()),
         }
     }
 
@@ -470,6 +487,19 @@ impl BodyLiveTuning {
     #[must_use]
     pub fn mask_ema_alpha(&self) -> f32 {
         f32::from_bits(self.mask_ema_alpha.load(Ordering::Relaxed))
+    }
+
+    /// Live-set the camera quarter-turn (cheap Relaxed store; safe every
+    /// frame, same contract as [`Self::set_idle_throttle`]).
+    pub fn set_camera_rotation(&self, rotation: CameraRotation) {
+        self.camera_rotation
+            .store(rotation.to_degrees(), Ordering::Relaxed);
+    }
+
+    /// The current camera quarter-turn.
+    #[must_use]
+    pub fn camera_rotation(&self) -> CameraRotation {
+        CameraRotation::from_degrees(self.camera_rotation.load(Ordering::Relaxed))
     }
 }
 
@@ -856,6 +886,10 @@ pub struct PosePipeline {
     /// diagnostic: at an install the operator needs to see whether the
     /// camera pre-crop engaged, and with what dimensions.
     last_crop: Option<CropRect>,
+    /// Last [`CameraRotation`] applied, paired with [`Self::last_crop`] so a
+    /// rotation change is logged even when it happens to leave the crop
+    /// identical (a square sensor, or a full-frame run either way).
+    last_rotation: Option<CameraRotation>,
     /// Per-slot results of the latest processed frame (what the worker
     /// publishes).
     slot_frames: [SlotFrame; MAX_TRACKED_BODIES],
@@ -908,6 +942,7 @@ impl PosePipeline {
             slots: std::array::from_fn(|_| SlotTrack::new()),
             claim_gate: ClaimGate::new(),
             last_crop: None,
+            last_rotation: None,
             slot_frames: [SlotFrame::default(); MAX_TRACKED_BODIES],
             next_scan: Duration::ZERO,
             rr_next: 0,
@@ -981,22 +1016,16 @@ impl PosePipeline {
             self.process_invalid_frame(now, blend_ratio, payload, diag, frame_start);
             return Ok(());
         }
-        // Everything downstream treats the crop as "the frame": the content
-        // rect, the published aspect, and the square pad below all describe
-        // it, so a cropped run is indistinguishable from a camera that
-        // natively delivered that framing. `CropRect::for_frame` returns the
-        // whole frame unless cropping actually reclaims off-screen pixels.
-        let crop = CropRect::for_frame(frame.width, frame.height, self.config.crop_to_aspect);
-        self.log_crop_change(frame, crop);
-        let content = ContentRect::for_frame(crop.width, crop.height);
-        self.last_frame_aspect = dim(crop.width) / dim(crop.height.max(1));
+        let (rotation, crop, content) = self.frame_geometry(frame);
 
         // Square-pad into the reused buffer (taken out so stage methods can
-        // borrow it beside &mut self; restored before every return).
+        // borrow it beside &mut self; restored before every return). The
+        // rotation is folded into this pass's source indexing — no extra
+        // buffer, no extra walk over the frame.
         let stage = Instant::now();
         let square = {
             let mut square = std::mem::take(&mut self.square_buf);
-            square_pad_into(frame, crop, &mut square);
+            square_pad_into(frame, crop, rotation, &mut square);
             square
         };
         diag.preprocess = stage.elapsed();
@@ -1177,26 +1206,69 @@ impl PosePipeline {
         Ok(())
     }
 
-    /// Transition-only breadcrumb for the camera pre-crop (same discipline as
-    /// the slot-lifecycle lines): at an install the operator needs to confirm
-    /// from the log whether the crop engaged and with what geometry, and a
-    /// per-frame line would drown the session. Fires on the first frame and
-    /// on any later change (a resolution switch, a fit-mode reload).
-    fn log_crop_change(&mut self, frame: &Frame, crop: CropRect) {
-        if self.last_crop == Some(crop) {
+    /// Resolve this frame's source geometry: the quarter turn to apply, the
+    /// pre-crop within the rotated frame, and the content rect that
+    /// normalizes it. Also stamps [`Self::last_frame_aspect`] and logs any
+    /// change, so [`Self::process`] gets one call for the whole decision.
+    ///
+    /// Order matters and is the point of grouping these three. Rotation comes
+    /// first, so everything after it describes the *rotated* frame (see
+    /// [`CameraRotation`]); the crop then reasons about the rotated aspect,
+    /// which is why a sideways-mounted camera on a portrait panel stands the
+    /// pre-crop down by itself — there are no off-screen sides left to
+    /// reclaim. The rotation is live-tuned when a cell is attached, so the
+    /// operator can turn the camera without restarting the worker.
+    fn frame_geometry(&mut self, frame: &Frame) -> (CameraRotation, CropRect, ContentRect) {
+        let rotation = self
+            .live_tuning
+            .as_ref()
+            .map_or(self.config.camera_rotation, |t| t.camera_rotation());
+        let (rot_w, rot_h) = rotation.rotated_dims(frame.width, frame.height);
+        let crop = CropRect::for_frame(rot_w, rot_h, self.config.crop_to_aspect);
+        self.log_crop_change(rot_w, rot_h, rotation, crop);
+        self.last_frame_aspect = dim(crop.width) / dim(crop.height.max(1));
+        (
+            rotation,
+            crop,
+            ContentRect::for_frame(crop.width, crop.height),
+        )
+    }
+
+    /// Transition-only breadcrumb for the camera rotation + pre-crop (same
+    /// discipline as the slot-lifecycle lines): at an install the operator
+    /// needs to confirm from the log which way the frame was turned and
+    /// whether the crop engaged, and a per-frame line would drown the
+    /// session. Fires on the first frame and on any later change (a
+    /// resolution switch, a fit-mode reload, a rotation change).
+    ///
+    /// `frame_w`/`frame_h` are the **rotated** dimensions — the frame as
+    /// everything downstream sees it — so the logged geometry matches what
+    /// `crop` is expressed in.
+    fn log_crop_change(
+        &mut self,
+        frame_w: u32,
+        frame_h: u32,
+        rotation: CameraRotation,
+        crop: CropRect,
+    ) {
+        if self.last_crop == Some(crop) && self.last_rotation == Some(rotation) {
             return;
         }
         self.last_crop = Some(crop);
-        if crop.is_full(frame.width, frame.height) {
+        self.last_rotation = Some(rotation);
+        let rotation_deg = rotation.to_degrees();
+        if crop.is_full(frame_w, frame_h) {
             tracing::info!(
-                frame_w = frame.width,
-                frame_h = frame.height,
+                frame_w,
+                frame_h,
+                rotation_deg,
                 "body camera: full frame (no pre-crop)"
             );
         } else {
             tracing::info!(
-                frame_w = frame.width,
-                frame_h = frame.height,
+                frame_w,
+                frame_h,
+                rotation_deg,
                 crop_w = crop.width,
                 crop_h = crop.height,
                 crop_x = crop.x0,
@@ -1809,7 +1881,12 @@ fn decode_world_landmarks(raw: &[f32], roi: &RoiRect) -> [Vec3; BODY_LANDMARK_CO
 /// byte. With a narrower crop only that sub-rect is read, so the pad — and
 /// therefore the detector input, every landmark crop, and the mask — sees
 /// only the region the consumer will actually display (see [`CropRect`]).
-fn square_pad_into(frame: &Frame, crop: CropRect, out: &mut RgbImage) {
+/// `rotation` turns the frame upright *before* the crop is applied, so `crop`
+/// is expressed in rotated-frame pixels ([`CameraRotation::rotated_dims`]).
+/// It is folded into this pass's source indexing rather than run as a
+/// separate rotate-then-crop, so a turned camera costs no extra buffer and no
+/// extra walk over the frame — only a different address per pixel.
+fn square_pad_into(frame: &Frame, crop: CropRect, rotation: CameraRotation, out: &mut RgbImage) {
     let side = crop.width.max(crop.height);
     if out.width() != side || out.height() != side {
         *out = RgbImage::new(side, side);
@@ -1818,9 +1895,12 @@ fn square_pad_into(frame: &Frame, crop: CropRect, out: &mut RgbImage) {
     let oy = (side - crop.height) / 2;
     let w = idx(frame.width);
     for y in 0..crop.height {
-        let row = idx(crop.y0 + y) * w * 3;
         for x in 0..crop.width {
-            let i = row + idx(crop.x0 + x) * 3;
+            // (crop.x0 + x, crop.y0 + y) is the pixel in the ROTATED frame;
+            // map it back to where it actually lives in `frame.rgb`.
+            let (sx, sy) =
+                rotation.source_pixel(crop.x0 + x, crop.y0 + y, frame.width, frame.height);
+            let i = idx(sy) * w * 3 + idx(sx) * 3;
             out.put_pixel(
                 ox + x,
                 oy + y,
@@ -3254,7 +3334,7 @@ mod tests {
         let crop = CropRect::for_frame(frame.width, frame.height, None);
         let mut a = RgbImage::default();
         let mut b = RgbImage::default();
-        square_pad_into(&frame, crop, &mut a);
+        square_pad_into(&frame, crop, CameraRotation::None, &mut a);
         square_pad_into(
             &frame,
             CropRect {
@@ -3263,10 +3343,129 @@ mod tests {
                 width: frame.width,
                 height: frame.height,
             },
+            CameraRotation::None,
             &mut b,
         );
         assert_eq!(a.dimensions(), b.dimensions());
         assert_eq!(a.as_raw(), b.as_raw());
+    }
+
+    /// A quarter turn transposes the frame: the padded square's dimensions
+    /// are unchanged (it is square by construction), but every pixel comes
+    /// from the transposed source position, and `Cw90`/`Cw270` are mirror
+    /// images of each other.
+    ///
+    /// Uses a gradient frame — `solid_frame` is uniform, so it cannot tell a
+    /// rotation from the identity.
+    #[test]
+    fn quarter_turns_transpose_the_padded_frame() {
+        // Origin-centred pad offset: the 2-wide rotated frame lands in
+        // columns 1..3 of the 4x4 square.
+        const PAD: u32 = 1;
+
+        // 4x2 gradient: pixel (col, row) has red = col, green = row.
+        let (src_w, src_h) = (4_u32, 2_u32);
+        let mut rgb = vec![0_u8; idx(src_w) * idx(src_h) * 3];
+        for row in 0..src_h {
+            for col in 0..src_w {
+                let base = (idx(row) * idx(src_w) + idx(col)) * 3;
+                rgb[base] = u8::try_from(col).expect("col fits");
+                rgb[base + 1] = u8::try_from(row).expect("row fits");
+            }
+        }
+        let frame = Frame {
+            width: src_w,
+            height: src_h,
+            rgb,
+        };
+
+        // Rotated dimensions are the transpose; the crop covers all of it.
+        for rot in [CameraRotation::Cw90, CameraRotation::Cw270] {
+            assert_eq!(
+                rot.rotated_dims(src_w, src_h),
+                (src_h, src_w),
+                "{rot:?} swaps the axes"
+            );
+        }
+        let crop = CropRect {
+            x0: 0,
+            y0: 0,
+            width: src_h,  // rotated width
+            height: src_w, // rotated height
+        };
+
+        let mut cw90 = RgbImage::default();
+        let mut cw270 = RgbImage::default();
+        square_pad_into(&frame, crop, CameraRotation::Cw90, &mut cw90);
+        square_pad_into(&frame, crop, CameraRotation::Cw270, &mut cw270);
+
+        // Both pad to a 4x4 square (the larger side), origin-centred.
+        assert_eq!(cw90.dimensions(), (4, 4));
+        assert_eq!(cw270.dimensions(), (4, 4));
+
+        // Cw90 maps rotated (dx, dy) <- source (dy, src_h-1-dx). Rotated
+        // (0, 0) is therefore source (0, 1): red 0, green 1.
+        let corner = cw90.get_pixel(PAD, 0);
+        assert_eq!(
+            (corner[0], corner[1]),
+            (0, 1),
+            "Cw90 top-left comes from bottom-left"
+        );
+        // Cw270 maps rotated (dx, dy) <- source (src_w-1-dy, dx). Rotated
+        // (0, 0) is source (3, 0): red 3, green 0.
+        let corner = cw270.get_pixel(PAD, 0);
+        assert_eq!(
+            (corner[0], corner[1]),
+            (3, 0),
+            "Cw270 top-left comes from top-right"
+        );
+
+        // The two turns are 180° apart, i.e. exact mirror images.
+        for dy in 0..src_w {
+            for dx in 0..src_h {
+                let turned = cw90.get_pixel(PAD + dx, dy);
+                let mirrored = cw270.get_pixel(PAD + (src_h - 1 - dx), src_w - 1 - dy);
+                assert_eq!(turned, mirrored, "Cw90/Cw270 disagree at ({dx}, {dy})");
+            }
+        }
+    }
+
+    /// The identity turn is byte-for-byte the un-rotated pad, so an upright
+    /// camera cannot regress through this path.
+    #[test]
+    fn the_identity_turn_changes_nothing() {
+        let frame = solid_frame();
+        let crop = CropRect::for_frame(frame.width, frame.height, None);
+        assert_eq!(
+            CameraRotation::None.rotated_dims(frame.width, frame.height),
+            (frame.width, frame.height)
+        );
+        assert_eq!(CameraRotation::None.source_pixel(7, 3, 64, 48), (7, 3));
+
+        let mut out = RgbImage::default();
+        square_pad_into(&frame, crop, CameraRotation::None, &mut out);
+        assert_eq!(out.dimensions(), (64, 64), "square-padded to the long side");
+    }
+
+    /// The tuning cell's degree encoding round-trips, and a value that is
+    /// neither 90 nor 270 decodes to the identity rather than to a wrong turn.
+    #[test]
+    fn rotation_degree_encoding_round_trips() {
+        for rot in [
+            CameraRotation::None,
+            CameraRotation::Cw90,
+            CameraRotation::Cw270,
+        ] {
+            assert_eq!(CameraRotation::from_degrees(rot.to_degrees()), rot);
+        }
+        assert_eq!(CameraRotation::from_degrees(180), CameraRotation::None);
+        assert_eq!(CameraRotation::from_degrees(u32::MAX), CameraRotation::None);
+
+        // And the live cell hands back what was stored.
+        let tuning = BodyLiveTuning::new(0.7);
+        assert_eq!(tuning.camera_rotation(), CameraRotation::None);
+        tuning.set_camera_rotation(CameraRotation::Cw270);
+        assert_eq!(tuning.camera_rotation(), CameraRotation::Cw270);
     }
 
     /// Landmark stub that replays fixed outputs while counting invocations —
