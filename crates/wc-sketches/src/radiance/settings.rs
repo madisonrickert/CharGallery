@@ -504,6 +504,32 @@ pub struct RadianceSettings {
     #[serde(default = "default_mirror")]
     pub mirror: bool,
 
+    /// Seconds of an **empty stage** — no tracked body at all, so the sketch
+    /// has nothing to draw and the screen is going black — before Radiance
+    /// forces attract mode back on. See
+    /// [`crate::radiance::rearm::rearm_attract_when_nothing_to_render`] for
+    /// the full guard set (operator input and an open settings panel both
+    /// suppress it).
+    ///
+    /// Without this, an empty stage costs the whole `Idle timeout` (60 s by
+    /// default) of black screen before the screensaver returns on its own.
+    /// Raise it if the venue's tracking drops out mid-dance often enough that
+    /// the circle interrupts a real performance; lower it to close the black
+    /// window harder. At or above the `Idle timeout` the natural screensaver
+    /// path wins and this effectively does nothing.
+    #[setting(
+        default = 3.0_f32,
+        min = 1.0_f32,
+        max = 60.0_f32,
+        step = 0.5_f32,
+        label = "Attract re-arm",
+        section = "Attract Mode",
+        category = User,
+        unit = "s"
+    )]
+    #[serde(default = "default_attract_rearm_secs")]
+    pub attract_rearm_secs: f32,
+
     /// Operator master over the beat-synchronized visuals: scales the
     /// in-medium flare-wave brightness (on top of the Dev `flare_gain`) and
     /// the density-adaptive beat burst; 0 disables the beat flare + burst
@@ -825,6 +851,9 @@ fn default_rim_glow() -> f32 {
 }
 fn default_mirror() -> bool {
     true
+}
+fn default_attract_rearm_secs() -> f32 {
+    3.0
 }
 fn default_frame_fit() -> RadianceFrameFit {
     RadianceFrameFit::FillHeight

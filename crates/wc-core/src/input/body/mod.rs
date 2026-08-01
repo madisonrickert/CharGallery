@@ -55,9 +55,11 @@
 //!
 //! Activation contract: some sketch (Radiance) INSERTS `BodyTrackingRequest`
 //! to start the camera + worker and REMOVES it to stop them. While a request
-//! exists, a person-bearing frame resets the idle
-//! `InteractionTimer` with the same semantics as hand-bearing frames in
-//! `reset_on_interaction` (empty frames are ignored).
+//! exists, a **published** body — one that cleared `envelope::ADMIT_DWELL`
+//! — resets the idle `InteractionTimer`, with the same "only real input
+//! counts" spirit as hand-bearing frames in `reset_on_interaction` (empty
+//! frames are ignored; so is a bare detector hit that never becomes a body
+//! the sketch could draw — see `systems::poll_body_worker`).
 
 use std::path::PathBuf;
 use std::time::Duration;

@@ -24,6 +24,19 @@ use super::state::SketchActivity;
 pub struct InteractionTimer {
     /// Time of last detected interaction, in `Res<Time>::elapsed()` units.
     last_interaction: Duration,
+    /// Time of the last **direct** interaction — mouse, keyboard, touch, or a
+    /// hand in the tracking volume — i.e. an input a human deliberately made
+    /// at the machine. Deliberately excludes the camera-presence path
+    /// ([`Self::mark`] from `poll_body_worker`), which is a *passive*
+    /// observation: a body walking into frame marks `last_interaction` but
+    /// not this.
+    ///
+    /// The distinction exists for attract re-arm (Radiance's
+    /// `rearm_attract_when_nothing_to_render`): forcing the screensaver back
+    /// over a blank screen is right when the room is empty, and wrong when
+    /// the operator is standing at the keyboard with nobody in front of the
+    /// camera. Only a direct input suppresses the re-arm.
+    last_direct_input: Duration,
     /// After this much idle time, transition `Active → Idle`.
     pub idle_threshold: Duration,
     /// Additional idle time (beyond [`Self::idle_threshold`]) before the screensaver
@@ -47,6 +60,7 @@ impl Default for InteractionTimer {
     fn default() -> Self {
         Self {
             last_interaction: Duration::ZERO,
+            last_direct_input: Duration::ZERO,
             // Both default to 30 s per v4 BaseSketch.ts.
             idle_threshold: Duration::from_secs(30),
             screensaver_threshold: Duration::from_secs(30),
@@ -67,10 +81,30 @@ impl InteractionTimer {
         self.force_screensaver = false;
     }
 
+    /// Record that a **direct** interaction just happened — mouse, keyboard,
+    /// touch, or a hand in the tracking volume. Marks the idle timer exactly
+    /// as [`Self::mark`] does, and additionally stamps
+    /// [`Self::direct_idle_for`]'s clock.
+    ///
+    /// [`reset_on_interaction`] calls this; the camera-presence path in
+    /// `poll_body_worker` calls the plain [`Self::mark`], so a body walking
+    /// into frame never reads as an operator at the controls.
+    pub fn mark_direct(&mut self, now: Duration) {
+        self.last_direct_input = now;
+        self.mark(now);
+    }
+
     /// Seconds elapsed since the last interaction.
     #[must_use]
     pub fn idle_for(&self, now: Duration) -> Duration {
         now.saturating_sub(self.last_interaction)
+    }
+
+    /// Seconds elapsed since the last **direct** interaction (see
+    /// [`Self::mark_direct`]). Saturates like [`Self::idle_for`].
+    #[must_use]
+    pub fn direct_idle_for(&self, now: Duration) -> Duration {
+        now.saturating_sub(self.last_direct_input)
     }
 
     /// Raw timestamp of the last detected interaction.
@@ -238,7 +272,10 @@ pub fn reset_on_interaction(
             }
             *wake_logged = true;
         }
-        timer.mark(time.elapsed());
+        // Direct: every source read here is a deliberate human input, which
+        // is what suppresses Radiance's attract re-arm while the operator is
+        // at the controls. Camera presence takes the plain `mark` instead.
+        timer.mark_direct(time.elapsed());
     }
 }
 

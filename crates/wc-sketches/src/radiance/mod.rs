@@ -86,6 +86,12 @@ pub mod systems;
 // `cargo doc` default-features-only rationale as `synthetic`/`systems::spawn`.
 #[cfg(feature = "body-tracking-mediapipe")]
 pub mod screensaver;
+// Attract re-arm: forces attract mode back over an empty stage. Consumes
+// `wc_core::input::body::BodyTrackingState`, so it carries the same feature
+// gate (and the same `cargo doc` default-features-only rationale) as the
+// screensaver performer above.
+#[cfg(feature = "body-tracking-mediapipe")]
+pub mod rearm;
 
 use bevy::prelude::*;
 use wc_core::lifecycle::state::AppState;
@@ -179,6 +185,24 @@ impl Plugin for RadiancePlugin {
                 .after(systems::sim_params::update_radiance_sim)
                 .after(screensaver::drive_radiance_attract_sim)
                 .run_if(in_state(AppState::Radiance)),
+        );
+
+        // Attract re-arm: an empty stage is a black screen (no body, nothing
+        // to emit from), and without this it stays black for the whole 60 s
+        // idle timeout. Runs in Active AND Idle — never in Screensaver, where
+        // the phantom is already drawing the thing this restores. The Idle
+        // half is the documented exception to "zero systems when idle" (see
+        // the module docs): a few resource reads, no allocation. Gated:
+        // consumes `BodyTrackingState`.
+        #[cfg(feature = "body-tracking-mediapipe")]
+        app.add_systems(
+            Update,
+            rearm::rearm_attract_when_nothing_to_render
+                .run_if(in_state(AppState::Radiance))
+                .run_if(not(in_state(
+                    wc_core::lifecycle::state::SketchActivity::Screensaver,
+                )))
+                .before(wc_core::lifecycle::idle::advance_activity),
         );
 
         // Idle freeze: zero emission so the aura fades out and the throttled

@@ -296,9 +296,11 @@ pub fn sync_body_tracking(
 /// the newest frame as each slot's smoothing target, advance the per-slot
 /// presence-hold + fade envelopes, publish [`BodyTrackingState`] (per-slot
 /// [`TrackedBody`]s + the primary slot) / mask bytes / [`SilhouetteEdges`],
-/// recycle mask payloads, and mark the idle [`InteractionTimer`] on
-/// person-bearing frames (empty frames never mark — same semantics as
-/// hand-bearing frames in `reset_on_interaction`; see the plugin doc).
+/// recycle mask payloads, and mark the idle [`InteractionTimer`] whenever a
+/// body is actually **published** — i.e. one that cleared
+/// [`super::envelope::ADMIT_DWELL`], not merely a raw per-frame detector hit (empty
+/// frames never mark, by construction). See the mark site below for why the
+/// screensaver's wake hangs off publication rather than detection.
 ///
 /// [`BodyWorkerMsg::Diagnostics`] snapshots pushed from the worker's
 /// drop-triggered path (over-budget camera drops, see
@@ -330,7 +332,6 @@ pub fn poll_body_worker(
         return;
     };
     let now = time.elapsed();
-    let mut person_frame = false;
 
     while let Ok(msg) = rt.consumer.pop() {
         match msg {
@@ -374,7 +375,6 @@ pub fn poll_body_worker(
                         admit_step(slot.admitted, slot.present_since, decision, now);
                     match decision {
                         PresenceDecision::Present => {
-                            person_frame = true;
                             slot.target = *incoming;
                             slot.timestamp = frame.timestamp;
                         }
@@ -408,18 +408,31 @@ pub fn poll_body_worker(
         }
     }
 
-    // Presence → interaction: identical semantics to hand-bearing frames in
-    // reset_on_interaction (both end in InteractionTimer::mark; empty frames
-    // are ignored by construction).
-    if person_frame {
+    // Per-slot publication: smooth present slots toward their targets every
+    // poll; fade absent slots out in place; free a slot only at fade 0.
+    publish_bodies(&mut rt.slots, &mut state, now, time.delta_secs());
+
+    // Presence → interaction, gated on **publication** rather than on the raw
+    // per-frame detector hit.
+    //
+    // The screensaver wakes off this mark, and waking it costs a real visual:
+    // the attract phantom stops and the live sketch takes over with whatever
+    // the tracker has — which, for a detection that never survived
+    // `envelope::ADMIT_DWELL`, is nothing at all. A single false detector hit
+    // (the CoreML phantom-detection class of failure, and ordinary road/foot
+    // traffic at the frame's edge) would therefore trade the attract circle
+    // for a black screen until the ~60 s idle timer brought it back.
+    //
+    // `publish_bodies` has already applied the admission dwell, so
+    // `any_present()` is exactly "a body the sketch can actually draw". A
+    // genuine visitor crosses it ~700 ms after first detection — three probe
+    // frames at the Screensaver idle rate — and from then on every poll marks
+    // the timer as before. Empty frames still never mark, by construction.
+    if state.any_present() {
         if let Some(timer) = timer.as_mut() {
             timer.mark(now);
         }
     }
-
-    // Per-slot publication: smooth present slots toward their targets every
-    // poll; fade absent slots out in place; free a slot only at fade 0.
-    publish_bodies(&mut rt.slots, &mut state, now, time.delta_secs());
 
     // Arrival/departure logging, once per transition.
     let occupied = state.bodies.iter().any(Option::is_some);
@@ -878,6 +891,47 @@ mod tests {
             world.resource::<InteractionTimer>().last_interaction(),
             Duration::ZERO,
             "empty frames must never reset the idle timer"
+        );
+    }
+
+    /// The screensaver's wake gate: a slot the detector reports as present
+    /// but which has NOT cleared the admission dwell publishes nothing, so
+    /// `any_present()` — the condition `poll_body_worker` marks the
+    /// [`InteractionTimer`] on — stays false.
+    ///
+    /// This is the invariant the black-screen fix rests on. Marking on the
+    /// raw per-frame detector hit instead would let one false detection trade
+    /// the attract circle for a black screen until the ~60 s idle timer
+    /// recovered it, because the live sketch has no body to draw.
+    #[test]
+    fn an_unadmitted_detection_publishes_nothing_to_wake_on() {
+        let mut slots: [SlotRuntime; MAX_TRACKED_BODIES] = std::array::from_fn(|_| SlotRuntime {
+            target: SlotFrame::default(),
+            timestamp: Duration::ZERO,
+            hold_until: Duration::ZERO,
+            admitted: false,
+            present_since: None,
+            fade: 0.0,
+            motion_ema: 0.0,
+            smoother: BodySmoother::new(1.0, 0.05),
+        });
+        let mut state = BodyTrackingState::default();
+
+        // Detector says "person!" but the dwell has not elapsed.
+        slots[0].target.present = true;
+        slots[0].admitted = false;
+        publish_bodies(&mut slots, &mut state, Duration::from_millis(16), 0.016);
+        assert!(
+            !state.any_present(),
+            "a detection short of the admission dwell must not read as a body"
+        );
+
+        // Once admitted, the same slot publishes and the wake may proceed.
+        slots[0].admitted = true;
+        publish_bodies(&mut slots, &mut state, Duration::from_millis(32), 0.016);
+        assert!(
+            state.any_present(),
+            "an admitted body is exactly what the sketch can draw"
         );
     }
 
